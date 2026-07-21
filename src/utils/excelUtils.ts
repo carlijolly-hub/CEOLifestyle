@@ -14,6 +14,7 @@ export function customerToFlatRow(customer: Client) {
 
   return {
     "Client ID": customer.id,
+    "Status": customer.deactivated ? "Deactivated" : "Active",
     "First Name": customer.firstName,
     "Last Name": customer.lastName,
     "Gender": customer.gender,
@@ -125,8 +126,11 @@ export function flatRowToCustomer(row: any): Client {
   const lifetimeRevenue = Number(row["Lifetime Revenue (JMD)"]) || 0;
   const averageOrderValue = totalOrders > 0 ? Math.round(lifetimeRevenue / totalOrders) : 0;
 
+  const isDeactivatedVal = row["Status"] ? (String(row["Status"]).trim().toLowerCase() === "deactivated" || String(row["Status"]).trim().toLowerCase() === "inactive") : false;
+
   return {
     id: cid,
+    deactivated: isDeactivatedVal,
     firstName: row["First Name"] ? String(row["First Name"]).trim() : "New",
     lastName: row["Last Name"] ? String(row["Last Name"]).trim() : "Client",
     gender: (row["Gender"] || "N/A") as any,
@@ -229,6 +233,7 @@ export function exportReport(type: string, customers: Client[]) {
           data: customers
             .map(c => ({
               "Client ID": c.id,
+              "Status": c.deactivated ? "Deactivated" : "Active",
               "Client Name": `${c.firstName} ${c.lastName}`,
               "Client Tier": c.tier,
               "Home Brand": c.homeBrand,
@@ -251,6 +256,7 @@ export function exportReport(type: string, customers: Client[]) {
             .filter(c => c.history.totalOrders >= 2)
             .map(c => ({
               "Client ID": c.id,
+              "Status": c.deactivated ? "Deactivated" : "Active",
               "Client Name": `${c.firstName} ${c.lastName}`,
               "Client Tier": c.tier,
               "Home Brand": c.homeBrand,
@@ -269,6 +275,7 @@ export function exportReport(type: string, customers: Client[]) {
           name: "Product Preferences",
           data: customers.map(c => ({
             "Client ID": c.id,
+            "Status": c.deactivated ? "Deactivated" : "Active",
             "Client Name": `${c.firstName} ${c.lastName}`,
             "Client Tier": c.tier,
             "Home Brand": c.homeBrand,
@@ -289,6 +296,7 @@ export function exportReport(type: string, customers: Client[]) {
           data: customers.flatMap(c =>
             c.importantDates.map(d => ({
               "Client ID": c.id,
+              "Status": c.deactivated ? "Deactivated" : "Active",
               "Client Name": `${c.firstName} ${c.lastName}`,
               "Client Tier": c.tier,
               "Event / Occasion": d.label,
@@ -310,6 +318,7 @@ export function exportReport(type: string, customers: Client[]) {
             .filter(c => c.contact.country !== "Jamaica")
             .map(c => ({
               "Client ID": c.id,
+              "Status": c.deactivated ? "Deactivated" : "Active",
               "Client Name": `${c.firstName} ${c.lastName}`,
               "Client Tier": c.tier,
               "Residing Country": c.contact.country,
@@ -330,6 +339,7 @@ export function exportReport(type: string, customers: Client[]) {
           name: "Sales Metrics",
           data: customers.map(c => ({
             "Client ID": c.id,
+            "Status": c.deactivated ? "Deactivated" : "Active",
             "Client Name": `${c.firstName} ${c.lastName}`,
             "Tier": c.tier,
             "Brand": c.homeBrand,
@@ -354,6 +364,7 @@ export function downloadUploadTemplate() {
   const templateRows = [
     {
       "Client ID": "10001 (Optional - leave empty for auto-generate)",
+      "Status": "Active",
       "First Name": "Jane",
       "Last Name": "Doe",
       "Gender": "Female",
@@ -408,6 +419,11 @@ export function downloadUploadTemplate() {
       "Field Name": "Client ID",
       "Allowed Values": "Any numeric code (e.g. 10008). If empty, auto-generates.",
       "Required": "No"
+    },
+    {
+      "Field Name": "Status",
+      "Allowed Values": "Active, Deactivated",
+      "Required": "No (Defaults to Active)"
     },
     {
       "Field Name": "First Name / Last Name",

@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { Client, TimelineEvent, FollowUpReminder } from "../types";
+import { getClientMilestones } from "../utils/dateHelpers";
 import { 
   Phone, 
   Mail, 
@@ -132,47 +133,10 @@ export default function ClientDetail({
   const isOverseasBuyer = customer.contact.country !== "Jamaica";
 
   const integratedMilestones = useMemo(() => {
-    const list: { label: string; date: string }[] = [...customer.importantDates];
-    
-    if (customer.profile.motherName && customer.profile.motherBirthday && !customer.profile.motherDeceased) {
-      list.push({ label: `${customer.profile.motherName} (Mother)'s Birthday`, date: customer.profile.motherBirthday });
-    }
-    if (customer.profile.fatherName && customer.profile.fatherBirthday && !customer.profile.fatherDeceased) {
-      list.push({ label: `${customer.profile.fatherName} (Father)'s Birthday`, date: customer.profile.fatherBirthday });
-    }
-    if (customer.profile.wifeName && customer.profile.wifeBirthday && !customer.profile.wifeDeceased) {
-      list.push({ label: `${customer.profile.wifeName} (Partner/Wife)'s Birthday`, date: customer.profile.wifeBirthday });
-    }
-    if (customer.profile.husbandName && customer.profile.husbandBirthday && !customer.profile.husbandDeceased) {
-      list.push({ label: `${customer.profile.husbandName} (Partner/Husband)'s Birthday`, date: customer.profile.husbandBirthday });
-    }
-    if (customer.profile.children) {
-      customer.profile.children.forEach(child => {
-        if (child.name && child.birthday && !child.deceased) {
-          list.push({ label: `${child.name} (Child)'s Birthday`, date: child.birthday });
-        }
-      });
-    }
-    if (customer.profile.otherFamilyMembers) {
-      customer.profile.otherFamilyMembers.forEach(member => {
-        if (member.name && member.birthday && !member.deceased) {
-          list.push({ label: `${member.name} (${member.relationship})'s Birthday`, date: member.birthday });
-        }
-      });
-    }
-
-    const uniqueList: typeof list = [];
-    list.forEach(item => {
-      const alreadyExists = uniqueList.some(el => 
-        el.label.toLowerCase() === item.label.toLowerCase() || 
-        (el.date === item.date && el.label.toLowerCase().includes(item.label.toLowerCase()))
-      );
-      if (!alreadyExists) {
-        uniqueList.push(item);
-      }
-    });
-
-    return uniqueList;
+    return getClientMilestones(customer).map(m => ({
+      label: m.label,
+      date: m.date
+    }));
   }, [customer]);
 
   const isCeoBrand = customer.homeBrand === "CEO Printing Services";
@@ -312,18 +276,6 @@ export default function ClientDetail({
                 Deactivate
               </button>
             )}
-
-            <button
-              onClick={() => {
-                if (window.confirm(`⚠️ PERMANENT DELETION WARNING: Are you sure you want to permanently delete the profile for "${customer.firstName} ${customer.lastName}"? This completely erases all notes, family profiles, orders, and interaction timeline events. This cannot be undone.`)) {
-                  onDelete(customer.id);
-                }
-              }}
-              className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100/70 border border-rose-100 rounded-xl transition-all"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Delete
-            </button>
           </div>
         </div>
 

@@ -1,18 +1,29 @@
 import React, { useState, useEffect } from "react";
 import { Client, ClientTier, HomeBrand, Gender, YesNo } from "../types";
-import { X, User, MapPin, Heart, Trophy, Save, ShoppingCart } from "lucide-react";
+import { X, User, MapPin, Heart, Trophy, Save, ShoppingCart, AlertCircle } from "lucide-react";
+import { parseMonthDay } from "../utils/dateHelpers";
 
 interface ClientFormProps {
   customer?: Client | null; // If provided, we are editing. Otherwise, adding.
   onSave: (customer: Client) => void;
   onCancel: () => void;
+  existingCustomers?: Client[];
 }
 
-export default function ClientForm({ customer, onSave, onCancel }: ClientFormProps) {
+export default function ClientForm({ customer, onSave, onCancel, existingCustomers = [] }: ClientFormProps) {
   const isEditing = !!customer;
 
   // Track active section/tab in form wizard
   const [activeTab, setActiveTab] = useState<"personal" | "contact" | "family" | "interests">("personal");
+
+  // Error and Warning States
+  const [formError, setFormError] = useState<string | null>(null);
+  const [duplicateWarning, setDuplicateWarning] = useState<{
+    type: "id" | "name" | "phone" | "email";
+    message: string;
+    clientId: string;
+  } | null>(null);
+  const [bypassDuplicate, setBypassDuplicate] = useState(false);
 
   // State bindings
   const [id, setId] = useState("");
@@ -227,12 +238,165 @@ export default function ClientForm({ customer, onSave, onCancel }: ClientFormPro
     }
   }, [customer]);
 
+  // Dynamic duplicate checking
+  useEffect(() => {
+    if (!existingCustomers || existingCustomers.length === 0) return;
+    setDuplicateWarning(null);
+
+    const checkId = id.trim().toLowerCase();
+    const checkFirst = firstName.trim().toLowerCase();
+    const checkLast = lastName.trim().toLowerCase();
+    const checkPhone = phoneNumber.trim().replace(/\D/g, "");
+    const checkEmail = email.trim().toLowerCase();
+
+    if (!checkFirst && !checkLast && !checkPhone && !checkEmail && !checkId) return;
+
+    for (const c of existingCustomers) {
+      if (customer && c.id === customer.id) continue;
+
+      if (checkId && c.id.toLowerCase() === checkId) {
+        setDuplicateWarning({
+          type: "id",
+          message: `Customer ID "${id}" is already assigned to ${c.firstName} ${c.lastName}.`,
+          clientId: c.id
+        });
+        return;
+      }
+      if (checkFirst && checkLast && c.firstName.toLowerCase() === checkFirst && c.lastName.toLowerCase() === checkLast) {
+        setDuplicateWarning({
+          type: "name",
+          message: `A client named "${firstName} ${lastName}" already exists.`,
+          clientId: c.id
+        });
+        return;
+      }
+      if (checkPhone && c.contact.phoneNumber.replace(/\D/g, "") === checkPhone) {
+        setDuplicateWarning({
+          type: "phone",
+          message: `Phone number "${phoneNumber}" is registered to ${c.firstName} ${c.lastName}.`,
+          clientId: c.id
+        });
+        return;
+      }
+      if (checkEmail && c.contact.email.toLowerCase() === checkEmail) {
+        setDuplicateWarning({
+          type: "email",
+          message: `Email "${email}" is registered to ${c.firstName} ${c.lastName}.`,
+          clientId: c.id
+        });
+        return;
+      }
+    }
+  }, [id, firstName, lastName, phoneNumber, email, existingCustomers, customer]);
+
   // Handle Save
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
+
+    // 1. Missing required client information
     if (!firstName.trim() || !lastName.trim()) {
-      alert("First Name and Last Name are required.");
+      setFormError("First Name and Last Name are required.");
+      setActiveTab("personal");
       return;
+    }
+
+    if (!phoneNumber.trim()) {
+      setFormError("Phone Number is required for client validation.");
+      setActiveTab("contact");
+      return;
+    }
+
+    if (!email.trim()) {
+      setFormError("Email Address is required for client validation.");
+      setActiveTab("contact");
+      return;
+    }
+
+    // 2. Validate format of email address
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setFormError("Please enter a valid email address (e.g. name@domain.com).");
+      setActiveTab("contact");
+      return;
+    }
+
+    // 3. Date format and plausibility validation
+    const textDatesToValidate = [
+      { label: "Birthday", value: birthday },
+      { label: "Anniversary", value: anniversary },
+      { label: "Wedding Date", value: weddingDate },
+      { label: "Proposal Date", value: proposalDate },
+      { label: "Mother's Birthday", value: motherBirthday },
+      { label: "Father's Birthday", value: fatherBirthday },
+      { label: "Wife's Birthday", value: wifeBirthday },
+      { label: "Husband's Birthday", value: husbandBirthday },
+    ];
+
+    for (const dt of textDatesToValidate) {
+      if (dt.value && dt.value.trim()) {
+        const parsed = parseMonthDay(dt.value);
+        if (!parsed) {
+          setFormError(`"${dt.label}" has an invalid date format. Please use a format like "May 10" or "August 22".`);
+          setActiveTab(dt.label.includes("Mother") || dt.label.includes("Father") || dt.label.includes("Wife") || dt.label.includes("Husband") ? "family" : "personal");
+          return;
+        }
+      }
+    }
+
+    // Children's birthdays
+    for (let idx = 0; idx < children.length; idx++) {
+      const child = children[idx];
+      if (child.birthday && child.birthday.trim()) {
+        const parsed = parseMonthDay(child.birthday);
+        if (!parsed) {
+          setFormError(`Child #${idx + 1} ("${child.name || "Unnamed"}") has an invalid birthday. Use format like "May 10".`);
+          setActiveTab("family");
+          return;
+        }
+      }
+    }
+
+    // Other family members
+    for (let idx = 0; idx < otherFamilyMembers.length; idx++) {
+      const member = otherFamilyMembers[idx];
+      if (member.birthday && member.birthday.trim()) {
+        const parsed = parseMonthDay(member.birthday);
+        if (!parsed) {
+          setFormError(`Family Member "${member.name || member.relationship}" has an invalid birthday. Use format like "May 10".`);
+          setActiveTab("family");
+          return;
+        }
+      }
+    }
+
+    // ISO Dates validation
+    if (firstOrderDate && new Date(firstOrderDate) > new Date()) {
+      setFormError("First Order Date cannot be in the future.");
+      setActiveTab("interests");
+      return;
+    }
+    if (lastOrderDate && new Date(lastOrderDate) > new Date()) {
+      setFormError("Last Order Date cannot be in the future.");
+      setActiveTab("interests");
+      return;
+    }
+    if (firstOrderDate && lastOrderDate && new Date(lastOrderDate) < new Date(firstOrderDate)) {
+      setFormError("Last Order Date cannot be before First Order Date.");
+      setActiveTab("interests");
+      return;
+    }
+
+    // 4. Duplicate checks
+    if (duplicateWarning) {
+      if (duplicateWarning.type === "id") {
+        setFormError(`Save blocked: Customer ID "${id}" is already assigned to another profile.`);
+        setActiveTab("personal");
+        return;
+      }
+      if (!bypassDuplicate) {
+        setFormError("Please review the duplicate warnings and check 'Confirm this is a unique client profile' to save.");
+        return;
+      }
     }
 
     // Parse Comma Separated lists
@@ -1241,6 +1405,39 @@ export default function ClientForm({ customer, onSave, onCancel }: ClientFormPro
           )}
 
         </div>
+
+        {/* Validation Errors & Soft Warnings Banner */}
+        {(formError || duplicateWarning) && (
+          <div className="px-6 py-4 bg-amber-50/45 border-t border-slate-200/60 text-left space-y-2 animate-fade-in">
+            {formError && (
+              <div className="text-rose-600 text-xs font-bold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
+            {duplicateWarning && (
+              <div className="text-amber-800 text-xs font-bold flex flex-col gap-1.5">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-600" />
+                  <span><strong>⚠️ Potential Duplicate Detected:</strong> {duplicateWarning.message}</span>
+                </div>
+                {duplicateWarning.type !== "id" && (
+                  <label className="flex items-center gap-2.5 cursor-pointer pl-6 mt-0.5 select-none text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={bypassDuplicate}
+                      onChange={(e) => setBypassDuplicate(e.target.checked)}
+                      className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4"
+                    />
+                    <span className="font-semibold text-slate-700">
+                      I confirm this is a separate, unique portfolio client profile and not a duplicate
+                    </span>
+                  </label>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Bottom Save bar */}
         <div className="px-6 py-5 bg-slate-50 flex justify-end gap-3 rounded-b-3xl border-t border-slate-200/60">

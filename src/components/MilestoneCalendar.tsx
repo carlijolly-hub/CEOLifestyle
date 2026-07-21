@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
-import { Client, ImportantDate, FollowUpReminder } from "../types";
+import { Client, ImportantDate, FollowUpReminder, BusinessEvent } from "../types";
+import { getRelationshipEventTitle, getClientMilestones, parseDateString } from "../utils/dateHelpers";
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -23,55 +24,11 @@ interface MilestoneCalendarProps {
   onOpenTask?: (clientId: string, reminderId: string) => void;
 }
 
-// Helper to parse date strings into month and day
-function parseDateString(dateStr: string): { month: number; day: number; year?: number } | null {
-  if (!dateStr) return null;
-  
-  // Standard format: YYYY-MM-DD
-  const isoMatch = dateStr.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
-  if (isoMatch) {
-    return {
-      year: parseInt(isoMatch[1], 10),
-      month: parseInt(isoMatch[2], 10) - 1, // 0-indexed
-      day: parseInt(isoMatch[3], 10)
-    };
-  }
-
-  // Handle format like "March 14, 2018" or "March 14"
-  const cleanStr = dateStr.trim();
-  const months = [
-    "january", "february", "march", "april", "may", "june",
-    "july", "august", "september", "october", "november", "december"
-  ];
-  
-  const monthMatch = cleanStr.match(/([a-zA-Z]+)/);
-  if (monthMatch) {
-    const monthName = monthMatch[1].toLowerCase();
-    const monthIndex = months.findIndex(m => m.startsWith(monthName.substring(0, 3)));
-    if (monthIndex !== -1) {
-      // Find day
-      const dayMatch = cleanStr.match(/\b(\d{1,2})\b/);
-      const day = dayMatch ? parseInt(dayMatch[1], 10) : 1;
-      
-      // Find year
-      const yearMatch = cleanStr.match(/\b(\d{4})\b/);
-      const year = yearMatch ? parseInt(yearMatch[1], 10) : undefined;
-      
-      return {
-        year,
-        month: monthIndex,
-        day: day
-      };
-    }
-  }
-
-  return null;
-}
-
-// System reference date for relative comparisons (July 8, 2026)
-const SYSTEM_REFERENCE_YEAR = 2026;
-const SYSTEM_REFERENCE_MONTH = 6; // July is index 6
-const SYSTEM_REFERENCE_DAY = 8;
+// System reference date for relative comparisons (Dynamic Current Date)
+const realToday = new Date();
+const SYSTEM_REFERENCE_YEAR = realToday.getFullYear();
+const SYSTEM_REFERENCE_MONTH = realToday.getMonth(); // 0-indexed
+const SYSTEM_REFERENCE_DAY = realToday.getDate();
 
 export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask }: MilestoneCalendarProps) {
   // Navigation State
@@ -80,14 +37,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
   const [selectedDay, setSelectedDay] = useState<number | null>(SYSTEM_REFERENCE_DAY);
   
   // Business events state synced to localStorage
-  const [businessEvents, setBusinessEvents] = useState<Array<{
-    id: string;
-    title: string;
-    date: string; // YYYY-MM-DD
-    type: "Client Event" | "CEO Day" | "Librarium Luxe Day" | "General Business Day";
-    description?: string;
-    associatedClientId?: string;
-  }>>(() => {
+  const [businessEvents, setBusinessEvents] = useState<BusinessEvent[]>(() => {
     const stored = localStorage.getItem("ceo_crm_business_events");
     if (stored) {
       try {
@@ -97,9 +47,9 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
       }
     }
     return [
-      { id: "be-1", title: "Annual CEO Day Celebration", date: "2026-07-10", type: "CEO Day", description: "All brand managers assemble." },
-      { id: "be-2", title: "Librarium Luxe Literary Gala", date: "2026-07-25", type: "Librarium Luxe Day", description: "Gala evening celebrating rare books." },
-      { id: "be-3", title: "General Mid-Year Alignment Review", date: "2026-07-08", type: "General Business Day", description: "Review overall CRM progress." }
+      { id: "be-1", title: "Annual CEO Day Celebration", date: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-10`, type: "CEO Day", description: "All brand managers assemble." },
+      { id: "be-2", title: "Librarium Luxe Literary Gala", date: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-25`, type: "Librarium Luxe Day", description: "Gala evening celebrating rare books." },
+      { id: "be-3", title: "General Mid-Year Alignment Review", date: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-08`, type: "General Business Day", description: "Review overall CRM progress." }
     ];
   });
 
@@ -112,23 +62,29 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
 
   // Create event states
   const [showAddEventForm, setShowAddEventForm] = useState(false);
-  const [eventCategory, setEventCategory] = useState<"Client Event" | "CEO Day" | "Librarium Luxe Day" | "General Business Day">("Client Event");
+  const [eventCategory, setEventCategory] = useState<BusinessEvent["type"]>("Gold Client Events");
   const [eventClientId, setEventClientId] = useState("");
   const [eventTitle, setEventTitle] = useState("");
-  const [eventDate, setEventDate] = useState("2026-07-08");
+  const [eventDate, setEventDate] = useState(() => {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, "0");
+    const d = String(today.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  });
   const [eventNotes, setEventNotes] = useState("");
 
   const handleCreateEvent = (e: React.FormEvent) => {
     e.preventDefault();
     if (!eventTitle.trim() || !eventDate) return;
 
-    const newEv = {
+    const newEv: BusinessEvent = {
       id: `custom-evt-${Date.now()}`,
       title: eventTitle.trim(),
       date: eventDate,
       type: eventCategory,
       description: eventNotes.trim() || undefined,
-      associatedClientId: eventCategory === "Client Event" ? eventClientId : undefined
+      associatedClientId: (eventCategory === "Gold / Platinum Client Events" || eventCategory === "Gold Client Events" || eventCategory === "Platinum Client Events" || eventCategory === "Silver Client Events") ? eventClientId : undefined
     };
 
     setBusinessEvents(prev => [...prev, newEv]);
@@ -141,7 +97,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
 
   // Filters
   const [brandFilter, setBrandFilter] = useState<"all" | "CEO Printing Services" | "Librarium Luxe">("all");
-  const [typeFilter, setTypeFilter] = useState<"all" | "birthday" | "anniversary" | "reminder">("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | BusinessEvent["type"]>("all");
   const [searchQuery, setSearchQuery] = useState("");
 
   const monthNames = [
@@ -155,6 +111,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
       id: string;
       client: Client;
       type: "birthday" | "anniversary" | "custom_milestone" | "reminder";
+      businessType: BusinessEvent["type"];
       label: string;
       dateStr: string;
       parsedMonth: number;
@@ -164,74 +121,19 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
     }> = [];
 
     clients.forEach(client => {
-      // 1. Process standard important dates
-      client.importantDates.forEach((dateObj, idx) => {
-        const parsed = parseDateString(dateObj.date);
+      // 1. Process unified milestone events
+      const milestones = getClientMilestones(client);
+      milestones.forEach((m, idx) => {
+        const parsed = parseDateString(m.date);
         if (!parsed) return;
 
-        const isBday = dateObj.label.toLowerCase().includes("birth");
-        const isAnniv = dateObj.label.toLowerCase().includes("anniv") || dateObj.label.toLowerCase().includes("wed");
-        
         eventsList.push({
-          id: `imp-${client.id}-${idx}`,
+          id: `milestone-${client.id}-${idx}-${m.type}`,
           client,
-          type: isBday ? "birthday" : isAnniv ? "anniversary" : "custom_milestone",
-          label: dateObj.label,
-          dateStr: dateObj.date,
-          parsedMonth: parsed.month,
-          parsedDay: parsed.day,
-          parsedYear: parsed.year,
-          isVip: client.tier === "Gold" || client.tier === "Platinum"
-        });
-      });
-
-      // 1.5 Process all family member birthdays directly
-      const familyBirthdays: { label: string; date?: string }[] = [];
-      if (client.profile.motherName && client.profile.motherBirthday && !client.profile.motherDeceased) {
-        familyBirthdays.push({ label: `${client.profile.motherName} (Mother)`, date: client.profile.motherBirthday });
-      }
-      if (client.profile.fatherName && client.profile.fatherBirthday && !client.profile.fatherDeceased) {
-        familyBirthdays.push({ label: `${client.profile.fatherName} (Father)`, date: client.profile.fatherBirthday });
-      }
-      if (client.profile.wifeName && client.profile.wifeBirthday && !client.profile.wifeDeceased) {
-        familyBirthdays.push({ label: `${client.profile.wifeName} (Partner/Wife)`, date: client.profile.wifeBirthday });
-      }
-      if (client.profile.husbandName && client.profile.husbandBirthday && !client.profile.husbandDeceased) {
-        familyBirthdays.push({ label: `${client.profile.husbandName} (Partner/Husband)`, date: client.profile.husbandBirthday });
-      }
-      if (client.profile.children) {
-        client.profile.children.forEach(child => {
-          if (child.name && child.birthday && !child.deceased) {
-            familyBirthdays.push({ label: `${child.name} (Child)`, date: child.birthday });
-          }
-        });
-      }
-      if (client.profile.otherFamilyMembers) {
-        client.profile.otherFamilyMembers.forEach(member => {
-          if (member.name && member.birthday && !member.deceased) {
-            familyBirthdays.push({ label: `${member.name} (${member.relationship})`, date: member.birthday });
-          }
-        });
-      }
-
-      familyBirthdays.forEach((bday, bidx) => {
-        if (!bday.date) return;
-        const parsed = parseDateString(bday.date);
-        if (!parsed) return;
-        
-        // Prevent duplicate birthday entries if they already exist in client.importantDates
-        const alreadyInDates = client.importantDates.some(d => 
-          d.label.toLowerCase().includes(bday.label.toLowerCase()) || 
-          bday.label.toLowerCase().includes(d.label.toLowerCase())
-        );
-        if (alreadyInDates) return;
-
-        eventsList.push({
-          id: `fambday-${client.id}-${bidx}-${bday.label.replace(/\s+/g, '-')}`,
-          client,
-          type: "birthday",
-          label: `${bday.label}'s Birthday`,
-          dateStr: bday.date,
+          type: m.type,
+          businessType: client.tier === "Gold" ? "Gold Client Events" : client.tier === "Platinum" ? "Platinum Client Events" : "Silver Client Events",
+          label: m.label,
+          dateStr: m.date,
           parsedMonth: parsed.month,
           parsedDay: parsed.day,
           parsedYear: parsed.year,
@@ -248,6 +150,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
           id: `rem-${client.id}-${reminder.id}`,
           client,
           type: "reminder",
+          businessType: client.tier === "Gold" ? "Gold Client Events" : client.tier === "Platinum" ? "Platinum Client Events" : "Silver Client Events",
           label: reminder.task,
           dateStr: reminder.date,
           parsedMonth: parsed.month,
@@ -266,10 +169,11 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
     return businessEvents.map(be => {
       const parsed = parseDateString(be.date);
       const associatedClient = be.associatedClientId ? clients.find(c => c.id === be.associatedClientId) : null;
+      const isClientRelated = be.type === "Gold / Platinum Client Events" || be.type === "Gold Client Events" || be.type === "Platinum Client Events" || be.type === "Silver Client Events";
       return {
         id: be.id,
         client: associatedClient || ({ id: "business-entity", firstName: "Business", lastName: "Event", homeBrand: "CEO Lifestyle" } as any),
-        type: (be.type === "Client Event" && associatedClient) ? ("custom_milestone" as const) : ("business" as const),
+        type: (isClientRelated && associatedClient) ? ("custom_milestone" as const) : ("business" as const),
         businessType: be.type,
         label: be.title,
         dateStr: be.date,
@@ -289,7 +193,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
       id: string;
       client: Client;
       type: "birthday" | "anniversary" | "custom_milestone" | "reminder" | "business";
-      businessType?: "Client Event" | "CEO Day" | "Librarium Luxe Day" | "General Business Day";
+      businessType?: BusinessEvent["type"];
       label: string;
       dateStr: string;
       parsedMonth: number;
@@ -309,22 +213,21 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
     return list.filter(ev => {
       // Brand filter (only apply to non-business events or business events matching the relevant brands)
       if (brandFilter !== "all") {
-        if (ev.type === "business") {
-          if (brandFilter === "Librarium Luxe" && ev.businessType !== "Librarium Luxe Day") return false;
-          if (brandFilter === "CEO Printing Services" && ev.businessType !== "CEO Day") return false;
-        } else {
-          if (ev.client.homeBrand !== "CEO Lifestyle" && ev.client.homeBrand !== brandFilter) {
+        const itemBrand = ev.client && ev.client.id !== "business-entity" ? ev.client.homeBrand : null;
+        if (itemBrand) {
+          if (itemBrand !== "CEO Lifestyle" && itemBrand !== brandFilter) {
             return false;
           }
+        } else {
+          // If it's a pure business event without a client, check businessType
+          if (brandFilter === "Librarium Luxe" && ev.businessType !== "Librarium Luxe Day") return false;
+          if (brandFilter === "CEO Printing Services" && ev.businessType !== "CEO Day") return false;
         }
       }
 
       // Event Type filter
       if (typeFilter !== "all") {
-        if (typeFilter === "birthday" && ev.type !== "birthday") return false;
-        if (typeFilter === "anniversary" && ev.type !== "anniversary") return false;
-        if (typeFilter === "reminder" && ev.type !== "reminder") return false;
-        if (ev.type === "business") return false; // Hide business events if looking for client birthdays/reminders
+        if (ev.businessType !== typeFilter) return false;
       }
 
       // Search Query
@@ -468,7 +371,14 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
           </div>
           <div>
             <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">System Reference Date</span>
-            <span className="text-xs font-bold text-white font-mono">July 8, 2026 (Wed)</span>
+            <span className="text-xs font-bold text-white font-mono">
+              {new Date(SYSTEM_REFERENCE_YEAR, SYSTEM_REFERENCE_MONTH, SYSTEM_REFERENCE_DAY).toLocaleDateString("en-US", {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                weekday: 'short'
+              })}
+            </span>
           </div>
         </div>
       </div>
@@ -515,10 +425,13 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
               onChange={(e) => setTypeFilter(e.target.value as any)}
               className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl py-2 pl-9 pr-3 text-xs font-bold focus:outline-none cursor-pointer appearance-none"
             >
-              <option value="all">All Occasions</option>
-              <option value="birthday">Birthdays</option>
-              <option value="anniversary">Wedding Anniversaries</option>
-              <option value="reminder">Follow-up Tasks</option>
+              <option value="all">All Categories</option>
+              <option value="Gold Client Events">Gold Client Events</option>
+              <option value="Platinum Client Events">Platinum Client Events</option>
+              <option value="Silver Client Events">Silver Client Events</option>
+              <option value="CEO Day">CEO Day</option>
+              <option value="Librarium Luxe Day">Librarium Luxe Day</option>
+              <option value="General Business Day">General Business Day</option>
             </select>
           </div>
         </div>
@@ -529,7 +442,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
             onClick={handleResetToToday}
             className="flex-1 text-center py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition-colors shadow-xs"
           >
-            Go to July 2026
+            Go to Today
           </button>
           <button
             onClick={() => {
@@ -605,28 +518,29 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
               const isSelected = selectedDay === cell.dayNumber;
               const hasEvents = cell.events.length > 0;
 
-              // Color dot categorizations
-              const hasVipEvent = cell.events.some(e => e.isVip);
-              const hasCeoEvent = cell.events.some(e => !e.isVip && e.type !== "business" && (e.client.homeBrand === "CEO Printing Services" || e.client.homeBrand === "CEO Lifestyle"));
-              const hasLibrariumEvent = cell.events.some(e => !e.isVip && e.type !== "business" && (e.client.homeBrand === "Librarium Luxe" || e.client.homeBrand === "CEO Lifestyle"));
-
-              // Business Event indicators
-              const hasCeoDay = cell.events.some(e => e.type === "business" && e.businessType === "CEO Day");
-              const hasLuxeDay = cell.events.some(e => e.type === "business" && e.businessType === "Librarium Luxe Day");
-              const hasGenDay = cell.events.some(e => e.type === "business" && e.businessType === "General Business Day");
-              const hasClientEvent = cell.events.some(e => (e.type === "business" && e.businessType === "Client Event") || (e.type === "custom_milestone" && e.businessType === "Client Event"));
+              // Color dot categorizations based on separate categories
+              const hasGold = cell.events.some(e => e.businessType === "Gold Client Events" || e.businessType === "Gold / Platinum Client Events");
+              const hasPlatinum = cell.events.some(e => e.businessType === "Platinum Client Events");
+              const hasSilver = cell.events.some(e => e.businessType === "Silver Client Events");
+              const hasCeoDay = cell.events.some(e => e.businessType === "CEO Day");
+              const hasLuxeDay = cell.events.some(e => e.businessType === "Librarium Luxe Day");
+              const hasGenDay = cell.events.some(e => e.businessType === "General Business Day");
 
               // Determine non-selected, non-today cell colors based on business events
               let cellBgClass = "bg-white border-slate-200/70 text-slate-900 hover:bg-slate-50 hover:border-slate-300";
-              if (!cell.isToday && !isSelected) {
-                if (hasCeoDay) {
-                  cellBgClass = "bg-purple-50/70 border-purple-200 text-purple-950 hover:bg-purple-100/50 hover:border-purple-300";
-                } else if (hasLuxeDay) {
+              if (!cell.isToday && !isSelected && cell.events.length > 0) {
+                if (hasPlatinum) {
+                  cellBgClass = "bg-slate-900/10 border-slate-950 text-slate-950 hover:bg-slate-900/20 hover:border-slate-950/80";
+                } else if (hasGold) {
                   cellBgClass = "bg-amber-50/60 border-amber-200 text-amber-950 hover:bg-amber-100/40 hover:border-amber-300";
-                } else if (hasClientEvent) {
-                  cellBgClass = "bg-emerald-50/60 border-emerald-200 text-emerald-950 hover:bg-emerald-100/40 hover:border-emerald-300";
+                } else if (hasCeoDay) {
+                  cellBgClass = "bg-blue-50/60 border-blue-200 text-blue-950 hover:bg-blue-100/40 hover:border-blue-300";
+                } else if (hasLuxeDay) {
+                  cellBgClass = "bg-rose-50/60 border-rose-200 text-rose-950 hover:bg-rose-100/40 hover:border-rose-300";
                 } else if (hasGenDay) {
-                  cellBgClass = "bg-teal-50/60 border-teal-200 text-teal-950 hover:bg-teal-100/40 hover:border-teal-300";
+                  cellBgClass = "bg-emerald-50/60 border-emerald-200 text-emerald-950 hover:bg-emerald-100/40 hover:border-emerald-300";
+                } else if (hasSilver) {
+                  cellBgClass = "bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100 hover:border-slate-300";
                 }
               }
 
@@ -656,33 +570,26 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
                       </div>
                     )}
 
-                    {/* Miniature Dots */}
+                     {/* Miniature Dots */}
                     {hasEvents && (
                       <div className="flex flex-wrap gap-1 items-center min-h-[10px] mt-1 pb-0.5">
-                        {/* Gold/Platinum Elite Event Dot - Shiny Gold */}
-                        {hasVipEvent && (
-                          <span className="w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white animate-pulse shadow-xs shrink-0" title="Gold/Platinum Elite Event" />
+                        {hasPlatinum && (
+                          <span className="w-2.5 h-2.5 rounded-full bg-slate-950 ring-2 ring-white animate-pulse shadow-xs shrink-0" title="Platinum Client Events" />
                         )}
-                        {/* CEO Printing Event Dot - Blue */}
-                        {hasCeoEvent && (
-                          <span className="w-2.5 h-2.5 rounded-full bg-blue-500 ring-2 ring-white shadow-xs shrink-0" title="CEO Printing Services Date" />
+                        {hasGold && (
+                          <span className="w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white animate-pulse shadow-xs shrink-0" title="Gold Client Events" />
                         )}
-                        {/* Librarium Luxe Event Dot - Velvet/Rose */}
-                        {hasLibrariumEvent && (
-                          <span className="w-2.5 h-2.5 rounded-full bg-rose-700 ring-2 ring-white shadow-xs shrink-0" title="Librarium Luxe Date" />
+                        {hasSilver && (
+                          <span className="w-2.5 h-2.5 rounded-full bg-slate-400 ring-2 ring-white shadow-xs shrink-0" title="Silver Client Events" />
                         )}
-                        {/* Business Events Dots */}
                         {hasCeoDay && (
-                          <span className="w-2.5 h-2.5 rounded bg-purple-600 ring-2 ring-white shadow-xs shrink-0" title="CEO Day" />
+                          <span className="w-2.5 h-2.5 rounded bg-blue-600 ring-2 ring-white shadow-xs shrink-0" title="CEO Day" />
                         )}
                         {hasLuxeDay && (
-                          <span className="w-2.5 h-2.5 rounded bg-amber-600 ring-2 ring-white shadow-xs shrink-0" title="Librarium Luxe Day" />
-                        )}
-                        {hasClientEvent && (
-                          <span className="w-2.5 h-2.5 rounded bg-emerald-600 ring-2 ring-white shadow-xs shrink-0" title="Client Event" />
+                          <span className="w-2.5 h-2.5 rounded bg-rose-600 ring-2 ring-white shadow-xs shrink-0" title="Librarium Luxe Day" />
                         )}
                         {hasGenDay && (
-                          <span className="w-2.5 h-2.5 rounded bg-teal-600 ring-2 ring-white shadow-xs shrink-0" title="General Business Day" />
+                          <span className="w-2.5 h-2.5 rounded bg-emerald-600 ring-2 ring-white shadow-xs shrink-0" title="General Business Day" />
                         )}
                       </div>
                     )}
@@ -700,36 +607,28 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
           {/* Quick Calendar Legend */}
           <div className="pt-4 border-t border-slate-100 flex flex-wrap gap-x-6 gap-y-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-left">
             <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-gradient-to-r from-amber-400 to-amber-500 border border-amber-600/30" />
-              <span>Gold / Platinum Event</span>
+              <span className="w-2.5 h-2.5 rounded-full bg-slate-950 ring-1 ring-slate-950/30" />
+              <span>Platinum Client</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-              <span>CEO Blue</span>
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 ring-1 ring-amber-500/30" />
+              <span>Gold Client</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-rose-700" />
-              <span>Velvet Luxe</span>
+              <span className="w-2.5 h-2.5 rounded-full bg-slate-400 ring-1 ring-slate-500/30" />
+              <span>Silver Client</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded bg-purple-600" />
-              <span>CEO Day (Purple)</span>
+              <span className="w-2 h-2 rounded bg-blue-600" />
+              <span>CEO Day</span>
             </div>
             <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded bg-amber-600" />
-              <span>Luxe Day (Gold)</span>
+              <span className="w-2 h-2 rounded bg-rose-600" />
+              <span>Librarium Luxe Day</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded bg-emerald-600" />
-              <span>Client Event (Green)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded bg-teal-600" />
-              <span>Business Day (Teal)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded border border-slate-400 bg-slate-950" />
-              <span>Reference Today (July 8)</span>
+              <span>General Business Day</span>
             </div>
           </div>
         </div>
@@ -763,34 +662,31 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
                   const isCeo = ev.client.homeBrand === "CEO Printing Services" || ev.client.homeBrand === "CEO Lifestyle";
                   const isLuxe = ev.client.homeBrand === "Librarium Luxe" || ev.client.homeBrand === "CEO Lifestyle";
                   
-                  // Detail card branding color scheme
+                  // Detail card branding color scheme based on 6 unified categories
                   let themeCardClass = "bg-slate-50 border-slate-200/60";
                   let tagText = "text-slate-500 bg-slate-100 border-slate-200";
                   
-                  if (ev.type === "birthday") {
+                  if (ev.businessType === "Platinum Client Events") {
+                    themeCardClass = "bg-slate-50 border-slate-950/80 shadow-xs";
+                    tagText = "text-white bg-slate-950 border-slate-900";
+                  } else if (ev.businessType === "Gold Client Events" || ev.businessType === "Gold / Platinum Client Events") {
                     themeCardClass = "bg-amber-50/40 border-amber-200/50";
                     tagText = "text-amber-800 bg-amber-100 border-amber-200";
-                  } else if (ev.type === "anniversary") {
+                  } else if (ev.businessType === "Silver Client Events") {
+                    themeCardClass = "bg-slate-50 border-slate-200/60";
+                    tagText = "text-slate-700 bg-slate-100 border-slate-200";
+                  } else if (ev.businessType === "CEO Day") {
+                    themeCardClass = "bg-blue-50/50 border-blue-200/50";
+                    tagText = "text-blue-800 bg-blue-100 border-blue-200";
+                  } else if (ev.businessType === "Librarium Luxe Day") {
                     themeCardClass = "bg-rose-50/40 border-rose-200/50";
                     tagText = "text-rose-800 bg-rose-100 border-rose-200";
-                  } else if (ev.type === "reminder") {
-                    themeCardClass = "bg-blue-50/40 border-blue-200/50";
-                    tagText = "text-blue-800 bg-blue-100 border-blue-200";
-                  } else if (ev.type === "business" || ev.type === "custom_milestone") {
-                    if (ev.businessType === "CEO Day") {
-                      themeCardClass = "bg-purple-50/50 border-purple-200/50";
-                      tagText = "text-purple-800 bg-purple-100 border-purple-200";
-                    } else if (ev.businessType === "Librarium Luxe Day") {
-                      themeCardClass = "bg-amber-50/40 border-amber-200/50";
-                      tagText = "text-amber-800 bg-amber-100 border-amber-200";
-                    } else if (ev.businessType === "Client Event") {
-                      themeCardClass = "bg-emerald-50/50 border-emerald-200/50";
-                      tagText = "text-emerald-800 bg-emerald-100 border-emerald-200";
-                    } else {
-                      themeCardClass = "bg-teal-50/40 border-teal-200/50";
-                      tagText = "text-teal-800 bg-teal-100 border-teal-200";
-                    }
+                  } else if (ev.businessType === "General Business Day") {
+                    themeCardClass = "bg-emerald-50/50 border-emerald-200/50";
+                    tagText = "text-emerald-800 bg-emerald-100 border-emerald-200";
                   }
+
+                  const isClientEvent = ev.businessType === "Gold / Platinum Client Events" || ev.businessType === "Gold Client Events" || ev.businessType === "Platinum Client Events" || ev.businessType === "Silver Client Events";
 
                   return (
                     <div 
@@ -800,11 +696,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
                       {/* Header Row */}
                       <div className="flex justify-between items-start">
                         <div>
-                          {ev.type === "business" && ev.businessType !== "Client Event" ? (
-                            <p className="font-extrabold text-xs text-purple-950 flex items-center gap-1.5">
-                              💼 {ev.businessType || "Corporate Event"}
-                            </p>
-                          ) : (
+                          {isClientEvent && ev.client && ev.client.id !== "business-entity" ? (
                             <p 
                               onClick={() => {
                                 if (ev.client && ev.client.id !== "business-entity") {
@@ -825,57 +717,61 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
                                 </span>
                               )}
                             </p>
-                          )}
-                          {ev.type === "business" && ev.businessType !== "Client Event" ? (
-                            <p className="text-[10px] text-slate-400 font-mono mt-0.5">Corporate Headquarters • Kingston, JM</p>
                           ) : (
+                            <p className="font-extrabold text-xs text-purple-950 flex items-center gap-1.5">
+                              💼 {ev.businessType || "Corporate Event"}
+                            </p>
+                          )}
+                          {isClientEvent && ev.client && ev.client.id !== "business-entity" ? (
                             <p className="text-[10px] text-slate-400 font-mono mt-0.5">ID: {ev.client.id} • {ev.client.contact?.city || "Jamaica"}</p>
+                          ) : (
+                            <p className="text-[10px] text-slate-400 font-mono mt-0.5">Corporate Headquarters • Kingston, JM</p>
                           )}
                         </div>
 
                         <span className={`px-2 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-wider border ${tagText}`}>
-                          {ev.businessType === "Client Event" ? "Client Event" : ev.type === "custom_milestone" ? "Milestone" : ev.type === "business" ? "Business" : ev.type}
+                          {ev.businessType}
                         </span>
                       </div>
-
+ 
                       {/* Content Description */}
                       <div className="text-xs text-slate-700 leading-relaxed font-medium bg-white/75 p-2 rounded-xl border border-slate-100">
                         {ev.type === "birthday" && <Gift className="w-3.5 h-3.5 text-amber-500 inline mr-1.5 align-middle" />}
                         {ev.type === "anniversary" && <Heart className="w-3.5 h-3.5 text-rose-500 inline mr-1.5 align-middle" />}
                         {ev.type === "reminder" && <Bell className="w-3.5 h-3.5 text-blue-500 inline mr-1.5 align-middle" />}
-                        {ev.businessType === "Client Event" && <span className="inline mr-1.5 align-middle">👤</span>}
-                        {ev.type === "business" && ev.businessType !== "Client Event" && <CalendarIcon className="w-3.5 h-3.5 text-purple-500 inline mr-1.5 align-middle" />}
+                        {isClientEvent && <span className="inline mr-1.5 align-middle">👤</span>}
+                        {ev.type === "business" && !isClientEvent && <CalendarIcon className="w-3.5 h-3.5 text-purple-500 inline mr-1.5 align-middle" />}
                         <span className="align-middle">{ev.label}</span>
                         {ev.description && (
                           <p className="text-[11px] text-slate-500 mt-1 font-normal italic">{ev.description}</p>
                         )}
                       </div>
-
+ 
                       {/* Home brand footer indicators */}
                       <div className="flex items-center justify-between pt-1 text-[9px] font-extrabold text-slate-400 uppercase tracking-widest">
                         <div className="flex items-center gap-1.5">
-                          {isCeo && ev.type !== "business" && ev.businessType !== "Client Event" && (
+                          {isCeo && !isClientEvent && (
                             <span className="flex items-center gap-1 bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">
                               <Printer className="w-3 h-3" /> CEO Blue
                             </span>
                           )}
-                          {isLuxe && ev.type !== "business" && ev.businessType !== "Client Event" && (
+                          {isLuxe && !isClientEvent && (
                             <span className="flex items-center gap-1 bg-rose-50 text-rose-800 px-1.5 py-0.5 rounded">
                               <BookOpen className="w-3 h-3" /> Velvet Luxe
                             </span>
                           )}
-                          {ev.businessType === "Client Event" && (
+                          {isClientEvent && (
                             <span className="flex items-center gap-1 bg-emerald-50 text-emerald-800 px-1.5 py-0.5 rounded border border-emerald-100">
                               Client Care Event
                             </span>
                           )}
-                          {ev.type === "business" && ev.businessType !== "Client Event" && (
+                          {(ev.businessType === "CEO Day" || ev.businessType === "Librarium Luxe Day" || ev.businessType === "General Business Day") && (
                             <span className="flex items-center gap-1 bg-purple-50 text-purple-800 px-1.5 py-0.5 rounded border border-purple-100">
                               <ShieldCheck className="w-3 h-3" /> Management
                             </span>
                           )}
                         </div>
-
+ 
                         {ev.id.startsWith("custom-evt-") ? (
                           <button
                             onClick={() => {
@@ -887,7 +783,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
                           >
                             Delete Event
                           </button>
-                        ) : ev.type === "business" && ev.businessType !== "Client Event" ? (
+                        ) : ev.type === "business" && !isClientEvent ? (
                           <span className="text-[9px] text-indigo-700 font-bold tracking-wider uppercase">Enterprise event</span>
                         ) : (
                           <button
@@ -933,14 +829,16 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
                     onChange={(e) => setEventCategory(e.target.value as any)}
                     className="w-full bg-slate-50 border border-slate-200 focus:border-slate-850 rounded-xl px-3 py-1.5 focus:outline-none transition-colors text-xs font-semibold"
                   >
-                    <option value="Client Event">👤 Client Event</option>
-                    <option value="CEO Day">💜 CEO Day</option>
+                    <option value="Gold Client Events">🏆 Gold Client Events</option>
+                    <option value="Platinum Client Events">🖤 Platinum Client Events</option>
+                    <option value="Silver Client Events">🥈 Silver Client Events</option>
+                    <option value="CEO Day">💙 CEO Day</option>
                     <option value="Librarium Luxe Day">💛 Librarium Luxe Day</option>
                     <option value="General Business Day">💚 General Business Day</option>
                   </select>
                 </div>
 
-                {eventCategory === "Client Event" && (
+                {(eventCategory === "Gold / Platinum Client Events" || eventCategory === "Gold Client Events" || eventCategory === "Platinum Client Events" || eventCategory === "Silver Client Events") && (
                   <div>
                     <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Associate Client</label>
                     <select
@@ -1020,63 +918,6 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
             )}
           </div>
 
-          {/* Upcoming 30-Day Client Events */}
-          <div className="bg-white/95 backdrop-blur-md border border-slate-200/60 rounded-3xl p-6 shadow-md space-y-4">
-            <div className="pb-3 border-b border-slate-100 flex justify-between items-center">
-              <div>
-                <span className="text-[9px] font-extrabold text-amber-600 uppercase tracking-widest block">
-                  Upcoming Agenda
-                </span>
-                <h3 className="text-sm font-bold text-slate-950">
-                  Next 30 Days Milestones
-                </h3>
-              </div>
-              <span className="text-xs font-mono font-bold bg-slate-100 px-2.5 py-1 rounded-xl text-slate-600">
-                {upcomingMilestones.length} Found
-              </span>
-            </div>
-
-            <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
-              {upcomingMilestones.length === 0 ? (
-                <p className="text-xs text-slate-400 italic py-4 text-center">No major milestones or reminders found inside the next 30 days.</p>
-              ) : (
-                upcomingMilestones.map((ev, idx) => {
-                  let badgeColor = "bg-slate-100 text-slate-600";
-                  if (ev.daysRemaining === 0) badgeColor = "bg-rose-500 text-white animate-pulse";
-                  else if (ev.daysRemaining === 1) badgeColor = "bg-amber-500 text-white";
-                  else if (ev.daysRemaining <= 5) badgeColor = "bg-indigo-600 text-white";
-
-                  return (
-                    <div
-                      key={`upc-${idx}`}
-                      onClick={() => onSelectClient(ev.client.id)}
-                      className="p-2.5 bg-slate-50 hover:bg-slate-100/80 border border-slate-200/40 hover:border-slate-300 rounded-xl transition-all cursor-pointer flex items-center justify-between text-xs group"
-                    >
-                      <div className="text-left space-y-0.5 max-w-[70%]">
-                        <p className="font-bold text-slate-900 group-hover:text-indigo-600 group-hover:underline flex items-center gap-1">
-                          {ev.client.firstName} {ev.client.lastName}
-                          {ev.isVip && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                          )}
-                        </p>
-                        <p className="text-[10px] text-slate-500 truncate italic">
-                          {ev.type === "birthday" ? "🎁 Birthday" : ev.type === "anniversary" ? "💍 Anniversary" : "📌 " + ev.label}
-                        </p>
-                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wide">
-                          {ev.dateStr}
-                        </p>
-                      </div>
-
-                      <span className={`text-[9px] font-mono font-bold px-2 py-1 rounded-lg ${badgeColor}`}>
-                        {ev.daysRemaining === 0 ? "TODAY" : ev.daysRemaining === 1 ? "1 day" : `${ev.daysRemaining} days`}
-                      </span>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
         </div>
 
       </div>
@@ -1116,21 +957,22 @@ export function SmallCalendarWidget({ clients, onSelectClient, onOpenTask }: Com
       month: number;
       day: number;
       reminderId?: string;
+      isBusiness?: boolean;
+      businessType?: string;
     }> = [];
 
     clients.forEach(c => {
-      c.importantDates.forEach(d => {
-        const parsed = parseDateString(d.date);
+      const milestones = getClientMilestones(c);
+      milestones.forEach((m) => {
+        const parsed = parseDateString(m.date);
         if (!parsed) return;
-        const isBday = d.label.toLowerCase().includes("birth");
-        const isAnniv = d.label.toLowerCase().includes("ann") || d.label.toLowerCase().includes("wed");
         list.push({
           clientId: c.id,
           clientName: `${c.firstName} ${c.lastName}`,
           isVip: c.tier === "Gold" || c.tier === "Platinum",
           homeBrand: c.homeBrand,
-          label: d.label,
-          type: isBday ? "birthday" : isAnniv ? "anniversary" : "reminder",
+          label: m.label,
+          type: m.type === "custom_milestone" ? "reminder" : m.type,
           month: parsed.month,
           day: parsed.day
         });
@@ -1150,6 +992,39 @@ export function SmallCalendarWidget({ clients, onSelectClient, onOpenTask }: Com
           day: parsed.day,
           reminderId: r.id
         });
+      });
+    });
+
+    // Load business events
+    const businessEvents = (() => {
+      const stored = localStorage.getItem("ceo_crm_business_events");
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+      return [];
+    })();
+
+    businessEvents.forEach((be: any) => {
+      const parsed = parseDateString(be.date);
+      if (!parsed) return;
+
+      const associatedClient = be.associatedClientId ? clients.find(c => c.id === be.associatedClientId) : null;
+      list.push({
+        clientId: associatedClient ? associatedClient.id : "business-entity",
+        clientName: associatedClient ? `${associatedClient.firstName} ${associatedClient.lastName}` : "Corporate Headquarters",
+        isVip: associatedClient ? (associatedClient.tier === "Gold" || associatedClient.tier === "Platinum") : false,
+        homeBrand: associatedClient ? associatedClient.homeBrand : "CEO Lifestyle",
+        label: be.title,
+        type: "reminder",
+        month: parsed.month,
+        day: parsed.day,
+        reminderId: be.id,
+        isBusiness: true,
+        businessType: be.type
       });
     });
 
@@ -1264,40 +1139,59 @@ export function SmallCalendarWidget({ clients, onSelectClient, onOpenTask }: Com
           ) : (
             <div className="space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
               {selectedDayEvents.map((ev, i) => {
+                const isCorp = ev.clientId === "business-entity";
+                const isBusiness = (ev as any).isBusiness;
+                const businessType = isBusiness ? (ev as any).businessType : "";
                 const clientObj = clients.find(c => c.id === ev.clientId);
                 const tier = clientObj?.tier || "Silver";
+
+                // Corporate event custom classes
+                let cardClass = `p-2 border rounded-xl flex justify-between items-center text-[10px] group transition-all hover:-translate-y-0.5 `;
+                if (isCorp) {
+                  cardClass += "bg-purple-50/50 border-purple-200 hover:bg-purple-100/50 border-l-4 border-l-purple-600";
+                } else if (tier === "Gold") {
+                  cardClass += "bg-amber-50/30 border-amber-200/70 hover:bg-amber-50/60 border-l-4 border-l-amber-500 cursor-pointer";
+                } else if (tier === "Platinum") {
+                  cardClass += "bg-slate-50 border-slate-200 hover:bg-slate-100 border-l-4 border-l-slate-900 cursor-pointer";
+                } else {
+                  cardClass += "bg-slate-50/50 border-slate-200/40 hover:bg-slate-50 border-l-4 border-l-slate-300 cursor-pointer";
+                }
+
                 return (
                   <div
                     key={i}
                     onClick={() => {
+                      if (isCorp) return;
                       if (ev.type === "reminder" && ev.reminderId && onOpenTask) {
                         onOpenTask(ev.clientId, ev.reminderId);
                       } else {
                         onSelectClient(ev.clientId);
                       }
                     }}
-                    className={`p-2 border rounded-xl cursor-pointer flex justify-between items-center text-[10px] group transition-all hover:-translate-y-0.5 ${
-                      tier === "Gold"
-                        ? "bg-amber-50/30 border-amber-200/70 hover:bg-amber-50/60 border-l-4 border-l-amber-500"
-                        : tier === "Platinum"
-                          ? "bg-slate-50 border-slate-200 hover:bg-slate-100 border-l-4 border-l-slate-900"
-                          : "bg-slate-50/50 border-slate-200/40 hover:bg-slate-50 border-l-4 border-l-slate-300"
-                    }`}
+                    className={cardClass}
                   >
                     <div className="text-left truncate max-w-[80%]">
                       <p className="font-extrabold text-slate-900 group-hover:text-indigo-600 truncate">
-                        {ev.clientName}
+                        {isCorp ? `💼 ${businessType}` : ev.clientName}
                       </p>
                       <p className="text-[9px] text-slate-500 truncate italic">
-                        {ev.type === "birthday" ? "🎁 Birthday" : ev.type === "anniversary" ? "💍 Anniversary" : "📌 " + ev.label}
+                        {isCorp ? ev.label : ev.type === "birthday" ? `🎁 ${ev.label}` : ev.type === "anniversary" ? `💍 ${ev.label}` : `📌 ${ev.label}`}
                       </p>
+                      {isBusiness && !isCorp && (
+                        <p className="text-[8px] font-bold text-indigo-600 uppercase tracking-wider mt-0.5">{businessType}</p>
+                      )}
                     </div>
-                    {tier === "Gold" && (
+                    {isCorp && (
+                      <span className="text-[7px] font-black uppercase bg-purple-100 text-purple-800 px-1 py-0.5 rounded leading-none">
+                        Corp
+                      </span>
+                    )}
+                    {!isCorp && tier === "Gold" && (
                       <span className="text-[7px] font-black uppercase bg-amber-100 text-amber-800 px-1 py-0.5 rounded leading-none">
                         Gold
                       </span>
                     )}
-                    {tier === "Platinum" && (
+                    {!isCorp && tier === "Platinum" && (
                       <span className="text-[7px] font-black uppercase bg-slate-900 text-slate-100 px-1 py-0.5 rounded leading-none">
                         Plat
                       </span>

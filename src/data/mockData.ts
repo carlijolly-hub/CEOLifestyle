@@ -538,5 +538,64 @@ export const INITIAL_CLIENTS: Client[] = [
   }
 ];
 
-export const INITIAL_INVENTORY: LuxeBookInventoryItem[] = [];
+export const INITIAL_INVENTORY: LuxeBookInventoryItem[] = [
+  {
+    id: "LUX-101",
+    title: "Shakespeare First Folio (Luxe Blue Leather)",
+    category: "Fine Art",
+    quantity: 8,
+    dateAdded: "2026-05-15",
+    salesHistory: [
+      { id: "sh-1", clientName: "Daniel Williams", date: "2026-06-12", quantitySold: 1 }
+    ],
+    rankingStatus: "Healthy",
+    bookRank: "Best Seller",
+    archived: false,
+    inStore: 2,
+    office: 6,
+    sellingPrice: 5000
+  },
+  {
+    id: "LUX-102",
+    title: "The Wealth of Nations (Signature Gold Edition)",
+    category: "Business & Philosophy",
+    quantity: 12,
+    dateAdded: "2026-04-10",
+    salesHistory: [],
+    rankingStatus: "Stacked",
+    bookRank: "Top Seller",
+    archived: false,
+    inStore: 4,
+    office: 8,
+    sellingPrice: 4500
+  },
+  {
+    id: "LUX-103",
+    title: "The Odyssey of Homer (Handcrafted Codex)",
+    category: "History & Classics",
+    quantity: 5,
+    dateAdded: "2026-06-01",
+    salesHistory: [],
+    rankingStatus: "Test Again",
+    bookRank: "New Release",
+    archived: false,
+    inStore: 1,
+    office: 4,
+    sellingPrice: 3800
+  },
+  {
+    id: "LUX-104",
+    title: "Principia Mathematica (Platinum Hardcover)",
+    category: "Science",
+    quantity: 7,
+    dateAdded: "2026-03-20",
+    salesHistory: [],
+    rankingStatus: "Urgent Restock",
+    bookRank: "Slow Moving",
+    archived: false,
+    inStore: 4,
+    office: 4, // This creates a discrepancy: 4 + 4 = 8 !== 7! Perfect for showcasing the warning feature.
+    sellingPrice: 6000
+  }
+];
 

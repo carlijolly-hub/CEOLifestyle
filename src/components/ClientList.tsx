@@ -211,6 +211,26 @@ export default function ClientList({
 
   return (
     <div className="space-y-6 text-slate-800">
+      {/* Client Accounts Synchronization Status Banner */}
+      <div className="bg-slate-50 border border-slate-200/50 rounded-2xl p-4 flex items-center justify-between gap-4 text-left shadow-3xs">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-slate-900">
+              {clients.length} Client Accounts Synchronized
+            </h4>
+            <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
+              Offline Database active. Last Synchronized: <span className="font-semibold text-slate-500">{new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+            </p>
+          </div>
+        </div>
+        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest hidden sm:block">
+          CRM Watchtower Secured
+        </div>
+      </div>
+
       {/* Search Bar & Action Buttons */}
       <div className="flex flex-col md:flex-row gap-4 justify-between items-stretch md:items-center">
         <div className="relative flex-1">
@@ -637,19 +657,19 @@ export default function ClientList({
                         </span>
                         
                         <div className="flex items-center gap-2">
-                          {onDeleteClient && (
+                          {onDeleteClient && !client.deactivated && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (window.confirm(`Are you sure you want to permanently delete client profile: ${client.firstName} ${client.lastName}?`)) {
+                                if (window.confirm(`Are you sure you want to deactivate client profile: ${client.firstName} ${client.lastName}? This keeps all historical interaction notes but archives them.`)) {
                                   onDeleteClient(client.id);
                                 }
                               }}
-                              className="flex items-center gap-1.5 text-[10px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/50 px-3 py-1.5 rounded-lg transition-all cursor-pointer"
-                              title="Delete Client Profile"
+                              className="flex items-center gap-1.5 text-[10px] font-bold text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200/50 px-3 py-1.5 rounded-lg transition-all cursor-pointer"
+                              title="Deactivate Client Profile"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              Delete
+                              <Archive className="w-3.5 h-3.5" />
+                              Deactivate
                             </button>
                           )}
                           <button

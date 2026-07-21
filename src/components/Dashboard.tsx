@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Client, FollowUpReminder, TimelineEvent, LuxeBookInventoryItem } from "../types";
+import { Client, FollowUpReminder, TimelineEvent, LuxeBookInventoryItem, BusinessEvent, SystemSettings } from "../types";
 import { 
   Users, 
   Printer, 
@@ -9,6 +9,7 @@ import {
   Calendar, 
   DollarSign, 
   ChevronRight,
+  ChevronLeft,
   ChevronDown,
   ChevronUp,
   Package,
@@ -23,9 +24,15 @@ import {
   Activity,
   CheckCircle2,
   Smartphone,
-  Mail
+  Mail,
+  Calculator,
+  Shirt
 } from "lucide-react";
 import { SmallCalendarWidget } from "./MilestoneCalendar";
+import BookCostCalculator from "./BookCostCalculator";
+import LocationCostCalculator from "./LocationCostCalculator";
+import TShirtStudioQuoteCalculator from "./TShirtStudioQuoteCalculator";
+import { getRelationshipEventTitle, getClientMilestones } from "../utils/dateHelpers";
 
 interface DashboardProps {
   clients: Client[];
@@ -33,6 +40,7 @@ interface DashboardProps {
   onSelectClient: (clientId: string) => void;
   onNavigateToTab: (tab: string) => void;
   onOpenTask?: (clientId: string, reminderId: string) => void;
+  settings?: SystemSettings;
 }
 
 const MONTH_MAP: { [key: string]: number } = {
@@ -50,11 +58,12 @@ const MONTH_MAP: { [key: string]: number } = {
   december: 11, dec: 11
 };
 
-// Simulation Date: July 8, 2026
-const CURRENT_YEAR = 2026;
-const CURRENT_MONTH = 6; // July
-const CURRENT_DAY = 8;
-const CURRENT_SIM_DATE = new Date(CURRENT_YEAR, CURRENT_MONTH, CURRENT_DAY);
+// Dynamic Real-Time Date
+const realToday = new Date();
+const CURRENT_YEAR = realToday.getFullYear();
+const CURRENT_MONTH = realToday.getMonth();
+const CURRENT_DAY = realToday.getDate();
+const CURRENT_SIM_DATE = realToday;
 
 // 1. Robust Date Parsing
 function parseDateString(dateStr: string): { month: number; day: number; year?: number } | null {
@@ -146,18 +155,31 @@ interface FocusProfile {
   triggers: TriggerItem[];
 }
 
-export default function Dashboard({ clients, inventory = [], onSelectClient, onNavigateToTab, onOpenTask }: DashboardProps) {
-  const [focusFilter, setFocusFilter] = useState<"all" | "urgent" | "milestones" | "dormant" | "tasks">("all");
+export default function Dashboard({ clients, inventory = [], onSelectClient, onNavigateToTab, onOpenTask, settings }: DashboardProps) {
+  const [focusFilter, setFocusFilter] = useState<"all" | "urgent" | "milestones" | "dormant" | "tasks" | "inventory">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [summaryTab, setSummaryTab] = useState<"today" | "this_week" | "overview">("today");
   const [expandedAttentionId, setExpandedAttentionId] = useState<string | null>(null);
 
+  // Dashboard Module Carousel Navigation
+  const [currentCarouselIndex, setCurrentCarouselIndex] = useState(() => {
+    const stored = localStorage.getItem("dashboard_carousel_index");
+    if (stored !== null) return parseInt(stored, 10);
+    return settings?.dashboardCarouselDefaultIndex ?? 0;
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem("dashboard_carousel_index", currentCarouselIndex.toString());
+  }, [currentCarouselIndex]);
+
   // Luxe Inventory Alerts
   const inventoryAlerts = useMemo(() => {
-    const outOfStock = inventory.filter(item => item.quantity <= 0);
-    const lowStock = inventory.filter(item => item.quantity > 0 && item.quantity <= 5);
-    const urgentRestock = inventory.filter(item => item.rankingStatus === "Urgent Restock" && item.quantity > 0);
-    const activeAlertsList = inventory.filter(item => item.quantity <= 5 || item.rankingStatus === "Urgent Restock");
+    const lowThreshold = settings ? settings.lowStockThreshold : 5;
+    const activeInv = inventory.filter(item => !item.archived);
+    const outOfStock = activeInv.filter(item => item.quantity <= 0);
+    const lowStock = activeInv.filter(item => item.quantity > 0 && item.quantity <= lowThreshold);
+    const urgentRestock = activeInv.filter(item => item.rankingStatus === "Urgent Restock" && item.quantity > 0);
+    const activeAlertsList = activeInv.filter(item => item.quantity <= lowThreshold || item.rankingStatus === "Urgent Restock");
     return {
       outOfStock,
       lowStock,
@@ -165,7 +187,136 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
       activeAlertsList,
       totalAlerts: activeAlertsList.length
     };
-  }, [inventory]);
+  }, [inventory, settings]);
+
+  // Luxe Inventory Detailed Tasks and Reconciliation Alerts
+  const inventoryTasks = useMemo(() => {
+    const tasks: any[] = [];
+    if (!inventory) return tasks;
+
+    inventory.forEach(item => {
+      if (item.archived) return;
+
+      const total = item.quantity;
+      const inStore = item.inStore ?? 0;
+      const office = item.office ?? 0;
+      const physicalCount = inStore + office;
+
+      // 1. Stock level exceptions
+      if (total <= 0) {
+        tasks.push({
+          id: `inv-task-${item.id}-out-of-stock`,
+          isInventoryTask: true,
+          title: item.title,
+          severity: "urgent",
+          type: "out_of_stock",
+          description: "Out of Stock",
+          detailedText: `"${item.title}" — Out of Stock`,
+          recommendedAction: "Order restock copies immediately to fulfill backorders.",
+          quantityAffected: 0
+        });
+      } else if (total <= (settings ? settings.lowStockThreshold : 5)) {
+        const isUrgent = item.rankingStatus === "Urgent Restock";
+        tasks.push({
+          id: `inv-task-${item.id}-low-stock`,
+          isInventoryTask: true,
+          title: item.title,
+          severity: isUrgent ? "urgent" : "high",
+          type: isUrgent ? "urgent_restock" : "low_stock",
+          description: isUrgent 
+            ? `Restock Recommended (${total} copy${total > 1 ? 's' : ''} remaining)`
+            : `Low Stock (${total} copy${total > 1 ? 's' : ''} remaining)`,
+          detailedText: isUrgent
+            ? `"${item.title}" — Restock Recommended (${total} copy${total > 1 ? 's' : ''} remaining)`
+            : `"${item.title}" — Low Stock (${total} copy${total > 1 ? 's' : ''} remaining)`,
+          recommendedAction: isUrgent 
+            ? "Urgent: Place restocking order. Premium copies are critically low."
+            : "Monitor rate of sale and schedule restocking.",
+          quantityAffected: total
+        });
+      } else if (item.rankingStatus === "Urgent Restock") {
+        tasks.push({
+          id: `inv-task-${item.id}-urgent-restock`,
+          isInventoryTask: true,
+          title: item.title,
+          severity: "urgent",
+          type: "urgent_restock",
+          description: "Urgent Restock Recommended",
+          detailedText: `"${item.title}" — Restock Recommended (${total} copies remaining)`,
+          recommendedAction: "Critical Restock: Place restocking order. High-priority title.",
+          quantityAffected: total
+        });
+      } else if (item.rankingStatus === "Restock") {
+        tasks.push({
+          id: `inv-task-${item.id}-restock`,
+          isInventoryTask: true,
+          title: item.title,
+          severity: "high",
+          type: "restock_recommended",
+          description: "Restock Recommended",
+          detailedText: `"${item.title}" — Restock Recommended (${total} copies remaining)`,
+          recommendedAction: "Schedule a standard reorder process for this listing.",
+          quantityAffected: total
+        });
+      }
+
+      // 2. Inventory Reconciliation Alerts
+      const hasMissingFields = item.inStore === undefined || item.office === undefined;
+      const mismatch = physicalCount !== total;
+
+      if (mismatch || hasMissingFields) {
+        if (hasMissingFields) {
+          tasks.push({
+            id: `inv-task-${item.id}-missing-alloc`,
+            isInventoryTask: true,
+            title: item.title,
+            severity: "high",
+            type: "mismatch",
+            description: "Inventory Count Mismatch: Physical count does not match recorded inventory.",
+            detailedText: `"${item.title}" — Physical count does not match recorded inventory.`,
+            recommendedAction: "Specify physical allocations for In Store and Office.",
+            quantityAffected: total
+          });
+        } else if (physicalCount < total) {
+          const diff = total - physicalCount;
+          tasks.push({
+            id: `inv-task-${item.id}-variance-missing`,
+            isInventoryTask: true,
+            title: item.title,
+            severity: "urgent",
+            type: "variance_missing",
+            description: `Inventory Variance: ${diff} book${diff > 1 ? 's' : ''} missing`,
+            detailedText: `"${item.title}" — Inventory Count Mismatch (Expected: ${total}, Found: ${physicalCount})`,
+            recommendedAction: `Inventory Count Mismatch: Physical count does not match recorded inventory. Variance: ${diff} book${diff > 1 ? 's' : ''} missing.`,
+            quantityAffected: diff
+          });
+        } else if (physicalCount > total) {
+          const diff = physicalCount - total;
+          tasks.push({
+            id: `inv-task-${item.id}-variance-excess`,
+            isInventoryTask: true,
+            title: item.title,
+            severity: "high",
+            type: "variance_excess",
+            description: `Inventory Variance: ${diff} additional cop${diff > 1 ? 'ies' : 'y'} recorded`,
+            detailedText: `"${item.title}" — Inventory Variance: ${diff} additional cop${diff > 1 ? 'ies' : 'y'} recorded`,
+            recommendedAction: `Inventory Count Mismatch: Physical count does not match recorded inventory. Variance: ${diff} additional copies recorded.`,
+            quantityAffected: diff
+          });
+        }
+      }
+    });
+
+    return tasks;
+  }, [inventory, settings]);
+
+  // Real-time filtered inventory tasks based on current focusFilter
+  const filteredInventoryTasks = useMemo(() => {
+    if (focusFilter === "inventory") {
+      return inventoryTasks;
+    }
+    return [];
+  }, [inventoryTasks, focusFilter]);
 
   // Format currency beautifully (JMD)
   const formatCurrency = (val: number) => {
@@ -193,61 +344,31 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
       const triggers: TriggerItem[] = [];
       const isGold = client.tier === "Gold" || client.tier === "Platinum";
 
-      // A. Upcoming Personal Dates (Birthday, Anniversaries)
-      client.importantDates.forEach(d => {
-        const parsed = parseDateString(d.date);
+      // A & B. Centralized Milestone Events (Birthday, Anniversary, Family birthdays, etc.)
+      const milestones = getClientMilestones(client);
+      milestones.forEach(m => {
+        const parsed = parseDateString(m.date);
         if (!parsed) return;
 
         const days = getDaysUntilNext(parsed.month, parsed.day);
-        
         if (days >= 0 && days <= 30) {
-          const isBirthday = d.label.toLowerCase() === "birthday";
-          const labelLower = d.label.toLowerCase();
-          const isAnniversary = labelLower.includes("anniversary") || labelLower.includes("wedding") || labelLower.includes("proposal");
-          
-          let type: TriggerItem["type"] = "anniversary";
-          if (isBirthday) type = "birthday";
-
-          // Priority Rules:
-          // 1. Gold client + event within 30 days -> Priority 1
-          // 3. Repeat/Standard client + upcoming event -> Priority 3
           const priority = isGold ? 1 : 3;
-
           let reason = "";
           if (days === 0) {
-            reason = `${d.label} is TODAY! Send immediate personalized greetings.`;
+            reason = `${m.label} is TODAY! Send immediate personalized greetings.`;
           } else {
-            reason = `${d.label} is approaching in ${days} day${days > 1 ? 's' : ''} (${d.date}).`;
+            reason = `${m.label} is approaching in ${days} day${days > 1 ? 's' : ''} (${m.date}).`;
           }
 
-          triggers.push({ type, priority, reason, daysRemaining: days, metadata: { date: d.date, label: d.label } });
+          triggers.push({
+            type: m.type === "birthday" ? (m.relationship === "Child" ? "child_birthday" : "birthday") : "anniversary",
+            priority,
+            reason,
+            daysRemaining: days,
+            metadata: { date: m.date, label: m.label }
+          });
         }
       });
-
-      // B. Upcoming Child Birthdays
-      if (client.profile.children) {
-        client.profile.children.forEach(child => {
-          if (!child.birthday) return;
-          const parsed = parseDateString(child.birthday);
-          if (!parsed) return;
-
-          const days = getDaysUntilNext(parsed.month, parsed.day);
-          if (days >= 0 && days <= 30) {
-            const priority = isGold ? 1 : 3;
-            const reason = days === 0 
-              ? `Child ${child.name}'s Birthday is TODAY! Consider a personal touch.` 
-              : `Child ${child.name}'s Birthday is in ${days} days (${child.birthday}).`;
-
-            triggers.push({
-              type: "child_birthday",
-              priority,
-              reason,
-              daysRemaining: days,
-              metadata: { name: child.name, date: child.birthday }
-            });
-          }
-        });
-      }
 
       // C. Previous Order Anniversaries (Re-purchase reminders)
       client.timeline.forEach(event => {
@@ -405,10 +526,57 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
         return days >= 0 && days <= 30;
       }).map(d => ({
         client: c,
-        event: d,
-        days: getDaysUntilNext(parseDateString(d.date)!.month, parseDateString(d.date)!.day)
+        event: { ...d, label: getRelationshipEventTitle(c, d.label), type: c.tier === "Gold" ? "Gold Client Events" : c.tier === "Platinum" ? "Platinum Client Events" : "Silver Client Events" },
+        days: getDaysUntilNext(parseDateString(d.date)!.month, parseDateString(d.date)!.day),
+        isBusiness: false
       }))
-    ).sort((a, b) => a.days - b.days);
+    );
+
+    // Load business events
+    const businessEvents = (() => {
+      const stored = localStorage.getItem("ceo_crm_business_events");
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+      return [];
+    })();
+
+    // Parse business events in the next 30 days
+    const simYear = CURRENT_SIM_DATE.getFullYear();
+    const simMonth = CURRENT_SIM_DATE.getMonth();
+    const simDay = CURRENT_SIM_DATE.getDate();
+    const refDateObj = new Date(simYear, simMonth, simDay);
+
+    const upcomingBusinessEvents = businessEvents
+      .map((be: any) => {
+        const parsed = parseDateString(be.date);
+        if (!parsed) return null;
+        
+        const eventYear = parsed.year || simYear;
+        const targetDate = new Date(eventYear, parsed.month, parsed.day);
+        const diffTime = targetDate.getTime() - refDateObj.getTime();
+        const days = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        if (days >= 0 && days <= 30) {
+          const associatedClient = be.associatedClientId ? clients.find(c => c.id === be.associatedClientId) : null;
+          return {
+            client: associatedClient || ({ id: "business-entity", firstName: "Business", lastName: "Event", homeBrand: "CEO Lifestyle" } as any),
+            event: { label: be.title, date: be.date, type: be.type },
+            days,
+            isBusiness: true
+          };
+        }
+        return null;
+      })
+      .filter(Boolean) as any[];
+
+    // Combine standard and business events
+    const combinedUpcoming = [...upcomingGoldEvents, ...upcomingBusinessEvents]
+      .sort((a, b) => a.days - b.days);
 
     // Aggregate preferences of Gold Clients
     const preferencesList = Array.from(
@@ -418,11 +586,132 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
     return {
       totalGold: goldList.length,
       needingAttentionCount: needingAttention.length,
-      upcomingEvents: upcomingGoldEvents.slice(0, 4),
+      upcomingEvents: combinedUpcoming.slice(0, 4),
       preferences: preferencesList,
       list: goldList
     };
   }, [clients, focusProfiles]);
+
+  // 6.5 CONSOLIDATED UPCOMING AGENDA & NEXT 30 DAYS MILESTONES
+  const upcomingMilestonesDashboard = useMemo(() => {
+    const eventsList: Array<{
+      id: string;
+      client: Client;
+      type: "birthday" | "anniversary" | "custom_milestone" | "reminder" | "business";
+      businessType?: string;
+      label: string;
+      dateStr: string;
+      parsedMonth: number;
+      parsedDay: number;
+      parsedYear?: number;
+      isVip: boolean;
+      description?: string;
+    }> = [];
+
+    // 1. Process client milestones & reminders
+    clients.forEach(client => {
+      // client milestones
+      const milestones = getClientMilestones(client);
+      milestones.forEach((m, idx) => {
+        const parsed = parseDateString(m.date);
+        if (!parsed) return;
+
+        eventsList.push({
+          id: `milestone-${client.id}-${idx}-${m.type}`,
+          client,
+          type: m.type,
+          businessType: client.tier === "Gold" ? "Gold Client Events" : client.tier === "Platinum" ? "Platinum Client Events" : "Silver Client Events",
+          label: m.label,
+          dateStr: m.date,
+          parsedMonth: parsed.month,
+          parsedDay: parsed.day,
+          parsedYear: parsed.year,
+          isVip: client.tier === "Gold" || client.tier === "Platinum"
+        });
+      });
+
+      // client follow-up reminders
+      client.reminders.forEach(reminder => {
+        const parsed = parseDateString(reminder.date);
+        if (!parsed) return;
+
+        eventsList.push({
+          id: `rem-${client.id}-${reminder.id}`,
+          client,
+          type: "reminder",
+          businessType: client.tier === "Gold" ? "Gold Client Events" : client.tier === "Platinum" ? "Platinum Client Events" : "Silver Client Events",
+          label: reminder.task,
+          dateStr: reminder.date,
+          parsedMonth: parsed.month,
+          parsedDay: parsed.day,
+          parsedYear: parsed.year,
+          isVip: client.tier === "Gold" || client.tier === "Platinum"
+        });
+      });
+    });
+
+    // 2. Process business events
+    const businessEvents = (() => {
+      const stored = localStorage.getItem("ceo_crm_business_events");
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+      return [];
+    })();
+
+    businessEvents.forEach((be: any) => {
+      const parsed = parseDateString(be.date);
+      if (!parsed) return;
+
+      const associatedClient = be.associatedClientId ? clients.find(c => c.id === be.associatedClientId) : null;
+      const isClientRelated = be.type === "Gold / Platinum Client Events" || be.type === "Gold Client Events" || be.type === "Platinum Client Events" || be.type === "Silver Client Events";
+
+      eventsList.push({
+        id: be.id,
+        client: associatedClient || ({ id: "business-entity", firstName: "Business", lastName: "Event", homeBrand: "CEO Lifestyle" } as any),
+        type: (isClientRelated && associatedClient) ? "custom_milestone" : "business",
+        businessType: be.type,
+        label: be.title,
+        dateStr: be.date,
+        parsedMonth: parsed.month,
+        parsedDay: parsed.day,
+        parsedYear: parsed.year,
+        isVip: associatedClient ? (associatedClient.tier === "Gold" || associatedClient.tier === "Platinum") : false,
+        description: be.description
+      });
+    });
+
+    // July 8, 2026 reference (CURRENT_SIM_DATE)
+    const simYear = CURRENT_SIM_DATE.getFullYear();
+    const simMonth = CURRENT_SIM_DATE.getMonth();
+    const simDay = CURRENT_SIM_DATE.getDate();
+    const refDateObj = new Date(simYear, simMonth, simDay);
+
+    return eventsList.map(ev => {
+      let eventYear = simYear;
+      let targetDate = new Date(eventYear, ev.parsedMonth, ev.parsedDay);
+      
+      if (targetDate.getTime() - refDateObj.getTime() < -1000 * 60 * 60 * 24 * 5) {
+        eventYear += 1;
+        targetDate = new Date(eventYear, ev.parsedMonth, ev.parsedDay);
+      }
+
+      const diffTime = targetDate.getTime() - refDateObj.getTime();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      return {
+        ...ev,
+        daysRemaining: diffDays,
+        targetDate
+      };
+    })
+    .filter(ev => ev.daysRemaining >= 0 && ev.daysRemaining <= 30)
+    .sort((a, b) => a.daysRemaining - b.daysRemaining);
+  }, [clients]);
 
   // 7. TIME-BASED WORKSPACE SUMMARIES (TODAY vs THIS WEEK vs OVERVIEW)
   const summaries = useMemo(() => {
@@ -438,11 +727,63 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
         .map(t => ({ client: p.client, trigger: t }))
     ).sort((a, b) => (a.trigger.daysRemaining || 0) - (b.trigger.daysRemaining || 0)).slice(0, 5);
 
-    const pendingRemindersToday = clients.flatMap(c => 
-      c.reminders
-        .filter(r => !r.completed && getDaysSince(r.date) === 0) // Only due today (past dates are excluded)
-        .map(r => ({ client: c, reminder: r, overdueBy: 0 }))
-    ).slice(0, 5);
+    // Format today's date as YYYY-MM-DD
+    const simYear = CURRENT_SIM_DATE.getFullYear();
+    const simMonth = String(CURRENT_SIM_DATE.getMonth() + 1).padStart(2, "0");
+    const simDay = String(CURRENT_SIM_DATE.getDate()).padStart(2, "0");
+    const todayStr = `${simYear}-${simMonth}-${simDay}`;
+
+    // Load business events
+    const businessEvents = (() => {
+      const stored = localStorage.getItem("ceo_crm_business_events");
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+      return [];
+    })();
+
+    const businessEventsToday = businessEvents
+      .filter((be: any) => be.date === todayStr)
+      .map((be: any) => {
+        const client = be.associatedClientId ? clients.find(c => c.id === be.associatedClientId) : null;
+        return {
+          client: client || ({ id: "business-entity", firstName: "Business", lastName: "Event", homeBrand: "CEO Lifestyle" } as any),
+          reminder: {
+            id: be.id,
+            date: be.date,
+            task: `${be.type}: ${be.title}${be.description ? ` - ${be.description}` : ""}`,
+            completed: false,
+            timestamp: be.id
+          },
+          isBusiness: true,
+          businessType: be.type,
+          overdueBy: 0
+        };
+      });
+
+    const pendingRemindersToday = [
+      ...businessEventsToday,
+      ...clients.flatMap(c => 
+        c.reminders
+          .filter(r => !r.completed && getDaysSince(r.date) >= 0) // Include overdue and due today
+          .map(r => ({ client: c, reminder: r, overdueBy: getDaysSince(r.date) }))
+      )
+    ].sort((a, b) => {
+      const getPriorityVal = (item: any) => {
+        if (item.isInventoryTask) {
+          return item.severity === "urgent" ? 1 : 2;
+        }
+        if (item.overdueBy > 0) {
+          return 1;
+        }
+        return 3;
+      };
+      return getPriorityVal(a) - getPriorityVal(b);
+    }).slice(0, 15);
 
     const activeOrdersLast30 = clients.flatMap(c => 
       c.timeline
@@ -520,53 +861,6 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
   return (
     <div className="space-y-10 animate-fade-in text-slate-800">
       
-      {/* 1. Header Banner */}
-      <div className="text-left pb-6 border-b border-slate-700/50 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-extrabold tracking-widest text-slate-300 uppercase bg-slate-900/40 backdrop-blur-md px-2.5 py-1 rounded border border-slate-700/50">
-              Personal Client Assistant
-            </span>
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          </div>
-          <h1 className="text-3xl md:text-4xl font-normal tracking-tight text-white drop-shadow-sm">
-            Client Watchtower
-          </h1>
-          <p className="text-slate-300 text-xs md:text-sm leading-relaxed max-w-2xl font-medium">
-            Good evening, Manager. Let's look at who needs your personal attention today to foster authentic, high-value client experiences.
-          </p>
-        </div>
-        
-        {/* Sim Date Flag */}
-        <div className="px-4 py-2.5 bg-slate-900/40 backdrop-blur-md border border-slate-700/50 rounded-xl text-left">
-          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">SYSTEM REFERENCE DATE</span>
-          <span className="text-xs font-semibold text-white font-mono">July 8, 2026 (Wednesday)</span>
-        </div>
-      </div>
-
-      {/* Luxe Inventory Deficit Alert Banner */}
-      {inventoryAlerts.totalAlerts > 0 && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-3xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-left shadow-[0_4px_20px_rgba(239,68,68,0.08)]">
-          <div className="flex items-center gap-3.5">
-            <div className="p-2.5 bg-red-500/15 rounded-2xl border border-red-500/25">
-              <Package className="w-5 h-5 text-red-400 animate-pulse" />
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-red-200">Librarium Luxe Deficit Warning</h4>
-              <p className="text-xs text-red-300/85 mt-0.5 leading-relaxed">
-                {inventoryAlerts.totalAlerts} premium book edition{inventoryAlerts.totalAlerts > 1 ? 's are' : ' is'} out of stock, running low, or flagged for <strong>Urgent Restock</strong>.
-              </p>
-            </div>
-          </div>
-          <button 
-            onClick={() => onNavigateToTab("inventory")}
-            className="px-4 py-2 bg-red-900 hover:bg-red-800 text-red-100 text-xs font-bold rounded-xl border border-red-600/30 hover:border-red-500/50 transition-all shrink-0 self-start sm:self-center cursor-pointer shadow-xs"
-          >
-            Open Inventory Watchtower
-          </button>
-        </div>
-      )}
-
       {/* 2. Main Workspace Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
@@ -647,17 +941,110 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
             >
               Tasks due ({focusProfiles.filter(p => p.triggers.some(t => t.type === "reminder")).length})
             </button>
+            <button
+              onClick={() => setFocusFilter("inventory")}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border flex items-center gap-1.5 ${
+                focusFilter === "inventory" 
+                  ? "bg-amber-600 text-white border-transparent shadow-[0_2px_8px_rgba(217,119,6,0.25)]" 
+                  : "bg-white text-slate-500 border-slate-200/60 hover:border-slate-300 hover:text-amber-600"
+              }`}
+            >
+              <Package className={`w-3.5 h-3.5 ${focusFilter === "inventory" ? "text-white" : "text-amber-500"}`} /> Inventory Alerts ({inventoryTasks.length})
+            </button>
           </div>
 
           {/* Cards Focus Grid */}
-          <div className="space-y-3">
-            {filteredFocusProfiles.length === 0 ? (
+          <div className="space-y-6">
+            {focusFilter === "inventory" && (
+              <div className="space-y-4">
+                <div className="bg-gradient-to-br from-amber-50 to-amber-100/50 border border-amber-200/60 p-6 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-base font-extrabold text-amber-950 flex items-center gap-2">
+                      <Package className="w-5 h-5 text-amber-700" /> Luxe Inventory Alerts Dashboard
+                    </h2>
+                    <p className="text-xs text-amber-800/80 mt-1">
+                      Real-time reconciliation, variance exceptions, and low stock warnings for the Librarium Luxe catalog.
+                    </p>
+                  </div>
+                  <div className="flex gap-4">
+                    <div className="bg-white/80 backdrop-blur-xs border border-amber-200 px-4 py-2.5 rounded-xl">
+                      <div className="text-[10px] font-extrabold uppercase tracking-widest text-amber-700">Total Alerts</div>
+                      <div className="text-xl font-black text-amber-950 mt-0.5">{inventoryTasks.length}</div>
+                    </div>
+                    <div className="bg-white/80 backdrop-blur-xs border border-amber-200 px-4 py-2.5 rounded-xl">
+                      <div className="text-[10px] font-extrabold uppercase tracking-widest text-red-700">Urgent Reorder</div>
+                      <div className="text-xl font-black text-red-950 mt-0.5">
+                        {inventoryTasks.filter(t => t.severity === "urgent").length}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {filteredInventoryTasks.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {filteredInventoryTasks.map((task) => (
+                      <div
+                        key={task.id}
+                        onClick={() => onNavigateToTab("inventory")}
+                        className={`bg-white border text-left p-5 rounded-2xl cursor-pointer hover:shadow-md transition-all relative overflow-hidden flex flex-col justify-between ${
+                          task.severity === "urgent"
+                            ? "border-red-200 shadow-[0_2px_12px_rgba(220,38,38,0.03)] hover:border-red-300 border-l-4 border-l-red-600"
+                            : "border-amber-200 shadow-[0_2px_12px_rgba(245,158,11,0.02)] hover:border-amber-300 border-l-4 border-l-amber-500"
+                        }`}
+                      >
+                        <div className="space-y-2.5">
+                          <div className="flex justify-between items-start gap-3">
+                            <div className="min-w-0 flex-1">
+                              <h4 className="text-xs font-extrabold text-slate-900 truncate leading-snug">{task.title}</h4>
+                              <span className="text-[8px] font-extrabold uppercase tracking-widest text-slate-400">Luxe Catalog Exception</span>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest whitespace-nowrap border ${
+                              task.severity === "urgent"
+                                ? "bg-red-50 text-red-700 border-red-200 animate-pulse"
+                                : "bg-amber-50 text-amber-800 border-amber-200"
+                            }`}>
+                              {task.severity === "urgent" ? "Urgent Issue" : "Action Required"}
+                            </span>
+                          </div>
+
+                          <div className="bg-slate-50/70 border border-slate-100 p-3 rounded-xl space-y-1.5 text-left">
+                            <p className="text-xs font-bold text-slate-800 leading-normal">
+                              {task.detailedText || task.description}
+                            </p>
+                            <p className="text-[11px] text-slate-500 italic leading-snug">
+                              "{task.recommendedAction}"
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="pt-3 border-t border-slate-100 mt-4 flex items-center justify-between">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-slate-400" /> Action: Reconcile Stock
+                          </span>
+                          <span className="text-[10px] font-extrabold text-slate-900 hover:text-slate-700 flex items-center gap-0.5">
+                            Open Inventory <ChevronRight className="w-3.5 h-3.5" />
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="bg-white border border-slate-200/50 rounded-2xl p-12 text-center shadow-xs">
+                    <Package className="w-8 h-8 text-slate-300 mx-auto mb-3" />
+                    <h3 className="text-sm font-semibold text-slate-800">No inventory alerts detected</h3>
+                    <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">All physical allocations match and stock levels are fully balanced.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {focusFilter !== "inventory" && filteredFocusProfiles.length === 0 ? (
               <div className="bg-white border border-slate-200/50 rounded-2xl p-12 text-center shadow-xs">
                 <Users className="w-8 h-8 text-slate-300 mx-auto mb-3" />
                 <h3 className="text-sm font-semibold text-slate-800">No clients require focus under this filter</h3>
                 <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">Everyone is engaged, and dates are completely clear of alerts. Great work maintaining client touchpoints!</p>
               </div>
-            ) : (
+            ) : focusFilter !== "inventory" && (
               filteredFocusProfiles.map((profile) => {
                 const { client, highestPriority, triggers } = profile;
                 const isOverseas = client.contact.country !== "Jamaica";
@@ -786,28 +1173,77 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                     {isExpanded && (
                       <div className="border-t border-slate-100 bg-slate-50/30 p-5 md:p-6 space-y-5">
                         {/* Reasons list (Triggers block) */}
-                        <div className="space-y-2.5 bg-slate-50 p-4 rounded-2xl border border-slate-100 text-left">
+                        <div className="space-y-3.5 bg-slate-50 p-4 rounded-2xl border border-slate-100 text-left">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">ATTENTION TRIGGERS:</span>
-                          {triggers.map((trig, idx) => (
-                            <div key={idx} className="flex items-start gap-2.5 text-xs relative">
-                              {/* Dot marker */}
-                              <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
-                                trig.priority === 1 
-                                  ? "bg-red-600 animate-ping" 
-                                  : trig.priority === 2 
-                                    ? "bg-amber-500" 
-                                    : "bg-slate-400"
-                              }`} />
-                              {trig.priority === 1 && (
-                                <span className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0 bg-red-600 absolute" />
-                              )}
-                              <div className="text-left pl-1">
-                                <p className={`font-semibold leading-normal ${trig.priority === 1 ? "text-red-600 font-extrabold" : "text-slate-800"}`}>
-                                  {trig.reason}
-                                </p>
+                          {triggers.map((trig, idx) => {
+                            let title = "";
+                            let description = "";
+
+                            if (trig.type === "birthday" || trig.type === "child_birthday" || trig.type === "anniversary") {
+                              title = trig.metadata?.label || "Milestone Event";
+                              if (trig.daysRemaining === 0) {
+                                if (trig.type === "birthday" || trig.type === "child_birthday") {
+                                  description = "Birthday reminder due today. Prepare follow-up and client outreach.";
+                                } else {
+                                  description = "Special milestone occurring today. Consider sending congratulations or preparing scheduled client engagement.";
+                                }
+                              } else {
+                                description = `Special milestone approaching in ${trig.daysRemaining} day${trig.daysRemaining > 1 ? 's' : ''} (${trig.metadata?.date || ''}). Prepare client engagement.`;
+                              }
+                            } else if (trig.type === "order_anniversary") {
+                              const item = trig.metadata?.item || "Premium Order";
+                              const yearsAgo = trig.metadata?.yearsAgo || 1;
+                              title = `Purchase Anniversary: ${item}`;
+                              if (trig.daysRemaining === 0) {
+                                description = `Ordered exactly ${yearsAgo} year${yearsAgo > 1 ? 's' : ''} ago today! Perfect moment for client follow-up.`;
+                              } else {
+                                description = `Ordered ${yearsAgo} year${yearsAgo > 1 ? 's' : ''} ago on this date. Good moment to prepare follow-up.`;
+                              }
+                            } else if (trig.type === "reminder") {
+                              const task = trig.metadata?.task || trig.reason;
+                              title = `Task Reminder: ${task}`;
+                              if (trig.daysRemaining && trig.daysRemaining < 0) {
+                                description = `Overdue task: Was due ${Math.abs(trig.daysRemaining)} day${Math.abs(trig.daysRemaining) > 1 ? 's' : ''} ago! Immediate action recommended.`;
+                              } else if (trig.daysRemaining === 0) {
+                                description = "Action due today. Prepare follow-up and complete pending touchpoint.";
+                              } else {
+                                description = `Scheduled task due in ${trig.daysRemaining} day${trig.daysRemaining && trig.daysRemaining > 1 ? 's' : ''}.`;
+                              }
+                            } else if (trig.type === "no_contact") {
+                              title = "Elite Account Inactivity";
+                              description = trig.reason;
+                            } else if (trig.type === "no_order") {
+                              title = "Dormant Account";
+                              description = trig.reason;
+                            } else {
+                              title = "Relationship Focus Required";
+                              description = trig.reason;
+                            }
+
+                            return (
+                              <div key={idx} className="flex items-start gap-2.5 text-xs relative">
+                                {/* Dot marker */}
+                                <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${
+                                  trig.priority === 1 
+                                    ? "bg-red-600 animate-ping" 
+                                    : trig.priority === 2 
+                                      ? "bg-amber-500" 
+                                      : "bg-slate-400"
+                                }`} />
+                                {trig.priority === 1 && (
+                                  <span className="w-2 h-2 rounded-full mt-1.5 flex-shrink-0 bg-red-600 absolute" />
+                                )}
+                                <div className="text-left pl-1 flex-1 space-y-1">
+                                  <p className={`font-extrabold text-[13px] leading-snug ${trig.priority === 1 ? "text-red-700" : "text-slate-950"}`}>
+                                    {title}
+                                  </p>
+                                  <p className="text-xs text-slate-550 pl-3 leading-relaxed font-semibold border-l border-slate-200/80">
+                                    {description}
+                                  </p>
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
 
                         {/* Preferences & Quick Context info */}
@@ -872,51 +1308,263 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                 );
               })
             )}
-          </div></div>
+          </div>
 
-        {/* Right 4-columns: Gold Clients & Smart Date Agenda */}
-        <div className="lg:col-span-4 space-y-8 text-left">
-          
-          {/* Luxe Inventory Simplified Watchtower Widget */}
-          <div className="bg-white border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-4 text-left">
-            <div className="flex items-center justify-between border-b pb-3 border-slate-100">
-              <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
-                <Package className="w-4 h-4 text-slate-800" />
-                Librarium Luxe Inventory
-              </span>
-              <span className="text-[9px] font-extrabold uppercase tracking-wider bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200/60">
-                Quick Glance
+          {/* Upcoming Agenda / Next 30 Days Milestones Section */}
+          <div className="bg-white border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-4 text-left" id="dashboard-upcoming-milestones-section">
+            <div className="pb-3 border-b border-slate-100 flex justify-between items-center">
+              <div>
+                <span className="text-[10px] font-extrabold text-amber-600 uppercase tracking-widest block">
+                  Upcoming Agenda
+                </span>
+                <h3 className="text-lg font-bold text-slate-950">
+                  Next 30 Days Milestones
+                </h3>
+              </div>
+              <span className="text-xs font-mono font-bold bg-slate-100 px-3 py-1 rounded-xl text-slate-700 border border-slate-200/50">
+                {upcomingMilestonesDashboard.length} Milestones Found
               </span>
             </div>
 
-            <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1">
-              {inventory.length === 0 ? (
-                <p className="text-xs text-slate-400 italic py-2">No inventory items loaded.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[380px] overflow-y-auto pr-1">
+              {upcomingMilestonesDashboard.length === 0 ? (
+                <div className="col-span-full text-center py-8 text-slate-400 italic">
+                  No major milestones or reminders found inside the next 30 days.
+                </div>
               ) : (
-                inventory.map(item => (
-                  <div key={item.id} className="flex justify-between items-center py-1.5 border-b border-slate-50 last:border-0 text-xs">
-                    <span className="font-semibold text-slate-800 truncate pr-3">{item.title}</span>
-                    {item.quantity === 0 ? (
-                      <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-100">
-                        Out of Stock
-                      </span>
-                    ) : (
-                      <span className="text-[10px] font-mono font-bold text-slate-600 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/60">
-                        {item.quantity} units
-                      </span>
-                    )}
-                  </div>
-                ))
+                upcomingMilestonesDashboard.map((ev, idx) => {
+                  let badgeColor = "bg-slate-100 text-slate-600 border-slate-200";
+                  if (ev.daysRemaining === 0) {
+                    badgeColor = "bg-rose-500 text-white border-transparent animate-pulse font-extrabold";
+                  } else if (ev.daysRemaining === 1) {
+                    badgeColor = "bg-amber-500 text-white border-transparent font-bold";
+                  } else if (ev.daysRemaining <= 5) {
+                    badgeColor = "bg-indigo-600 text-white border-transparent font-bold";
+                  }
+
+                  let typeLabel = "📌 Milestone";
+                  if (ev.type === "birthday") typeLabel = "🎁 Birthday";
+                  else if (ev.type === "anniversary") typeLabel = "💍 Anniversary";
+                  else if (ev.type === "reminder") typeLabel = "🔔 Follow-up Reminder";
+                  else if (ev.type === "business") typeLabel = `💼 ${ev.businessType || "Business Event"}`;
+
+                  const isCorp = ev.client.id === "business-entity";
+
+                  return (
+                    <div
+                      key={`dashboard-upc-${idx}`}
+                      onClick={() => {
+                        if (!isCorp) {
+                          onSelectClient(ev.client.id);
+                        }
+                      }}
+                      className="p-3 bg-slate-50/60 hover:bg-slate-50 border border-slate-200/40 hover:border-slate-300/80 rounded-2xl transition-all flex flex-col justify-between text-xs group cursor-pointer"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            {typeLabel}
+                          </span>
+                          <span className={`text-[9px] font-mono border px-2 py-0.5 rounded-lg ${badgeColor}`}>
+                            {ev.daysRemaining === 0 ? "TODAY" : ev.daysRemaining === 1 ? "1 day left" : `${ev.daysRemaining} days`}
+                          </span>
+                        </div>
+                        <p className="font-bold text-slate-900 group-hover:text-indigo-600 group-hover:underline flex items-center gap-1.5 flex-wrap">
+                          {ev.label}
+                          {ev.isVip && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title="VIP Account" />
+                          )}
+                        </p>
+                        <p className="text-[10px] text-slate-500 font-medium">
+                          {isCorp ? "Corporate Event" : `${ev.client.firstName} ${ev.client.lastName}`}
+                          {!isCorp && ev.client.homeBrand && (
+                            <span className="text-slate-400"> &bull; {ev.client.homeBrand}</span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="mt-2.5 pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                        <span>{ev.dateStr}</span>
+                        {!isCorp && (
+                          <span className="text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5">
+                            Open Profile <ChevronRight className="w-3 h-3" />
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
-
-            <button
-              onClick={() => onNavigateToTab("inventory")}
-              className="w-full text-center bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs py-2 rounded-xl transition-all shadow-xs block"
-            >
-              Manage Inventory
-            </button>
           </div>
+
+        </div>
+
+        {/* Right 4-columns: Interactive Carousel Command Center & Gold Clients */}
+        <div className="lg:col-span-4 space-y-8 text-left">
+          
+          {(() => {
+            const carouselModules = [
+              {
+                id: "inventory",
+                title: "Librarium Luxe Inventory",
+                icon: <Package className="w-4 h-4" />,
+                render: () => (
+                  <div className="bg-white border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-4 text-left animate-fade-in" id="dashboard-luxe-quick-glance-carousel">
+                    <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+                      <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+                        <Package className="w-4 h-4 text-slate-800" />
+                        Librarium Luxe Inventory
+                      </span>
+                      <span className="text-[9px] font-extrabold uppercase tracking-wider bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200/60">
+                        Quick Glance
+                      </span>
+                    </div>
+
+                    {/* Aggregated location metrics */}
+                    {(() => {
+                      const activeInv = (inventory || []).filter(item => !item.archived);
+                      const totalStock = activeInv.reduce((sum, item) => sum + item.quantity, 0);
+                      const totalInStore = activeInv.reduce((sum, item) => sum + (item.inStore ?? 0), 0);
+                      const totalOffice = activeInv.reduce((sum, item) => sum + (item.office ?? 0), 0);
+
+                      return (
+                        <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-100 text-center">
+                          <div>
+                            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">Total Stock</span>
+                            <span className="text-sm font-extrabold text-slate-850 font-mono block mt-0.5">{totalStock}</span>
+                          </div>
+                          <div className="border-x border-slate-200">
+                            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">In Store</span>
+                            <span className="text-sm font-extrabold text-indigo-600 font-mono block mt-0.5">{totalInStore}</span>
+                          </div>
+                          <div>
+                            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">Office</span>
+                            <span className="text-sm font-extrabold text-slate-700 font-mono block mt-0.5">{totalOffice}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <div className="space-y-2.5 max-h-[180px] overflow-y-auto pr-1">
+                      {(!inventory || inventory.filter(item => !item.archived).length === 0) ? (
+                        <p className="text-xs text-slate-400 italic py-2">No active inventory items loaded.</p>
+                      ) : (
+                        inventory.filter(item => !item.archived).map(item => (
+                          <div key={item.id} className="flex justify-between items-center py-1.5 border-b border-slate-50 last:border-0 text-xs">
+                            <div className="min-w-0 flex-1 pr-3">
+                              <span className="font-semibold text-slate-800 truncate block">{item.title}</span>
+                              <span className="text-[9px] text-slate-400 font-medium block mt-0.5">
+                                In Store: {item.inStore ?? 0} &bull; Office: {item.office ?? 0} &bull; Price: {item.sellingPrice !== undefined ? `$${item.sellingPrice.toLocaleString()}` : "—"}
+                              </span>
+                            </div>
+                            {item.quantity === 0 ? (
+                              <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-100 flex-shrink-0">
+                                Out of Stock
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-mono font-bold text-slate-600 bg-slate-50 px-2 py-0.5 rounded border border-slate-200/60 flex-shrink-0">
+                                {item.quantity} units
+                              </span>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => onNavigateToTab("inventory")}
+                      className="w-full text-center bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs py-2 rounded-xl transition-all shadow-xs block"
+                    >
+                      Manage Inventory
+                    </button>
+                  </div>
+                )
+              },
+              {
+                id: "book-calculator",
+                title: "Librarium Book Cost Calculator",
+                icon: <Calculator className="w-4 h-4 text-slate-300" />,
+                render: () => <BookCostCalculator settings={settings} inventory={inventory} />
+              },
+              {
+                id: "location-calculator",
+                title: "Location Cost Calculator",
+                icon: <DollarSign className="w-4 h-4 text-indigo-400" />,
+                render: () => <LocationCostCalculator settings={settings} />
+              },
+              {
+                id: "agenda",
+                title: "Interactive Agenda",
+                icon: <Calendar className="w-4 h-4 text-emerald-400" />,
+                render: () => (
+                  <SmallCalendarWidget 
+                    clients={clients}
+                    onSelectClient={onSelectClient}
+                    onOpenTask={onOpenTask}
+                  />
+                )
+              },
+              {
+                id: "tshirt-calculator",
+                title: "T-Shirt Studio Quote Calculator",
+                icon: <Shirt className="w-4 h-4 text-rose-400" />,
+                render: () => <TShirtStudioQuoteCalculator settings={settings} />
+              }
+            ];
+
+            const currentIdx = currentCarouselIndex >= carouselModules.length ? 0 : currentCarouselIndex;
+
+            return (
+              <div className="space-y-6 animate-fade-in">
+                {/* Minimal Apple-Inspired Carousel Navigation Bar */}
+                <div className="flex items-center justify-center py-1">
+                  <div className="flex items-center gap-4 bg-slate-900/90 border border-slate-800/85 rounded-full px-4 py-2 shadow-md">
+                    {/* Left Navigation Arrow */}
+                    <button 
+                      onClick={() => setCurrentCarouselIndex(prev => (prev - 1 + carouselModules.length) % carouselModules.length)}
+                      className="p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+                      title="Previous Module"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+
+                    {/* Dot Indicators */}
+                    <div className="flex justify-center items-center gap-2">
+                      {carouselModules.map((mod, idx) => (
+                        <button
+                          key={mod.id}
+                          onClick={() => setCurrentCarouselIndex(idx)}
+                          className={`w-2 h-2 rounded-full transition-all duration-300 cursor-pointer ${
+                            currentIdx === idx ? "bg-indigo-500 scale-110" : "bg-slate-700 hover:bg-slate-600"
+                          }`}
+                          title={mod.title}
+                        />
+                      ))}
+                    </div>
+
+                    {/* Right Navigation Arrow */}
+                    <button 
+                      onClick={() => setCurrentCarouselIndex(prev => (prev + 1) % carouselModules.length)}
+                      className="p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
+                      title="Next Module"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Animated content slot */}
+                <div className="relative min-h-[300px]">
+                  <div
+                    key={currentIdx}
+                    className="w-full animate-fade-in"
+                  >
+                    {carouselModules[currentIdx].render()}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Gold Client Watch Box */}
           <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-lg border border-slate-800 space-y-6">
@@ -941,28 +1589,62 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
 
             {/* Upcoming Gold Events Agenda */}
             <div className="space-y-3">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">UPCOMING ELITE EVENTS:</span>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">UPCOMING ELITE & CORPORATE EVENTS:</span>
               
               {goldMetrics.upcomingEvents.length === 0 ? (
                 <p className="text-xs text-slate-500 italic py-2">No key elite milestones in next 30 days.</p>
               ) : (
                 <div className="space-y-2.5">
                   {goldMetrics.upcomingEvents.map((item, idx) => {
-                    const clientAOV = item.client.history.averageOrderValue || (item.client.history.totalOrders > 0 ? Math.round(item.client.history.lifetimeRevenue / item.client.history.totalOrders) : 0);
+                    const isCorp = item.client.id === "business-entity";
+                    const isBusiness = (item as any).isBusiness;
+                    const businessType = item.event.type;
+                    const clientAOV = item.client.history ? (item.client.history.averageOrderValue || (item.client.history.totalOrders > 0 ? Math.round(item.client.history.lifetimeRevenue / item.client.history.totalOrders) : 0)) : 0;
+                    
+                    // Style badges for different categories
+                    let badgeBg = "bg-white/10 text-white";
+                    if (businessType === "CEO Day") badgeBg = "bg-blue-500/20 text-blue-200 border border-blue-500/30";
+                    else if (businessType === "Librarium Luxe Day") badgeBg = "bg-rose-500/20 text-rose-200 border border-rose-500/30";
+                    else if (businessType === "Gold Client Events" || businessType === "Gold / Platinum Client Events") badgeBg = "bg-amber-500/20 text-amber-200 border border-amber-500/30";
+                    else if (businessType === "Platinum Client Events") badgeBg = "bg-white text-slate-950 border border-white font-extrabold";
+                    else if (businessType === "Silver Client Events") badgeBg = "bg-slate-500/20 text-slate-200 border border-slate-500/30";
+                    else if (businessType === "General Business Day") badgeBg = "bg-emerald-500/20 text-emerald-200 border border-emerald-500/30";
+
                     return (
                       <div 
                         key={idx}
-                        onClick={() => onSelectClient(item.client.id)}
-                        className="p-3 bg-white/5 hover:bg-white/10 rounded-xl border border-white/5 transition-all cursor-pointer flex justify-between items-center text-xs"
+                        onClick={() => {
+                          if (!isCorp) {
+                            onSelectClient(item.client.id);
+                          }
+                        }}
+                        className={`p-3 bg-white/5 hover:bg-white/10 rounded-xl border border-white/5 transition-all flex justify-between items-center text-xs ${!isCorp ? "cursor-pointer" : ""}`}
                       >
                         <div>
-                          <p className="font-bold text-white">{item.client.firstName} {item.client.lastName}</p>
+                          {isCorp ? (
+                            <p className="font-bold text-white flex items-center gap-1.5">
+                              💼 {businessType || "Corporate Event"}
+                            </p>
+                          ) : (
+                            <p className="font-bold text-white flex items-center gap-1.5">
+                              👤 {item.client.firstName} {item.client.lastName}
+                            </p>
+                          )}
                           <p className="text-[11px] text-slate-400 mt-0.5">{item.event.label} ({item.event.date})</p>
-                          <p className="text-[10px] text-amber-300 font-mono mt-1 font-bold">AOV: {formatCurrency(clientAOV)}</p>
+                          {!isCorp && (
+                            <p className="text-[10px] text-amber-300 font-mono mt-1 font-bold">AOV: {formatCurrency(clientAOV)}</p>
+                          )}
                         </div>
-                        <span className="text-[10px] font-mono font-bold bg-white/10 text-white px-2 py-0.5 rounded">
-                          {item.days === 0 ? "Today" : `${item.days}d`}
-                        </span>
+                        <div className="flex flex-col items-end gap-1.5">
+                          <span className="text-[10px] font-mono font-bold bg-white/10 text-white px-2 py-0.5 rounded">
+                            {item.days === 0 ? "Today" : `${item.days}d`}
+                          </span>
+                          {businessType && (
+                            <span className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${badgeBg}`}>
+                              {businessType === "Gold / Platinum Client Events" ? "Gold / Plat" : businessType === "Gold Client Events" ? "Gold" : businessType === "Platinum Client Events" ? "Platinum" : businessType === "Silver Client Events" ? "Silver" : businessType}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -982,13 +1664,6 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
               </div>
             </div>
           </div>
-
-          {/* Quick Date Engine Calendar Feed */}
-          <SmallCalendarWidget 
-            clients={clients}
-            onSelectClient={onSelectClient}
-            onOpenTask={onOpenTask}
-          />
 
         </div>
 
@@ -1127,39 +1802,151 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                     <CheckCircle2 className="w-4 h-4 text-emerald-500" /> All daily tasks completed!
                   </p>
                 ) : (
-                  summaries.today.reminders.map(item => (
-                    <div 
-                      key={item.reminder.id}
-                      onClick={() => onOpenTask ? onOpenTask(item.client.id, item.reminder.id) : onSelectClient(item.client.id)}
-                      className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 ${getBrandCardClasses(item.client.homeBrand)}`}
-                    >
-                      <div className="flex justify-between items-start gap-2">
-                        <div>
-                          <p className="font-bold text-xs text-slate-800">{item.client.firstName} {item.client.lastName}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className={`px-1 rounded text-[7px] font-black uppercase tracking-wider ${
-                              item.client.tier === "Gold"
-                                ? "bg-amber-100 text-amber-800"
-                                : item.client.tier === "Platinum"
-                                  ? "bg-slate-900 text-slate-100"
-                                  : "bg-slate-200 text-slate-600"
+                  summaries.today.reminders.map(item => {
+                    const isInventoryTask = (item as any).isInventoryTask;
+                    if (isInventoryTask) {
+                      const inv = item as any;
+                      return (
+                        <div 
+                          key={inv.id}
+                          onClick={() => onNavigateToTab("inventory")}
+                          className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 text-left ${
+                            inv.severity === "urgent"
+                              ? "bg-red-50/50 border-red-200/50 hover:bg-red-50/85 border-l-4 border-l-red-600 shadow-[0_2px_8px_rgba(220,38,38,0.05)]"
+                              : "bg-amber-50/50 border-amber-200/50 hover:bg-amber-50/85 border-l-4 border-l-amber-500 shadow-[0_2px_8px_rgba(245,158,11,0.05)]"
+                          }`}
+                        >
+                          <div className="flex justify-between items-start gap-2">
+                            <div>
+                              <p className="font-bold text-xs text-slate-950 truncate max-w-[180px]">{inv.title}</p>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className={`px-1 rounded text-[7px] font-black uppercase tracking-wider ${
+                                  inv.severity === "urgent"
+                                    ? "bg-red-100 text-red-800 animate-pulse"
+                                    : "bg-amber-100 text-amber-800"
+                                }`}>
+                                  {inv.severity === "urgent" ? "Urgent Issue" : "Needs Attention"}
+                                </span>
+                                <span className="text-[9px] text-[#5C1A24] font-black uppercase tracking-wider">Librarium Luxe</span>
+                              </div>
+                            </div>
+                            <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border ${
+                              inv.severity === "urgent"
+                                ? "bg-red-600 text-white border-red-600 shadow-[0_0_8px_rgba(220,38,38,0.3)]"
+                                : "bg-amber-50 text-amber-900 border-amber-200"
                             }`}>
-                              {item.client.tier}
+                              {inv.severity === "urgent" ? "CRITICAL" : "ALERT"}
                             </span>
-                            <span className="text-[10px] text-indigo-600 font-mono font-bold">AOV: {formatCurrency(item.client.history.averageOrderValue || (item.client.history.totalOrders > 0 ? Math.round(item.client.history.lifetimeRevenue / item.client.history.totalOrders) : 0))}</span>
+                          </div>
+                          
+                          <div className="text-[11px] text-slate-800 space-y-1 leading-snug">
+                            <p className="font-bold">{inv.description}</p>
+                            <p className="text-slate-500 italic">"{inv.recommendedAction}"</p>
                           </div>
                         </div>
-                        <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border ${
-                          item.overdueBy > 0 
-                            ? "bg-red-600 text-white border-red-600 shadow-[0_0_8px_rgba(220,38,38,0.3)] animate-pulse" 
-                            : "bg-slate-100 text-slate-700 border-slate-200"
-                        }`}>
-                          {item.overdueBy > 0 ? `URGENT Overdue ${item.overdueBy}d` : "Today"}
-                        </span>
+                      );
+                    }
+
+                    const isBusiness = (item as any).isBusiness;
+                    const businessType = (item as any).businessType;
+                    const isCorp = item.client.id === "business-entity";
+
+                    if (isBusiness) {
+                      if (isCorp) {
+                        return (
+                          <div 
+                            key={item.reminder.id}
+                            className="p-3 border rounded-xl transition-all hover:-translate-y-0.5 space-y-1.5 bg-purple-50/50 border-purple-200/50 text-left"
+                          >
+                            <div className="flex justify-between items-start gap-2">
+                              <div>
+                                <p className="font-bold text-xs text-purple-900">💼 {businessType}</p>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  <span className="px-1.5 py-0.5 rounded text-[8px] bg-purple-100 text-purple-800 font-extrabold uppercase tracking-wider border border-purple-200">
+                                    Corporate Event
+                                  </span>
+                                </div>
+                              </div>
+                              <span className="text-[8px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border bg-purple-100 text-purple-800 border-purple-200">
+                                Today
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-700 italic leading-snug">
+                              "{item.reminder.task.includes(': ') ? item.reminder.task.substring(item.reminder.task.indexOf(': ') + 2) : item.reminder.task}"
+                            </p>
+                          </div>
+                        );
+                      } else {
+                        return (
+                          <div 
+                            key={item.reminder.id}
+                            onClick={() => onSelectClient(item.client.id)}
+                            className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 text-left ${getBrandCardClasses(item.client.homeBrand)}`}
+                          >
+                            <div className="flex justify-between items-start gap-2">
+                              <div>
+                                <p className="font-bold text-xs text-slate-800">{item.client.firstName} {item.client.lastName}</p>
+                                <div className="flex items-center gap-1.5 mt-0.5">
+                                  <span className={`px-1 rounded text-[7px] font-black uppercase tracking-wider ${
+                                    item.client.tier === "Gold"
+                                      ? "bg-amber-100 text-amber-800"
+                                      : item.client.tier === "Platinum"
+                                        ? "bg-slate-900 text-slate-100"
+                                        : "bg-slate-200 text-slate-600"
+                                  }`}>
+                                    {item.client.tier}
+                                  </span>
+                                  <span className="px-1 bg-emerald-100 text-emerald-800 rounded text-[7px] font-black uppercase tracking-wider border border-emerald-200/50">
+                                    {businessType}
+                                  </span>
+                                </div>
+                              </div>
+                              <span className="text-[8px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border bg-slate-100 text-slate-700 border-slate-200">
+                                Today
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-600 italic leading-snug">
+                              "{item.reminder.task.includes(': ') ? item.reminder.task.substring(item.reminder.task.indexOf(': ') + 2) : item.reminder.task}"
+                            </p>
+                          </div>
+                        );
+                      }
+                    }
+
+                    return (
+                      <div 
+                        key={item.reminder.id}
+                        onClick={() => onOpenTask ? onOpenTask(item.client.id, item.reminder.id) : onSelectClient(item.client.id)}
+                        className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 text-left ${getBrandCardClasses(item.client.homeBrand)}`}
+                      >
+                        <div className="flex justify-between items-start gap-2">
+                          <div>
+                            <p className="font-bold text-xs text-slate-800">{item.client.firstName} {item.client.lastName}</p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className={`px-1 rounded text-[7px] font-black uppercase tracking-wider ${
+                                item.client.tier === "Gold"
+                                  ? "bg-amber-100 text-amber-800"
+                                  : item.client.tier === "Platinum"
+                                    ? "bg-slate-900 text-slate-100"
+                                    : "bg-slate-200 text-slate-600"
+                              }`}>
+                                {item.client.tier}
+                              </span>
+                              <span className="text-[10px] text-indigo-600 font-mono font-bold">AOV: {formatCurrency(item.client.history.averageOrderValue || (item.client.history.totalOrders > 0 ? Math.round(item.client.history.lifetimeRevenue / item.client.history.totalOrders) : 0))}</span>
+                            </div>
+                          </div>
+                          <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border ${
+                            item.overdueBy > 0 
+                              ? "bg-red-600 text-white border-red-600 shadow-[0_0_8px_rgba(220,38,38,0.3)] animate-pulse" 
+                              : "bg-slate-100 text-slate-700 border-slate-200"
+                          }`}>
+                            {item.overdueBy > 0 ? `URGENT Overdue ${item.overdueBy}d` : "Today"}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 italic leading-snug">"{item.reminder.task}"</p>
                       </div>
-                      <p className="text-[11px] text-slate-500 italic leading-snug">"{item.reminder.task}"</p>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
 

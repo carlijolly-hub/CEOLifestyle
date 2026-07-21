@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Client, LuxeBookInventoryItem } from "./types";
+import { Client, LuxeBookInventoryItem, SystemSettings } from "./types";
 import { INITIAL_CLIENTS, INITIAL_INVENTORY } from "./data/mockData";
 import { syncFamilyBirthdayReminders } from "./utils/dateHelpers";
+import { getSystemSettings, saveSystemSettings } from "./utils/settingsHelper";
 import Dashboard from "./components/Dashboard";
 import ClientList from "./components/ClientList";
 import ClientDetail from "./components/ClientDetail";
@@ -9,6 +10,7 @@ import ClientForm from "./components/ClientForm";
 import ExcelManager from "./components/ExcelManager";
 import MilestoneCalendar from "./components/MilestoneCalendar";
 import LuxeInventory from "./components/LuxeInventory";
+import UserManagement from "./components/UserManagement";
 import { 
   Users, 
   LayoutDashboard, 
@@ -16,15 +18,90 @@ import {
   Printer, 
   BookOpen,
   ArrowLeft,
+  ArrowRight,
   Sparkles,
   Calendar,
   X,
-  CheckSquare
+  CheckSquare,
+  Settings,
+  LogOut,
+  Shield
 } from "lucide-react";
 // @ts-ignore
 import spaceBg from "./assets/images/space_background_1783612418079.jpg";
+import LoginScreen from "./components/LoginScreen";
+import BrandingSettings from "./components/BrandingSettings";
 
 const LOCAL_STORAGE_KEY = "ceo_librarium_crm_customers";
+
+interface TourStep {
+  title: string;
+  text: string;
+  tab: "dashboard" | "directory" | "excel" | "calendar" | "inventory" | "branding" | "users";
+}
+
+const TOURS: Record<string, { name: string; steps: TourStep[] }> = {
+  luxe_inventory: {
+    name: "Librarium Luxe Inventory Walkthrough",
+    steps: [
+      {
+        title: "Welcome to Luxe Inventory",
+        text: "This section manages all Librarium Luxe book inventory. Here you can add books, view individual item status, and track historical sales movements.",
+        tab: "inventory"
+      },
+      {
+        title: "Inventory Level Tracking",
+        text: "Stock is separated into 'In Store' and 'Office' levels. Low-stock levels trigger visual indicators (e.g. Restock, Urgent Restock) based on your system-wide thresholds.",
+        tab: "inventory"
+      },
+      {
+        title: "Accessing Spreadsheet Imports",
+        text: "You can perform bulk inventory adjustments using the Excel Exchange module. Download our inventory ledger template, edit it, and upload changes easily.",
+        tab: "excel"
+      }
+    ]
+  },
+  dashboard_carousel: {
+    name: "Interactive Dashboard Carousel Walkthrough",
+    steps: [
+      {
+        title: "Welcome to the Interactive Dashboard Carousel",
+        text: "This is the core viewing area of your Dashboard Command Center. Selected large modules are consolidated into a horizontal slider to save vertical space.",
+        tab: "dashboard"
+      },
+      {
+        title: "Navigation Controls",
+        text: "Use the Left and Right arrows at the top right of the carousel to slide smoothly between Luxe Inventory, Book Cost Calculator, Location Cost Calculator, and the Interactive Agenda.",
+        tab: "dashboard"
+      },
+      {
+        title: "Dot Indicators & Active Status",
+        text: "The indicators displaying '● ○ ○ ○' show which section you are currently viewing. Click any individual dot to jump to that module instantly.",
+        tab: "dashboard"
+      }
+    ]
+  },
+  excel_exchange: {
+    name: "Excel Exchange Walkthrough",
+    steps: [
+      {
+        title: "Welcome to Excel Exchange",
+        text: "This powerful data synchronization system processes bulk customer CRM databases and inventory ledger sheets safely.",
+        tab: "excel"
+      },
+      {
+        title: "Template Preparation",
+        text: "Choose either 'Customers Template' or 'Inventory Template' to download the correct schema format. It is crucial to preserve the header column names.",
+        tab: "excel"
+      },
+      {
+        title: "Smart Validation & Upload",
+        text: "Drag & drop or upload your completed Excel sheet. The engine performs real-time verification to detect duplicate IDs or invalid ranks before committing any changes.",
+        tab: "excel"
+      }
+    ]
+  }
+};
 
 export default function App() {
   // State for client list
@@ -33,11 +110,159 @@ export default function App() {
   // State for Librarium Luxe Inventory
   const [inventory, setInventory] = useState<LuxeBookInventoryItem[]>([]);
   
-  // Tab state: "dashboard" | "directory" | "excel" | "calendar" | "inventory"
-  const [activeTab, setActiveTab] = useState<"dashboard" | "directory" | "excel" | "calendar" | "inventory">("dashboard");
+  // Tab state: "dashboard" | "directory" | "excel" | "calendar" | "inventory" | "branding" | "users"
+  const [activeTab, setActiveTab] = useState<"dashboard" | "directory" | "excel" | "calendar" | "inventory" | "branding" | "users">("dashboard");
+
+  // Settings dropdown state
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Authentication states
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem("ceo_admin_authenticated") === "true";
+  });
+
+  // Current Logged-in User Info
+  const [userRole, setUserRole] = useState(() => {
+    return localStorage.getItem("ceo_user_role") || "Master Administrator";
+  });
+
+  const [userFullName, setUserFullName] = useState(() => {
+    return localStorage.getItem("ceo_user_fullname") || "Master Administrator";
+  });
+
+  const [userUsername, setUserUsername] = useState(() => {
+    return localStorage.getItem("ceo_user_username") || "admin";
+  });
+
+  // Master Admin Credentials
+  const [masterUsername, setMasterUsername] = useState(() => {
+    return localStorage.getItem("ceo_admin_username") || "admin";
+  });
+
+  const handleUpdateMasterCredentials = (newUser: string, newPass: string) => {
+    localStorage.setItem("ceo_admin_username", newUser);
+    localStorage.setItem("ceo_admin_password", newPass);
+    setMasterUsername(newUser);
+    if (userRole === "Master Administrator") {
+      setUserUsername(newUser);
+      localStorage.setItem("ceo_user_username", newUser);
+    }
+  };
+
+  const handleLoginSuccess = () => {
+    setIsAuthenticated(true);
+    setUserRole(localStorage.getItem("ceo_user_role") || "Master Administrator");
+    setUserFullName(localStorage.getItem("ceo_user_fullname") || "Master Administrator");
+    setUserUsername(localStorage.getItem("ceo_user_username") || "admin");
+  };
+  
+  // System Settings state
+  const [settings, setSettings] = useState<SystemSettings>(() => getSystemSettings());
+
+  const handleUpdateSettings = (newSettings: SystemSettings) => {
+    setSettings(newSettings);
+    saveSystemSettings(newSettings);
+    
+    // Sync related legacy states
+    if (newSettings.appBg !== appBg) {
+      setAppBg(newSettings.appBg);
+      localStorage.setItem("ceo_app_background_base64", newSettings.appBg);
+    }
+    if (newSettings.authBg !== authBg) {
+      setAuthBg(newSettings.authBg);
+      localStorage.setItem("ceo_auth_background_base64", newSettings.authBg);
+    }
+    if (newSettings.masterUsername !== masterUsername) {
+      setMasterUsername(newSettings.masterUsername);
+      localStorage.setItem("ceo_admin_username", newSettings.masterUsername);
+    }
+  };
+
+  // Custom backgrounds
+  const [appBg, setAppBg] = useState(() => {
+    return localStorage.getItem("ceo_app_background_base64") || "";
+  });
+  
+  const [authBg, setAuthBg] = useState(() => {
+    return localStorage.getItem("ceo_auth_background_base64") || "";
+  });
+
+  const handleUpdateAppBg = (base64: string) => {
+    setAppBg(base64);
+    localStorage.setItem("ceo_app_background_base64", base64);
+    setSettings(prev => {
+      const updated = { ...prev, appBg: base64 };
+      saveSystemSettings(updated);
+      return updated;
+    });
+  };
+
+  const handleUpdateAuthBg = (base64: string) => {
+    setAuthBg(base64);
+    localStorage.setItem("ceo_auth_background_base64", base64);
+    setSettings(prev => {
+      const updated = { ...prev, authBg: base64 };
+      saveSystemSettings(updated);
+      return updated;
+    });
+  };
+
+  const handleResetAppBg = () => {
+    setAppBg("");
+    localStorage.removeItem("ceo_app_background_base64");
+    setSettings(prev => {
+      const updated = { ...prev, appBg: "" };
+      saveSystemSettings(updated);
+      return updated;
+    });
+  };
+
+  const handleResetAuthBg = () => {
+    setAuthBg("");
+    localStorage.removeItem("ceo_auth_background_base64");
+    setSettings(prev => {
+      const updated = { ...prev, authBg: "" };
+      saveSystemSettings(updated);
+      return updated;
+    });
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("ceo_admin_authenticated");
+    localStorage.removeItem("ceo_user_role");
+    localStorage.removeItem("ceo_user_fullname");
+    localStorage.removeItem("ceo_user_username");
+    setIsAuthenticated(false);
+    setUserRole("Master Administrator");
+    setUserFullName("Master Administrator");
+    setUserUsername("admin");
+    setActiveTab("dashboard");
+  };
   
   // Selected client for detail view
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  
+  // Walkthrough tour state
+  const [activeTour, setActiveTour] = useState<{ id: string; currentStep: number } | null>(() => {
+    const stored = localStorage.getItem("active_walkthrough_tour");
+    return stored ? JSON.parse(stored) : null;
+  });
+
+  const saveActiveTour = (tour: { id: string; currentStep: number } | null) => {
+    setActiveTour(tour);
+    if (tour) {
+      localStorage.setItem("active_walkthrough_tour", JSON.stringify(tour));
+    } else {
+      localStorage.removeItem("active_walkthrough_tour");
+    }
+  };
+
+  const handleStartTour = (tourId: string) => {
+    const tour = TOURS[tourId];
+    if (!tour) return;
+    saveActiveTour({ id: tourId, currentStep: 0 });
+    setActiveTab(tour.steps[0].tab);
+  };
   
   // Form states
   const [isEditing, setIsEditing] = useState(false);
@@ -124,15 +349,15 @@ export default function App() {
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        const synced = parsed.map((c: Client) => syncFamilyBirthdayReminders(c));
+        const synced = parsed.map((c: Client) => syncFamilyBirthdayReminders(c, settings));
         setClients(synced);
       } catch (err) {
         console.error("Failed to parse stored clients, using fallback mock dataset:", err);
-        const synced = INITIAL_CLIENTS.map(c => syncFamilyBirthdayReminders(c));
+        const synced = INITIAL_CLIENTS.map(c => syncFamilyBirthdayReminders(c, settings));
         setClients(synced);
       }
     } else {
-      const synced = INITIAL_CLIENTS.map(c => syncFamilyBirthdayReminders(c));
+      const synced = INITIAL_CLIENTS.map(c => syncFamilyBirthdayReminders(c, settings));
       setClients(synced);
     }
 
@@ -145,9 +370,27 @@ export default function App() {
         const filtered = Array.isArray(parsed) 
           ? parsed.filter((item: LuxeBookInventoryItem) => !dummyIds.includes(item.id))
           : [];
-        setInventory(filtered);
-        if (filtered.length !== parsed.length) {
-          localStorage.setItem("luxe_book_inventory", JSON.stringify(filtered));
+        
+        const seenIds = new Set<string>();
+        const deduped: LuxeBookInventoryItem[] = [];
+        filtered.forEach((item: LuxeBookInventoryItem) => {
+          if (!item.id) return;
+          if (!seenIds.has(item.id)) {
+            seenIds.add(item.id);
+            deduped.push(item);
+          } else {
+            let newId = item.id;
+            while (seenIds.has(newId)) {
+              newId = `LUX-${Math.floor(100 + Math.random() * 900)}`;
+            }
+            seenIds.add(newId);
+            deduped.push({ ...item, id: newId });
+          }
+        });
+
+        setInventory(deduped);
+        if (deduped.length !== parsed.length) {
+          localStorage.setItem("luxe_book_inventory", JSON.stringify(deduped));
         }
       } catch (err) {
         console.error("Failed to parse stored inventory, using fallback:", err);
@@ -158,10 +401,55 @@ export default function App() {
     }
   }, []);
 
+  // Recalculate client milestones automatically when reminder settings change
+  useEffect(() => {
+    if (clients.length > 0) {
+      const updated = clients.map(c => syncFamilyBirthdayReminders(c, settings));
+      setClients(updated);
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+    }
+  }, [
+    settings.birthdayReminderDays,
+    settings.anniversaryReminderDays,
+    settings.proposalAnniversaryReminderDays,
+    settings.customMilestoneReminderDays
+  ]);
+
   // Save Luxe Inventory helper
   const saveInventory = (updatedList: LuxeBookInventoryItem[]) => {
     setInventory(updatedList);
     localStorage.setItem("luxe_book_inventory", JSON.stringify(updatedList));
+  };
+
+  // Restore application backup
+  const handleRestoreBackup = (backupData: {
+    clients?: Client[];
+    inventory?: LuxeBookInventoryItem[];
+    settings?: SystemSettings;
+    users?: any[];
+    masterUsername?: string;
+    masterPassword?: string;
+    guideLogs?: any[];
+  }) => {
+    if (backupData.clients) {
+      saveClients(backupData.clients);
+    }
+    if (backupData.inventory) {
+      saveInventory(backupData.inventory);
+    }
+    if (backupData.settings) {
+      handleUpdateSettings(backupData.settings);
+    }
+    if (backupData.users) {
+      localStorage.setItem("ceo_application_users", JSON.stringify(backupData.users));
+    }
+    if (backupData.masterUsername && backupData.masterPassword) {
+      handleUpdateMasterCredentials(backupData.masterUsername, backupData.masterPassword);
+    }
+    if (backupData.guideLogs) {
+      localStorage.setItem("ceo_admin_guide_logs", JSON.stringify(backupData.guideLogs));
+      window.dispatchEvent(new Event("storage"));
+    }
   };
 
   // Save clients to localStorage whenever changed
@@ -193,7 +481,7 @@ export default function App() {
 
   // Save / Update a client
   const handleSaveClient = (savedClient: Client) => {
-    const syncedClient = syncFamilyBirthdayReminders(savedClient);
+    const syncedClient = syncFamilyBirthdayReminders(savedClient, settings);
     let updatedList = [...clients];
     const index = clients.findIndex(c => c.id === syncedClient.id);
     
@@ -211,9 +499,14 @@ export default function App() {
     setIsAdding(false);
   };
 
-  // Delete a client profile
+  // Deactivate a client profile (no permanent deletion to protect historical records)
   const handleDeleteClient = (clientId: string) => {
-    const updatedList = clients.filter(c => c.id !== clientId);
+    const updatedList = clients.map(c => {
+      if (c.id === clientId) {
+        return { ...c, deactivated: true };
+      }
+      return c;
+    });
     saveClients(updatedList);
     setSelectedClientId(null);
     setIsEditing(false);
@@ -225,12 +518,32 @@ export default function App() {
     let updatedList = [...clients];
     
     importedList.forEach(imported => {
-      const index = updatedList.findIndex(existing => existing.id === imported.id);
+      const checkId = imported.id.trim().toLowerCase();
+      const checkName = `${imported.firstName.trim()} ${imported.lastName.trim()}`.toLowerCase();
+      const checkPhone = imported.contact.phoneNumber.trim().replace(/\D/g, "");
+      const checkEmail = imported.contact.email.trim().toLowerCase();
+
+      // Find index by ID, Name, Phone, or Email to prevent any duplicate creation
+      const index = updatedList.findIndex(existing => {
+        const existingId = existing.id.toLowerCase();
+        const existingName = `${existing.firstName.trim()} ${existing.lastName.trim()}`.toLowerCase();
+        const existingPhone = existing.contact.phoneNumber.trim().replace(/\D/g, "");
+        const existingEmail = existing.contact.email.trim().toLowerCase();
+
+        return (
+          existingId === checkId ||
+          existingName === checkName ||
+          (checkPhone && existingPhone === checkPhone) ||
+          (checkEmail && existingEmail === checkEmail)
+        );
+      });
+
       if (index !== -1) {
         // Merge timeline history if possible, keep old reminders or append
         const existing = updatedList[index];
         updatedList[index] = {
           ...imported,
+          id: existing.id, // Preserve existing ID
           timeline: [...imported.timeline, ...existing.timeline].slice(0, 15),
           reminders: [...imported.reminders, ...existing.reminders]
         };
@@ -245,10 +558,20 @@ export default function App() {
   // Retrieve current active client details
   const activeClient = clients.find(c => c.id === selectedClientId) || null;
 
+  // Gated behind premium Apple-inspired authentication gateway
+  if (!isAuthenticated) {
+    return (
+      <LoginScreen 
+        onLoginSuccess={handleLoginSuccess} 
+        backgroundUrl={authBg || spaceBg} 
+      />
+    );
+  }
+
   return (
     <div 
       className="min-h-screen flex flex-col text-slate-800 antialiased selection:bg-slate-900 selection:text-white relative bg-cover bg-center bg-no-repeat bg-fixed"
-      style={{ backgroundImage: `url(${spaceBg})` }}
+      style={{ backgroundImage: `url(${appBg || spaceBg})` }}
     >
       {/* Dimmer overlay for elegant, high-contrast cosmos aesthetic */}
       <div className="fixed inset-0 bg-slate-950/35 backdrop-blur-[1px] pointer-events-none z-0" />
@@ -309,21 +632,7 @@ export default function App() {
               <Users className="w-3.5 h-3.5" />
               Directory
             </button>
-             <button
-              onClick={() => {
-                setActiveTab("excel");
-                setIsAdding(false);
-                setIsEditing(false);
-              }}
-              className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
-                activeTab === "excel" 
-                  ? "bg-white text-slate-950 shadow-sm border border-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-950 hover:bg-slate-50/80"
-              }`}
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              Excel Exchange
-            </button>
+
             <button
               onClick={() => {
                 setActiveTab("calendar");
@@ -354,19 +663,118 @@ export default function App() {
               <BookOpen className="w-3.5 h-3.5" />
               Luxe Inventory
             </button>
+
           </nav>
 
-          {/* Right Status Indicator */}
-          <div className="flex items-center gap-2">
-            <div className="hidden md:flex items-center gap-1.5 px-3 py-1 bg-slate-100/80 border border-slate-200/60 rounded-full text-[10px] font-bold uppercase tracking-wider text-slate-600">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              {clients.length} Accounts Synchronized
+          {/* Right Status Indicator & Settings dropdown */}
+          <div className="flex items-center gap-2.5 relative">
+            
+            {/* Settings Dropdown Button */}
+            <div className="relative">
+              <button
+                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                className={`p-2 rounded-xl border transition-all flex items-center gap-1.5 ${
+                  isSettingsOpen || activeTab === "excel" || activeTab === "branding" || activeTab === "users"
+                    ? "bg-slate-950 border-slate-950 text-white"
+                    : "bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200/40"
+                }`}
+                title="Settings Control Center"
+              >
+                <Settings className="w-4 h-4" />
+                <span className="hidden md:inline text-xs font-bold">Settings</span>
+              </button>
+
+              {isSettingsOpen && (
+                <>
+                  {/* Backdrop */}
+                  <div 
+                    className="fixed inset-0 z-40 cursor-default"
+                    onClick={() => setIsSettingsOpen(false)}
+                  />
+                  
+                  {/* Dropdown Content */}
+                  <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200/80 rounded-2xl shadow-xl py-2 z-50 text-left animate-fade-in">
+                    <div className="px-3.5 py-1.5 border-b border-slate-100 mb-1">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Administration</span>
+                    </div>
+                    
+                    <button
+                      onClick={() => {
+                        setActiveTab("excel");
+                        setIsAdding(false);
+                        setIsEditing(false);
+                        setIsSettingsOpen(false);
+                      }}
+                      className={`flex items-center gap-2.5 w-full px-4 py-2.5 text-xs font-semibold transition-all ${
+                        activeTab === "excel"
+                          ? "bg-rose-50 text-rose-800 font-bold border-l-2 border-rose-600"
+                          : "text-slate-600 hover:text-slate-950 hover:bg-slate-50"
+                      }`}
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-rose-700" />
+                      Excel Exchange
+                    </button>
+                    
+                    {userRole === "Master Administrator" && (
+                      <button
+                        onClick={() => {
+                          setActiveTab("branding");
+                          setIsAdding(false);
+                          setIsEditing(false);
+                          setIsSettingsOpen(false);
+                        }}
+                        className={`flex items-center gap-2.5 w-full px-4 py-2.5 text-xs font-semibold transition-all ${
+                          activeTab === "branding"
+                            ? "bg-slate-50 text-slate-950 font-bold border-l-2 border-slate-800"
+                            : "text-slate-600 hover:text-slate-950 hover:bg-slate-50"
+                        }`}
+                      >
+                        <Settings className="w-3.5 h-3.5 text-slate-500" />
+                        System Settings
+                      </button>
+                    )}
+
+                    {userRole === "Master Administrator" && (
+                      <button
+                        onClick={() => {
+                          setActiveTab("users");
+                          setIsAdding(false);
+                          setIsEditing(false);
+                          setIsSettingsOpen(false);
+                        }}
+                        className={`flex items-center gap-2.5 w-full px-4 py-2.5 text-xs font-semibold transition-all ${
+                          activeTab === "users"
+                            ? "bg-emerald-50 text-emerald-850 font-bold border-l-2 border-emerald-600"
+                            : "text-slate-600 hover:text-slate-950 hover:bg-slate-50"
+                        }`}
+                      >
+                        <Shield className="w-3.5 h-3.5 text-emerald-600" />
+                        User Access
+                      </button>
+                    )}
+                    
+                    <div className="border-t border-slate-100 my-1" />
+                    
+                    <button
+                      onClick={() => {
+                        handleLogout();
+                        setIsSettingsOpen(false);
+                      }}
+                      className="flex items-center gap-2.5 w-full px-4 py-2.5 text-xs font-bold text-rose-600 hover:bg-rose-50 transition-all"
+                    >
+                      <LogOut className="w-3.5 h-3.5 text-rose-500" />
+                      Sign Out
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
+
           </div>
 
         </div>
 
-        {/* Mobile quick-tab bar */}
+        {/* Mobile quick-tab bar (simplified without administrative controls) */}
         <div className="sm:hidden flex items-center justify-around border-t border-neutral-100 p-2 bg-white">
           <button
             onClick={() => {
@@ -409,19 +817,6 @@ export default function App() {
           </button>
           <button
             onClick={() => {
-              setActiveTab("excel");
-              setIsAdding(false);
-              setIsEditing(false);
-            }}
-            className={`flex flex-col items-center gap-0.5 p-1 text-[10px] font-bold ${
-              activeTab === "excel" ? "text-neutral-900" : "text-neutral-400"
-            }`}
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            Excel
-          </button>
-          <button
-            onClick={() => {
               setActiveTab("inventory");
               setIsAdding(false);
               setIsEditing(false);
@@ -439,6 +834,53 @@ export default function App() {
       {/* Main Page Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
         
+        {/* Phase Two - Consistent User Identity Header */}
+        <div className="text-left pb-6 mb-8 border-b border-slate-200/20 flex flex-col md:flex-row justify-between items-start md:items-end gap-4 animate-fade-in">
+          <div className="space-y-1">
+            <span className="text-xs font-black uppercase tracking-widest text-emerald-400 block drop-shadow-sm font-mono leading-none mb-1">
+              {userRole === "Staff" ? "Staff User" : userRole}
+            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-extrabold tracking-widest text-slate-300 uppercase bg-slate-900/40 backdrop-blur-md px-2.5 py-1 rounded border border-slate-700/50">
+                Personal Client Assistant
+              </span>
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            </div>
+            
+            <h1 className="text-3xl md:text-4xl font-normal tracking-tight text-white drop-shadow-sm mt-3">
+              {activeTab === "dashboard" && "Client Watchtower"}
+              {activeTab === "directory" && (activeClient ? `Profile: ${activeClient.fullName}` : isAdding ? "Create Profile" : isEditing ? "Modify Profile" : "Brand Directory")}
+              {activeTab === "excel" && "Excel Exchange"}
+              {activeTab === "calendar" && "Milestone Calendar"}
+              {activeTab === "inventory" && "Librarium Luxe Inventory"}
+              {activeTab === "branding" && "Centralized System Settings"}
+              {activeTab === "users" && "User Access & Governance"}
+            </h1>
+            <p className="text-slate-300 text-xs md:text-sm leading-relaxed max-w-2xl font-medium mt-1">
+              {activeTab === "dashboard" && `Welcome, ${userFullName}. Let's look at who needs your personal attention today to foster authentic, high-value client experiences.`}
+              {activeTab === "directory" && (activeClient ? `Managing high-net-worth portfolio for ${activeClient.fullName}.` : "A curated look book of high-net-worth client profiles, interaction histories, preferences, and private directories.")}
+              {activeTab === "excel" && "Maintain perfect backup parity. Seamlessly ingest or export customer files and private catalog items."}
+              {activeTab === "calendar" && "Your visual guide to critical client anniversaries, birthdays, and time-sensitive lifestyle touchpoints."}
+              {activeTab === "inventory" && "Manage and inspect exquisite private catalog items, standard stock quotas, and client-allocated assets."}
+              {activeTab === "branding" && "Configure pricing equations, warehouse alerts, dynamic milestone triggers, and workspace branding styles."}
+              {activeTab === "users" && "Manage application user credentials, provision future workspace roles, and control active status."}
+            </p>
+          </div>
+          
+          {/* Sim Date Flag */}
+          <div className="px-4 py-2.5 bg-slate-900/40 backdrop-blur-md border border-slate-700/50 rounded-xl text-left self-start md:self-end">
+            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">SYSTEM REFERENCE DATE</span>
+            <span className="text-xs font-semibold text-white font-mono">
+              {new Date().toLocaleDateString("en-US", {
+                weekday: "long",
+                year: "numeric",
+                month: "long",
+                day: "numeric"
+              })}
+            </span>
+          </div>
+        </div>
+        
         {/* Tab 1: Dashboard */}
         {activeTab === "dashboard" && (
           <Dashboard 
@@ -447,6 +889,7 @@ export default function App() {
             onSelectClient={handleSelectClient}
             onNavigateToTab={setActiveTab}
             onOpenTask={(clientId, reminderId) => setActiveTaskInfo({ clientId, reminderId })}
+            settings={settings}
           />
         )}
 
@@ -499,12 +942,14 @@ export default function App() {
                   <ClientForm 
                     onSave={handleSaveClient}
                     onCancel={() => setIsAdding(false)}
+                    existingCustomers={clients}
                   />
                 ) : isEditing ? (
                   <ClientForm 
                     customer={activeClient}
                     onSave={handleSaveClient}
                     onCancel={() => setIsEditing(false)}
+                    existingCustomers={clients}
                   />
                 ) : activeClient ? (
                   <ClientDetail 
@@ -543,6 +988,8 @@ export default function App() {
           <ExcelManager 
             customers={clients}
             onImportCustomers={handleImportClients}
+            inventory={inventory}
+            onUpdateInventory={saveInventory}
           />
         )}
 
@@ -560,6 +1007,34 @@ export default function App() {
           <LuxeInventory 
             inventory={inventory}
             onUpdateInventory={saveInventory}
+            settings={settings}
+          />
+        )}
+
+        {/* Tab 6: Centralized Settings */}
+        {activeTab === "branding" && (
+          <BrandingSettings 
+            appBg={appBg}
+            authBg={authBg}
+            onUpdateAppBg={handleUpdateAppBg}
+            onUpdateAuthBg={handleUpdateAuthBg}
+            onResetAppBg={handleResetAppBg}
+            onResetAuthBg={handleResetAuthBg}
+            defaultBg={spaceBg}
+            settings={settings}
+            onUpdateSettings={handleUpdateSettings}
+            userRole={userRole}
+            onRestoreBackup={handleRestoreBackup}
+            onStartTour={handleStartTour}
+            onNavigateToTab={setActiveTab}
+          />
+        )}
+
+        {/* Tab 7: User Access & Governance */}
+        {activeTab === "users" && userRole === "Master Administrator" && (
+          <UserManagement 
+            onUpdateMasterCredentials={handleUpdateMasterCredentials}
+            masterUsername={masterUsername}
           />
         )}
 
@@ -568,7 +1043,7 @@ export default function App() {
       {/* Clean Footer */}
       <footer className="mt-auto border-t border-neutral-800/10 bg-white/90 backdrop-blur-md py-6 text-center text-xs text-neutral-400 relative z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-4">
-          <p>© 2026 CEO Printing Services & Librarium Luxe. All rights reserved.</p>
+          <p>. © Since 2024 • CEO Lifestyle  The Home Of Endless Creativity</p>
           <div className="flex gap-4">
             <span className="font-semibold text-neutral-500">Executive Relationship Hub</span>
             <span>•</span>
@@ -667,6 +1142,108 @@ export default function App() {
                   className="bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold p-2.5 rounded-xl transition-all text-center"
                 >
                   Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* GUIDED WALKTHROUGH TOUR OVERLAY */}
+      {activeTour && (() => {
+        const tour = TOURS[activeTour.id];
+        if (!tour) return null;
+        const currentStepData = tour.steps[activeTour.currentStep];
+        if (!currentStepData) return null;
+
+        const isFirstStep = activeTour.currentStep === 0;
+        const isLastStep = activeTour.currentStep === tour.steps.length - 1;
+
+        return (
+          <div className="fixed bottom-6 right-6 z-50 max-w-sm w-full bg-slate-900/95 backdrop-blur-md text-white border border-slate-800 rounded-3xl p-5 shadow-2xl space-y-4 animate-fade-in text-left">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                  Interactive Guide
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => saveActiveTour(null)}
+                className="p-1 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                title="End Walkthrough"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-extrabold uppercase text-indigo-400 tracking-wider font-mono">
+                Step {activeTour.currentStep + 1} of {tour.steps.length}
+              </span>
+              <h4 className="text-xs font-bold text-slate-100">{currentStepData.title}</h4>
+              <p className="text-[11px] text-slate-300 leading-relaxed font-medium">
+                {currentStepData.text}
+              </p>
+            </div>
+
+            {/* Visual Step Dots */}
+            <div className="flex gap-1.5 justify-start">
+              {tour.steps.map((_, idx) => (
+                <div
+                  key={idx}
+                  className={`h-1.5 rounded-full transition-all ${
+                    idx === activeTour.currentStep
+                      ? "w-5 bg-indigo-500"
+                      : "w-1.5 bg-slate-700"
+                  }`}
+                />
+              ))}
+            </div>
+
+            {/* Controls */}
+            <div className="flex items-center justify-between pt-2">
+              <button
+                type="button"
+                onClick={() => saveActiveTour(null)}
+                className="text-[11px] font-bold text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
+              >
+                Skip Tour
+              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isFirstStep) {
+                      const prevIdx = activeTour.currentStep - 1;
+                      saveActiveTour({ id: activeTour.id, currentStep: prevIdx });
+                      setActiveTab(tour.steps[prevIdx].tab);
+                    }
+                  }}
+                  disabled={isFirstStep}
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all flex items-center gap-1 ${
+                    isFirstStep
+                      ? "text-slate-650 bg-slate-800/40 cursor-not-allowed"
+                      : "text-slate-300 bg-slate-850 hover:bg-slate-800 cursor-pointer"
+                  }`}
+                >
+                  <ArrowLeft className="w-3 h-3" /> Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isLastStep) {
+                      saveActiveTour(null);
+                    } else {
+                      const nextIdx = activeTour.currentStep + 1;
+                      saveActiveTour({ id: activeTour.id, currentStep: nextIdx });
+                      setActiveTab(tour.steps[nextIdx].tab);
+                    }
+                  }}
+                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-xl transition-all flex items-center gap-1 cursor-pointer shadow-sm"
+                >
+                  {isLastStep ? "Finish" : "Next"} <ArrowRight className="w-3 h-3" />
                 </button>
               </div>
             </div>
