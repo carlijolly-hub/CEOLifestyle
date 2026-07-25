@@ -65,7 +65,7 @@ export default function ExcelManager({
 
   // Get unique local lists for export parameters
   const parishes = Array.from(new Set(customers.map(c => c.contact.parish).filter(p => p && p !== "N/A")));
-  const categories = Array.from(new Set(customers.flatMap(c => c.history.preferredCategories)));
+  const categories = Array.from(new Set(customers.flatMap(c => c.history?.preferredCategories || [])));
 
   // Drag handlers
   const handleDrag = (e: React.DragEvent) => {
@@ -203,7 +203,7 @@ export default function ExcelManager({
       return;
     }
     const filtered = customers.filter(c => 
-      c.history.preferredCategories.some(cat => cat.toLowerCase() === exportCategory.toLowerCase())
+      c.history?.preferredCategories && c.history.preferredCategories.some(cat => cat.toLowerCase() === exportCategory.toLowerCase())
     );
     exportClientsExcel(filtered, `Category_${exportCategory.replace(/\s+/g, "_")}`);
   };

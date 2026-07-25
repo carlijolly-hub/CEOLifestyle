@@ -1,6 +1,8 @@
 import React, { useState, useMemo } from "react";
-import { Client, ImportantDate, FollowUpReminder, BusinessEvent } from "../types";
+import { Client, ImportantDate, FollowUpReminder, BusinessEvent, AspiringClient } from "../types";
+import { INITIAL_BUSINESS_EVENTS } from "../data/mockData";
 import { getRelationshipEventTitle, getClientMilestones, parseDateString } from "../utils/dateHelpers";
+import SystemReferenceClock from "./SystemReferenceClock";
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -15,11 +17,17 @@ import {
   ArrowRight,
   Clock,
   Sparkles,
-  ShieldCheck
+  ShieldCheck,
+  Edit3,
+  Trash2,
+  X,
+  Plus,
+  AlertCircle
 } from "lucide-react";
 
 interface MilestoneCalendarProps {
   clients: Client[];
+  aspiringClients?: AspiringClient[];
   onSelectClient: (clientId: string) => void;
   onOpenTask?: (clientId: string, reminderId: string) => void;
 }
@@ -30,7 +38,7 @@ const SYSTEM_REFERENCE_YEAR = realToday.getFullYear();
 const SYSTEM_REFERENCE_MONTH = realToday.getMonth(); // 0-indexed
 const SYSTEM_REFERENCE_DAY = realToday.getDate();
 
-export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask }: MilestoneCalendarProps) {
+export default function MilestoneCalendar({ clients, aspiringClients, onSelectClient, onOpenTask }: MilestoneCalendarProps) {
   // Navigation State
   const [currentYear, setCurrentYear] = useState(SYSTEM_REFERENCE_YEAR);
   const [currentMonth, setCurrentMonth] = useState(SYSTEM_REFERENCE_MONTH); // July (0-indexed)
@@ -41,16 +49,15 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
     const stored = localStorage.getItem("ceo_crm_business_events");
     if (stored) {
       try {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length >= INITIAL_BUSINESS_EVENTS.length) {
+          return parsed;
+        }
       } catch (err) {
         console.error(err);
       }
     }
-    return [
-      { id: "be-1", title: "Annual CEO Day Celebration", date: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-10`, type: "CEO Day", description: "All brand managers assemble." },
-      { id: "be-2", title: "Librarium Luxe Literary Gala", date: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-25`, type: "Librarium Luxe Day", description: "Gala evening celebrating rare books." },
-      { id: "be-3", title: "General Mid-Year Alignment Review", date: `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-08`, type: "General Business Day", description: "Review overall CRM progress." }
-    ];
+    return INITIAL_BUSINESS_EVENTS;
   });
 
   React.useEffect(() => {
@@ -62,7 +69,11 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
 
   // Create event states
   const [showAddEventForm, setShowAddEventForm] = useState(false);
-  const [eventCategory, setEventCategory] = useState<BusinessEvent["type"]>("Gold Client Events");
+  const [eventCategory, setEventCategory] = useState<BusinessEvent["type"]>("CEO Business Day");
+  const [eventImportance, setEventImportance] = useState<"Standard" | "Important" | "Critical">("Important");
+  const [eventAlertTiming, setEventAlertTiming] = useState<"Same Day" | "1 Day Before" | "3 Days Before" | "7 Days Before" | "14 Days Before" | "Custom Date">("14 Days Before");
+  const [eventCustomAlertDate, setEventCustomAlertDate] = useState("");
+  const [eventRepeatSchedule, setEventRepeatSchedule] = useState<"Does Not Repeat" | "Every Week" | "Every Month" | "Every Year" | "Custom Repeat Schedule">("Every Year");
   const [eventClientId, setEventClientId] = useState("");
   const [eventTitle, setEventTitle] = useState("");
   const [eventDate, setEventDate] = useState(() => {
@@ -73,17 +84,42 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
     return `${y}-${m}-${d}`;
   });
   const [eventNotes, setEventNotes] = useState("");
+  const [newChecklistText, setNewChecklistText] = useState("");
+  const [eventChecklist, setEventChecklist] = useState<string[]>([]);
+
+  const handleAddChecklistItem = () => {
+    if (!newChecklistText.trim()) return;
+    setEventChecklist(prev => [...prev, newChecklistText.trim()]);
+    setNewChecklistText("");
+  };
+
+  const handleRemoveChecklistItem = (idx: number) => {
+    setEventChecklist(prev => prev.filter((_, i) => i !== idx));
+  };
 
   const handleCreateEvent = (e: React.FormEvent) => {
     e.preventDefault();
     if (!eventTitle.trim() || !eventDate) return;
+
+    const checklistObj = eventChecklist.map((task, i) => ({
+      id: `chk-new-${Date.now()}-${i}`,
+      task,
+      completed: false
+    }));
 
     const newEv: BusinessEvent = {
       id: `custom-evt-${Date.now()}`,
       title: eventTitle.trim(),
       date: eventDate,
       type: eventCategory,
+      category: eventCategory,
+      importanceLevel: eventImportance,
+      alertTiming: eventAlertTiming,
+      customAlertDate: eventAlertTiming === "Custom Date" ? eventCustomAlertDate : undefined,
+      repeatSchedule: eventRepeatSchedule,
       description: eventNotes.trim() || undefined,
+      notes: eventNotes.trim() || undefined,
+      preparationChecklist: checklistObj.length > 0 ? checklistObj : undefined,
       associatedClientId: (eventCategory === "Gold / Platinum Client Events" || eventCategory === "Gold Client Events" || eventCategory === "Platinum Client Events" || eventCategory === "Silver Client Events") ? eventClientId : undefined
     };
 
@@ -93,6 +129,187 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
     setEventTitle("");
     setEventNotes("");
     setEventClientId("");
+    setEventChecklist([]);
+  };
+
+  const toggleChecklistTask = (eventId: string, taskId: string) => {
+    setBusinessEvents(prev => prev.map(ev => {
+      if (ev.id !== eventId || !ev.preparationChecklist) return ev;
+      const updatedChecklist = ev.preparationChecklist.map(task => {
+        if (task.id === taskId) {
+          return { ...task, completed: !task.completed };
+        }
+        return task;
+      });
+      return { ...ev, preparationChecklist: updatedChecklist };
+    }));
+  };
+
+  // Edit Event state
+  const [editingEvent, setEditingEvent] = useState<BusinessEvent | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editCategory, setEditCategory] = useState<BusinessEvent["type"]>("CEO Business Day");
+  const [editDate, setEditDate] = useState("");
+  const [editImportance, setEditImportance] = useState<"Standard" | "Important" | "Critical">("Important");
+  const [editAlertTiming, setEditAlertTiming] = useState<"Same Day" | "1 Day Before" | "3 Days Before" | "7 Days Before" | "14 Days Before" | "Custom Date">("14 Days Before");
+  const [editCustomAlertDate, setEditCustomAlertDate] = useState("");
+  const [editRepeatSchedule, setEditRepeatSchedule] = useState<"Does Not Repeat" | "Every Week" | "Every Month" | "Every Year" | "Custom Repeat Schedule">("Every Year");
+  const [editNotes, setEditNotes] = useState("");
+  const [editAssignedUser, setEditAssignedUser] = useState("");
+  const [editClientId, setEditClientId] = useState("");
+  const [editChecklist, setEditChecklist] = useState<Array<{ id: string; task: string; completed: boolean }>>([]);
+  const [editNewChecklistText, setEditNewChecklistText] = useState("");
+  const [recurringApplyScope, setRecurringApplyScope] = useState<"This event only" | "This event and future occurrences" | "All recurring events">("This event only");
+  const [editValidationError, setEditValidationError] = useState("");
+
+  const checkEditPermission = (): boolean => {
+    const role = localStorage.getItem("ceo_user_role") || "Master Administrator";
+    if (role === "Read-Only User") {
+      alert("Permission Restricted: Read-Only users cannot edit business events. Please contact a Master Administrator.");
+      return false;
+    }
+    return true;
+  };
+
+  const handleOpenEditModal = (evItem: any) => {
+    if (!checkEditPermission()) return;
+
+    // Find existing event in businessEvents or construct new
+    let target = businessEvents.find(b => b.id === evItem.id || b.title === evItem.label);
+    if (!target) {
+      target = {
+        id: evItem.id || `custom-evt-${Date.now()}`,
+        title: evItem.label || evItem.title || "Untitled Business Event",
+        date: evItem.dateStr || `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}-15`,
+        type: evItem.businessType || "CEO Business Day",
+        category: evItem.businessType || "CEO Business Day",
+        importanceLevel: "Important",
+        alertTiming: "14 Days Before",
+        repeatSchedule: "Every Year",
+        description: evItem.description || "",
+        notes: evItem.description || "",
+        associatedClientId: (evItem.client && evItem.client.id !== "business-entity") ? evItem.client.id : undefined,
+        assignedUser: "Carli"
+      };
+    }
+
+    setEditingEvent(target);
+    setEditTitle(target.title);
+    setEditCategory(target.category || target.type || "CEO Business Day");
+    setEditDate(target.date);
+    setEditImportance(target.importanceLevel || "Important");
+    setEditAlertTiming(target.alertTiming || "14 Days Before");
+    setEditCustomAlertDate(target.customAlertDate || "");
+    setEditRepeatSchedule(target.repeatSchedule || "Every Year");
+    setEditNotes(target.notes || target.description || "");
+    setEditAssignedUser(target.assignedUser || "Carli");
+    setEditClientId(target.associatedClientId || "");
+    setEditChecklist(target.preparationChecklist ? [...target.preparationChecklist] : []);
+    setEditNewChecklistText("");
+    setRecurringApplyScope("This event only");
+    setEditValidationError("");
+  };
+
+  const handleSaveEditEvent = (e: React.FormEvent) => {
+    e.preventDefault();
+    setEditValidationError("");
+
+    // 1. Validation
+    if (!editTitle.trim()) {
+      setEditValidationError("Event Name is required. Please provide a valid title for the event.");
+      return;
+    }
+
+    if (!editDate) {
+      setEditValidationError("Event Date is required. Please select a valid date.");
+      return;
+    }
+
+    if (editAlertTiming === "Custom Date" && !editCustomAlertDate) {
+      setEditValidationError("Custom Reminder Alert Date is required when 'Custom Date' timing is selected.");
+      return;
+    }
+
+    const currentUser = localStorage.getItem("ceo_user_fullname") || localStorage.getItem("ceo_admin_username") || "Carli";
+
+    // Build changes log summary
+    const oldTitle = editingEvent?.title || "";
+    const oldAlert = editingEvent?.alertTiming || "14 Days Before";
+    const changesList: string[] = [];
+    if (oldTitle !== editTitle.trim()) changesList.push(`Title: "${oldTitle}" → "${editTitle.trim()}"`);
+    if (editingEvent?.date !== editDate) changesList.push(`Date: ${editingEvent?.date} → ${editDate}`);
+    if (editingEvent?.category !== editCategory) changesList.push(`Category: ${editingEvent?.category || editingEvent?.type} → ${editCategory}`);
+    if (editingEvent?.importanceLevel !== editImportance) changesList.push(`Importance: ${editingEvent?.importanceLevel || 'Standard'} → ${editImportance}`);
+    if (oldAlert !== editAlertTiming) changesList.push(`Reminder: ${oldAlert} → ${editAlertTiming}`);
+    if (editingEvent?.repeatSchedule !== editRepeatSchedule) changesList.push(`Repeat: ${editingEvent?.repeatSchedule || 'Does Not Repeat'} → ${editRepeatSchedule}`);
+    if (editingEvent?.assignedUser !== editAssignedUser.trim()) changesList.push(`Assigned User: ${editingEvent?.assignedUser || 'Unassigned'} → ${editAssignedUser.trim()}`);
+
+    const changesSummary = changesList.length > 0 
+      ? changesList.join(" | ") + ` (Scope: ${recurringApplyScope})`
+      : `Event parameters updated (Scope: ${recurringApplyScope})`;
+
+    const updatedEv: BusinessEvent = {
+      ...editingEvent!,
+      title: editTitle.trim(),
+      date: editDate,
+      type: editCategory,
+      category: editCategory,
+      importanceLevel: editImportance,
+      alertTiming: editAlertTiming,
+      customAlertDate: editAlertTiming === "Custom Date" ? editCustomAlertDate : undefined,
+      repeatSchedule: editRepeatSchedule,
+      description: editNotes.trim() || undefined,
+      notes: editNotes.trim() || undefined,
+      assignedUser: editAssignedUser.trim() || undefined,
+      associatedClientId: editCategory.includes("Client") ? editClientId : undefined,
+      preparationChecklist: editChecklist
+    };
+
+    // Save/Update businessEvents
+    if (recurringApplyScope === "All recurring events" || recurringApplyScope === "This event and future occurrences") {
+      setBusinessEvents(prev => prev.map(b => {
+        if (b.id === updatedEv.id || b.title.toLowerCase() === oldTitle.toLowerCase()) {
+          return {
+            ...b,
+            ...updatedEv,
+            id: b.id // retain original id
+          };
+        }
+        return b;
+      }));
+    } else {
+      setBusinessEvents(prev => {
+        const exists = prev.some(b => b.id === updatedEv.id);
+        if (exists) {
+          return prev.map(b => b.id === updatedEv.id ? updatedEv : b);
+        } else {
+          return [...prev, updatedEv];
+        }
+      });
+    }
+
+    // Record activity log
+    const newLog = {
+      id: `log-${Date.now()}`,
+      user: currentUser,
+      action: "Updated Event",
+      eventTitle: editTitle.trim(),
+      changed: changesSummary,
+      date: new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }),
+      timestamp: new Date().toISOString()
+    };
+
+    try {
+      const existingGuideLogs = JSON.parse(localStorage.getItem("ceo_admin_guide_logs") || "[]");
+      localStorage.setItem("ceo_admin_guide_logs", JSON.stringify([newLog, ...existingGuideLogs]));
+
+      const existingActivityLogs = JSON.parse(localStorage.getItem("ceo_crm_activity_logs") || "[]");
+      localStorage.setItem("ceo_crm_activity_logs", JSON.stringify([newLog, ...existingActivityLogs]));
+    } catch (err) {
+      console.error("Failed to write log:", err);
+    }
+
+    setEditingEvent(null);
   };
 
   // Filters
@@ -161,8 +378,36 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
       });
     });
 
+    // 3. Process Aspiring Client follow-ups
+    if (aspiringClients) {
+      aspiringClients.forEach(asp => {
+        if (!asp.followUpDate || asp.status === "Converted to Client" || asp.status === "Archived") return;
+        const parsed = parseDateString(asp.followUpDate);
+        if (!parsed) return;
+
+        eventsList.push({
+          id: `aspiring-${asp.id}`,
+          client: {
+            id: asp.id,
+            firstName: asp.name.split(" ")[0],
+            lastName: asp.name.split(" ").slice(1).join(" ") || "Prospect",
+            tier: "Silver",
+            homeBrand: "CEO Printing Services",
+          } as any,
+          type: "reminder",
+          businessType: "General Business Day",
+          label: `Follow Up: ${asp.name} (${asp.serviceInterestedIn})`,
+          dateStr: asp.followUpDate,
+          parsedMonth: parsed.month,
+          parsedDay: parsed.day,
+          parsedYear: parsed.year,
+          isVip: false
+        });
+      });
+    }
+
     return eventsList;
-  }, [clients]);
+  }, [clients, aspiringClients]);
 
   // Parse business events
   const parsedBusinessEvents = useMemo(() => {
@@ -181,7 +426,15 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
         parsedDay: parsed ? parsed.day : -1,
         parsedYear: parsed ? parsed.year : undefined,
         isVip: associatedClient ? (associatedClient.tier === "Gold" || associatedClient.tier === "Platinum") : false,
-        description: be.description
+        description: be.description,
+        notes: be.notes,
+        importanceLevel: be.importanceLevel,
+        alertTiming: be.alertTiming,
+        customAlertDate: be.customAlertDate,
+        repeatSchedule: be.repeatSchedule,
+        preparationChecklist: be.preparationChecklist,
+        historicalNotes: be.historicalNotes,
+        assignedUser: be.assignedUser
       };
     }).filter(e => e.parsedMonth !== -1);
   }, [businessEvents, clients]);
@@ -201,6 +454,14 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
       parsedYear?: number;
       isVip: boolean;
       description?: string;
+      notes?: string;
+      importanceLevel?: string;
+      alertTiming?: string;
+      customAlertDate?: string;
+      repeatSchedule?: string;
+      preparationChecklist?: any[];
+      historicalNotes?: any[];
+      assignedUser?: string;
     }> = [];
 
     if (displayToggle === "both" || displayToggle === "client_only") {
@@ -347,43 +608,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
   return (
     <div className="space-y-6 text-slate-800 animate-fade-in">
       
-      {/* 1. Header and quick date summary */}
-      <div className="text-left pb-6 border-b border-slate-700/50 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-extrabold tracking-widest text-slate-300 uppercase bg-slate-900/40 backdrop-blur-md px-2.5 py-1 rounded border border-slate-700/50">
-              Interactive Milestone Calendar
-            </span>
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          </div>
-          <h1 className="text-3xl md:text-4xl font-normal tracking-tight text-white drop-shadow-sm">
-            Milestone Hub
-          </h1>
-          <p className="text-slate-300 text-xs md:text-sm leading-relaxed max-w-2xl font-medium">
-            Review critical touchpoints, birthdays, and anniversaries from our unified CRM files on a navigable schedule.
-          </p>
-        </div>
-
-        {/* Ref Date Card */}
-        <div className="px-4 py-2.5 bg-slate-900/40 backdrop-blur-md border border-slate-700/50 rounded-xl text-left flex items-center gap-3">
-          <div className="p-1.5 bg-white/10 rounded-lg border border-white/5 text-amber-300">
-            <Clock className="w-4 h-4" />
-          </div>
-          <div>
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">System Reference Date</span>
-            <span className="text-xs font-bold text-white font-mono">
-              {new Date(SYSTEM_REFERENCE_YEAR, SYSTEM_REFERENCE_MONTH, SYSTEM_REFERENCE_DAY).toLocaleDateString("en-US", {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-                weekday: 'short'
-              })}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. Control Filters Row */}
+      {/* Control Filters Row */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white/85 backdrop-blur-md border border-slate-200/50 p-4 rounded-2xl shadow-sm items-center text-left">
         
         {/* Search Input */}
@@ -729,21 +954,125 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
                           )}
                         </div>
 
-                        <span className={`px-2 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-wider border ${tagText}`}>
-                          {ev.businessType}
-                        </span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`px-2 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-wider border ${tagText}`}>
+                            {ev.businessType}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditModal(ev)}
+                            className="px-2 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-wider text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 hover:text-indigo-900 transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                          >
+                            <Edit3 className="w-3 h-3 text-indigo-600" /> Edit Event
+                          </button>
+                        </div>
                       </div>
- 
+
                       {/* Content Description */}
-                      <div className="text-xs text-slate-700 leading-relaxed font-medium bg-white/75 p-2 rounded-xl border border-slate-100">
-                        {ev.type === "birthday" && <Gift className="w-3.5 h-3.5 text-amber-500 inline mr-1.5 align-middle" />}
-                        {ev.type === "anniversary" && <Heart className="w-3.5 h-3.5 text-rose-500 inline mr-1.5 align-middle" />}
-                        {ev.type === "reminder" && <Bell className="w-3.5 h-3.5 text-blue-500 inline mr-1.5 align-middle" />}
-                        {isClientEvent && <span className="inline mr-1.5 align-middle">👤</span>}
-                        {ev.type === "business" && !isClientEvent && <CalendarIcon className="w-3.5 h-3.5 text-purple-500 inline mr-1.5 align-middle" />}
-                        <span className="align-middle">{ev.label}</span>
+                      <div className="text-xs text-slate-700 leading-relaxed font-medium bg-white/75 p-2.5 rounded-xl border border-slate-100 space-y-2">
+                        <div className="flex items-center gap-1.5">
+                          {ev.type === "birthday" && <Gift className="w-3.5 h-3.5 text-amber-500 inline shrink-0" />}
+                          {ev.type === "anniversary" && <Heart className="w-3.5 h-3.5 text-rose-500 inline shrink-0" />}
+                          {ev.type === "reminder" && <Bell className="w-3.5 h-3.5 text-blue-500 inline shrink-0" />}
+                          {isClientEvent && <span className="inline shrink-0">👤</span>}
+                          {ev.type === "business" && !isClientEvent && <CalendarIcon className="w-3.5 h-3.5 text-purple-500 inline shrink-0" />}
+                          <span className="font-bold text-slate-900">{ev.label}</span>
+                        </div>
+
                         {ev.description && (
-                          <p className="text-[11px] text-slate-500 mt-1 font-normal italic">{ev.description}</p>
+                          <p className="text-[11px] text-slate-600 font-normal italic leading-normal">{ev.description}</p>
+                        )}
+
+                        {/* Event Metadata Tags: Importance, Alert Timing, Repeat Schedule, Assigned User */}
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {ev.importanceLevel && (
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider ${
+                              ev.importanceLevel === "Critical" ? "bg-rose-100 text-rose-800 border border-rose-200" :
+                              ev.importanceLevel === "Important" ? "bg-amber-100 text-amber-800 border border-amber-200" :
+                              "bg-slate-100 text-slate-700 border border-slate-200"
+                            }`}>
+                              {ev.importanceLevel === "Critical" ? "🚨 Critical" : ev.importanceLevel === "Important" ? "⭐ Important" : "Standard"}
+                            </span>
+                          )}
+
+                          {ev.alertTiming && (
+                            <span className="px-2 py-0.5 rounded text-[9px] font-extrabold text-blue-800 bg-blue-50 border border-blue-200 uppercase tracking-wider">
+                              Alert: {ev.alertTiming}
+                            </span>
+                          )}
+
+                          {ev.repeatSchedule && (
+                            <span className="px-2 py-0.5 rounded text-[9px] font-extrabold text-purple-800 bg-purple-50 border border-purple-200 uppercase tracking-wider">
+                              Repeat: {ev.repeatSchedule}
+                            </span>
+                          )}
+
+                          {ev.assignedUser && (
+                            <span className="px-2 py-0.5 rounded text-[9px] font-extrabold text-slate-800 bg-slate-100 border border-slate-200 uppercase tracking-wider flex items-center gap-1">
+                              Owner: {ev.assignedUser}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Interactive Preparation Checklist */}
+                        {ev.preparationChecklist && ev.preparationChecklist.length > 0 && (
+                          <div className="pt-2 border-t border-slate-200/60 space-y-1.5">
+                            <span className="text-[9px] font-extrabold uppercase text-slate-500 tracking-wider block">
+                              Preparation Checklist ({ev.preparationChecklist.filter(t => t.completed).length}/{ev.preparationChecklist.length} Done)
+                            </span>
+                            <div className="space-y-1">
+                              {ev.preparationChecklist.map((task) => (
+                                <button
+                                  key={task.id}
+                                  type="button"
+                                  onClick={() => toggleChecklistTask(ev.id, task.id)}
+                                  className="w-full flex items-center gap-2 text-left text-[11px] p-1 rounded hover:bg-slate-100 transition-colors cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={task.completed}
+                                    onChange={() => {}} // handled by button click
+                                    className="rounded border-slate-300 text-indigo-600 focus:ring-0 cursor-pointer"
+                                  />
+                                  <span className={task.completed ? "line-through text-slate-400" : "text-slate-800 font-medium"}>
+                                    {task.task}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Historical Business Intelligence Ledger */}
+                        {ev.historicalNotes && ev.historicalNotes.length > 0 && (
+                          <div className="pt-2 border-t border-slate-200/60 space-y-1.5">
+                            <span className="text-[9px] font-extrabold uppercase text-indigo-700 tracking-wider block">
+                              Business Memory & Historical Campaigns ({ev.historicalNotes.length} Years Recorded)
+                            </span>
+                            <div className="space-y-1.5">
+                              {ev.historicalNotes.map((hn) => (
+                                <div key={hn.id} className="bg-slate-50 p-2 rounded-lg border border-slate-200/70 text-[10px] space-y-1">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-extrabold text-slate-900">{hn.year} Campaign</span>
+                                    <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold ${
+                                      hn.status === "Completed" ? "bg-emerald-100 text-emerald-800" : "bg-blue-100 text-blue-800"
+                                    }`}>
+                                      {hn.status}
+                                    </span>
+                                  </div>
+                                  {hn.salesAchieved !== undefined && (
+                                    <div className="font-mono text-slate-700 font-bold">
+                                      Sales: ${hn.salesAchieved.toLocaleString()} JMD
+                                      {hn.topProduct && <span className="ml-2 text-slate-500 font-normal">Top: {hn.topProduct}</span>}
+                                    </div>
+                                  )}
+                                  {hn.notes && (
+                                    <p className="text-slate-600 italic leading-snug">{hn.notes}</p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         )}
                       </div>
  
@@ -822,6 +1151,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
 
             {showAddEventForm && (
               <form onSubmit={handleCreateEvent} className="space-y-3.5 text-xs">
+                {/* Event Category */}
                 <div>
                   <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Event Category</label>
                   <select
@@ -829,12 +1159,72 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
                     onChange={(e) => setEventCategory(e.target.value as any)}
                     className="w-full bg-slate-50 border border-slate-200 focus:border-slate-850 rounded-xl px-3 py-1.5 focus:outline-none transition-colors text-xs font-semibold"
                   >
+                    <option value="CEO Business Day">💙 CEO Business Day</option>
+                    <option value="Librarium Luxe Business Day">💛 Librarium Luxe Business Day</option>
+                    <option value="General Business Day">💚 General Business Day</option>
                     <option value="Gold Client Events">🏆 Gold Client Events</option>
                     <option value="Platinum Client Events">🖤 Platinum Client Events</option>
                     <option value="Silver Client Events">🥈 Silver Client Events</option>
-                    <option value="CEO Day">💙 CEO Day</option>
-                    <option value="Librarium Luxe Day">💛 Librarium Luxe Day</option>
-                    <option value="General Business Day">💚 General Business Day</option>
+                  </select>
+                </div>
+
+                {/* Importance Level & Alert Timing */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Importance Level</label>
+                    <select
+                      value={eventImportance}
+                      onChange={(e) => setEventImportance(e.target.value as any)}
+                      className="w-full bg-slate-50 border border-slate-200 focus:border-slate-850 rounded-xl px-2.5 py-1.5 text-xs font-semibold"
+                    >
+                      <option value="Standard">Standard</option>
+                      <option value="Important">⭐ Important</option>
+                      <option value="Critical">🚨 Critical</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Alert Timing</label>
+                    <select
+                      value={eventAlertTiming}
+                      onChange={(e) => setEventAlertTiming(e.target.value as any)}
+                      className="w-full bg-slate-50 border border-slate-200 focus:border-slate-850 rounded-xl px-2.5 py-1.5 text-xs font-semibold"
+                    >
+                      <option value="Same Day">Same Day</option>
+                      <option value="1 Day Before">1 Day Before</option>
+                      <option value="3 Days Before">3 Days Before</option>
+                      <option value="7 Days Before">7 Days Before</option>
+                      <option value="14 Days Before">14 Days Before</option>
+                      <option value="Custom Date">Custom Date</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Custom Alert Date if selected */}
+                {eventAlertTiming === "Custom Date" && (
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Custom Reminder Alert Date</label>
+                    <input
+                      type="date"
+                      value={eventCustomAlertDate}
+                      onChange={(e) => setEventCustomAlertDate(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 focus:border-slate-850 rounded-xl px-3 py-1.5 text-xs font-semibold"
+                    />
+                  </div>
+                )}
+
+                {/* Repeat Schedule */}
+                <div>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Repeat Schedule</label>
+                  <select
+                    value={eventRepeatSchedule}
+                    onChange={(e) => setEventRepeatSchedule(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-200 focus:border-slate-850 rounded-xl px-3 py-1.5 focus:outline-none transition-colors text-xs font-semibold"
+                  >
+                    <option value="Does Not Repeat">Does Not Repeat</option>
+                    <option value="Every Week">Every Week</option>
+                    <option value="Every Month">Every Month</option>
+                    <option value="Every Year">Every Year (Annual Campaign)</option>
+                    <option value="Custom Repeat Schedule">Custom Repeat Schedule</option>
                   </select>
                 </div>
 
@@ -861,7 +1251,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
                   <input
                     type="text"
                     required
-                    placeholder="e.g. VIP Consultation Dinner"
+                    placeholder="e.g. Valentine's Day Campaign"
                     value={eventTitle}
                     onChange={(e) => setEventTitle(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 focus:border-slate-850 rounded-xl px-3 py-1.5 focus:outline-none transition-colors text-xs font-semibold"
@@ -897,11 +1287,49 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
                   </div>
                 </div>
 
+                {/* Preparation Checklist Builder */}
+                <div className="space-y-1.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200/60">
+                  <label className="block text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">Preparation Checklist Tasks</label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={newChecklistText}
+                      onChange={(e) => setNewChecklistText(e.target.value)}
+                      placeholder="e.g. Order packaging supplies"
+                      className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-medium"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddChecklistItem}
+                      className="bg-indigo-600 text-white font-bold px-2.5 py-1 rounded-lg text-xs hover:bg-indigo-700 cursor-pointer"
+                    >
+                      Add Task
+                    </button>
+                  </div>
+
+                  {eventChecklist.length > 0 && (
+                    <div className="space-y-1 mt-2">
+                      {eventChecklist.map((item, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-[11px] bg-white px-2 py-1 rounded border border-slate-100">
+                          <span className="text-slate-800 font-medium">• {item}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveChecklistItem(idx)}
+                            className="text-rose-500 font-extrabold text-[10px] hover:text-rose-700 ml-2"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div>
-                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Notes / Description</label>
+                  <label className="block text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Notes / Business Intelligence Goals</label>
                   <textarea
                     rows={2}
-                    placeholder="Provide details or preparation steps..."
+                    placeholder="Provide details or campaign strategies..."
                     value={eventNotes}
                     onChange={(e) => setEventNotes(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 focus:border-slate-850 rounded-xl px-3 py-1.5 focus:outline-none transition-colors text-xs font-semibold resize-none"
@@ -912,7 +1340,7 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
                   type="submit"
                   className="w-full py-2 bg-indigo-650 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-colors shadow-xs cursor-pointer"
                 >
-                  Create Event
+                  Create Business Event
                 </button>
               </form>
             )}
@@ -921,6 +1349,325 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
         </div>
 
       </div>
+
+      {/* Edit Business Event Modal */}
+      {editingEvent && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in duration-200 text-left">
+            
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-5 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-500/20 border border-indigo-400/30 rounded-2xl">
+                  <Edit3 className="w-5 h-5 text-indigo-300" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold tracking-tight">Edit Business Event</h3>
+                  <p className="text-xs text-indigo-200 font-medium">Modify event details, reminder timing, checklist, and recurring settings</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingEvent(null)}
+                className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Validation Error Alert */}
+            {editValidationError && (
+              <div className="bg-rose-50 border-b border-rose-200 p-3.5 flex items-start gap-2.5 text-xs text-rose-800">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <p className="font-semibold">{editValidationError}</p>
+              </div>
+            )}
+
+            {/* Modal Form */}
+            <form onSubmit={handleSaveEditEvent} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto text-xs">
+              
+              {/* Row 1: Event Name & Category */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase text-slate-500 tracking-wider mb-1">
+                    Event Name <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-hidden focus:border-indigo-600 focus:bg-white"
+                    placeholder="E.g. Valentine's Day Campaign"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase text-slate-500 tracking-wider mb-1">
+                    Event Category
+                  </label>
+                  <select
+                    value={editCategory}
+                    onChange={(e) => setEditCategory(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-hidden focus:border-indigo-600 focus:bg-white"
+                  >
+                    <option value="CEO Business Day">💙 CEO Business Day</option>
+                    <option value="Librarium Luxe Business Day">💛 Librarium Luxe Business Day</option>
+                    <option value="General Business Day">💚 General Business Day</option>
+                    <option value="Gold Client Events">🏆 Gold Client Events</option>
+                    <option value="Platinum Client Events">🖤 Platinum Client Events</option>
+                    <option value="Silver Client Events">🥈 Silver Client Events</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Row 2: Event Date & Assigned User */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase text-slate-500 tracking-wider mb-1">
+                    Event Date <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={editDate}
+                    onChange={(e) => setEditDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-hidden focus:border-indigo-600 focus:bg-white font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase text-slate-500 tracking-wider mb-1">
+                    Assigned User / Owner
+                  </label>
+                  <input
+                    type="text"
+                    value={editAssignedUser}
+                    onChange={(e) => setEditAssignedUser(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-hidden focus:border-indigo-600 focus:bg-white"
+                    placeholder="E.g. Carli or Master Administrator"
+                  />
+                </div>
+              </div>
+
+              {/* Row 3: Importance Level & Reminder Timing */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase text-slate-500 tracking-wider mb-1">
+                    Importance Level
+                  </label>
+                  <select
+                    value={editImportance}
+                    onChange={(e) => setEditImportance(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-hidden focus:border-indigo-600 focus:bg-white"
+                  >
+                    <option value="Standard">Standard</option>
+                    <option value="Important">⭐ Important</option>
+                    <option value="Critical">🚨 Critical</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase text-slate-500 tracking-wider mb-1">
+                    Reminder / Alert Timing
+                  </label>
+                  <select
+                    value={editAlertTiming}
+                    onChange={(e) => setEditAlertTiming(e.target.value as any)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-hidden focus:border-indigo-600 focus:bg-white"
+                  >
+                    <option value="Same Day">Same Day</option>
+                    <option value="1 Day Before">1 Day Before</option>
+                    <option value="3 Days Before">3 Days Before</option>
+                    <option value="7 Days Before">7 Days Before</option>
+                    <option value="14 Days Before">14 Days Before</option>
+                    <option value="Custom Date">Custom Date</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Custom Alert Date Input */}
+              {editAlertTiming === "Custom Date" && (
+                <div>
+                  <label className="block text-[10px] font-extrabold uppercase text-slate-500 tracking-wider mb-1">
+                    Custom Alert Date
+                  </label>
+                  <input
+                    type="date"
+                    value={editCustomAlertDate}
+                    onChange={(e) => setEditCustomAlertDate(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-hidden focus:border-indigo-600 focus:bg-white font-mono"
+                  />
+                </div>
+              )}
+
+              {/* Row 4: Recurring Event Schedule */}
+              <div>
+                <label className="block text-[10px] font-extrabold uppercase text-slate-500 tracking-wider mb-1">
+                  Recurring Event Schedule
+                </label>
+                <select
+                  value={editRepeatSchedule}
+                  onChange={(e) => setEditRepeatSchedule(e.target.value as any)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-900 focus:outline-hidden focus:border-indigo-600 focus:bg-white"
+                >
+                  <option value="Does Not Repeat">Does Not Repeat</option>
+                  <option value="Every Week">Every Week</option>
+                  <option value="Every Month">Every Month</option>
+                  <option value="Every Year">Every Year (Annual Campaign)</option>
+                  <option value="Custom Repeat Schedule">Custom Repeat Schedule</option>
+                </select>
+              </div>
+
+              {/* Recurring Event Editing Scope Section */}
+              {editRepeatSchedule !== "Does Not Repeat" && (
+                <div className="bg-indigo-50/70 border border-indigo-200/80 rounded-2xl p-3.5 space-y-2">
+                  <label className="block text-[10px] font-extrabold uppercase text-indigo-900 tracking-wider">
+                    Apply Changes To (Recurring Event Scope):
+                  </label>
+                  <div className="space-y-1.5 text-slate-800">
+                    <label className="flex items-center gap-2 cursor-pointer font-medium text-xs">
+                      <input
+                        type="radio"
+                        name="recurringScope"
+                        value="This event only"
+                        checked={recurringApplyScope === "This event only"}
+                        onChange={() => setRecurringApplyScope("This event only")}
+                        className="text-indigo-600 focus:ring-0"
+                      />
+                      <span><strong>This event only</strong> (Applies modifications solely to this occurrence)</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer font-medium text-xs">
+                      <input
+                        type="radio"
+                        name="recurringScope"
+                        value="This event and future occurrences"
+                        checked={recurringApplyScope === "This event and future occurrences"}
+                        onChange={() => setRecurringApplyScope("This event and future occurrences")}
+                        className="text-indigo-600 focus:ring-0"
+                      />
+                      <span><strong>This event and future occurrences</strong> (Applies to this date forward)</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer font-medium text-xs">
+                      <input
+                        type="radio"
+                        name="recurringScope"
+                        value="All recurring events"
+                        checked={recurringApplyScope === "All recurring events"}
+                        onChange={() => setRecurringApplyScope("All recurring events")}
+                        className="text-indigo-600 focus:ring-0"
+                      />
+                      <span><strong>All recurring events</strong> (Applies changes to all annual/recurring series)</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              {/* Preparation Checklist */}
+              <div className="space-y-2 bg-slate-50 border border-slate-200/80 p-3.5 rounded-2xl">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-extrabold uppercase text-slate-600 tracking-wider block">
+                    Preparation Checklist Tasks
+                  </label>
+                  <span className="text-[10px] font-bold text-slate-400">
+                    {editChecklist.filter(t => t.completed).length}/{editChecklist.length} Completed
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={editNewChecklistText}
+                    onChange={(e) => setEditNewChecklistText(e.target.value)}
+                    placeholder="Add checklist task e.g. Contact suppliers..."
+                    className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-medium"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!editNewChecklistText.trim()) return;
+                      setEditChecklist(prev => [...prev, {
+                        id: `chk-edit-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+                        task: editNewChecklistText.trim(),
+                        completed: false
+                      }]);
+                      setEditNewChecklistText("");
+                    }}
+                    className="bg-indigo-650 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs cursor-pointer flex items-center gap-1 shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add Task
+                  </button>
+                </div>
+
+                {editChecklist.length > 0 && (
+                  <div className="space-y-1.5 mt-2 max-h-36 overflow-y-auto pr-1">
+                    {editChecklist.map((item, idx) => (
+                      <div key={item.id} className="flex items-center justify-between bg-white border border-slate-200/80 px-2.5 py-1.5 rounded-xl">
+                        <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0 pr-2">
+                          <input
+                            type="checkbox"
+                            checked={item.completed}
+                            onChange={(e) => {
+                              const updated = [...editChecklist];
+                              updated[idx] = { ...updated[idx], completed: e.target.checked };
+                              setEditChecklist(updated);
+                            }}
+                            className="rounded border-slate-300 text-indigo-600 focus:ring-0"
+                          />
+                          <span className={item.completed ? "line-through text-slate-400 font-medium truncate" : "text-slate-800 font-bold truncate"}>
+                            {item.task}
+                          </span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setEditChecklist(prev => prev.filter((_, i) => i !== idx))}
+                          className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-[10px] font-extrabold uppercase text-slate-500 tracking-wider mb-1">
+                  Notes / Campaign Strategy
+                </label>
+                <textarea
+                  rows={3}
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-medium text-slate-900 focus:outline-hidden focus:border-indigo-600 focus:bg-white"
+                  placeholder="Record strategy notes, inventory goals, target revenue..."
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingEvent(null)}
+                  className="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-indigo-650 hover:bg-indigo-700 text-white font-extrabold rounded-xl text-xs transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <ShieldCheck className="w-4 h-4" /> Save Changes
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );
@@ -931,11 +1678,13 @@ export default function MilestoneCalendar({ clients, onSelectClient, onOpenTask 
 // ==========================================
 interface CompactCalendarWidgetProps {
   clients: Client[];
+  aspiringClients?: AspiringClient[];
   onSelectClient: (clientId: string) => void;
   onOpenTask?: (clientId: string, reminderId: string) => void;
+  onNavigateToAspiring?: () => void;
 }
 
-export function SmallCalendarWidget({ clients, onSelectClient, onOpenTask }: CompactCalendarWidgetProps) {
+export function SmallCalendarWidget({ clients, aspiringClients, onSelectClient, onOpenTask, onNavigateToAspiring }: CompactCalendarWidgetProps) {
   const [currentYear, setCurrentYear] = useState(SYSTEM_REFERENCE_YEAR);
   const [currentMonth, setCurrentMonth] = useState(SYSTEM_REFERENCE_MONTH); // July (0-indexed)
   const [selectedDay, setSelectedDay] = useState<number | null>(SYSTEM_REFERENCE_DAY);
@@ -959,6 +1708,7 @@ export function SmallCalendarWidget({ clients, onSelectClient, onOpenTask }: Com
       reminderId?: string;
       isBusiness?: boolean;
       businessType?: string;
+      isAspiring?: boolean;
     }> = [];
 
     clients.forEach(c => {
@@ -995,6 +1745,28 @@ export function SmallCalendarWidget({ clients, onSelectClient, onOpenTask }: Com
       });
     });
 
+    // Aspiring client follow-ups
+    if (aspiringClients) {
+      aspiringClients.forEach(asp => {
+        if (!asp.followUpDate || asp.status === "Converted to Client" || asp.status === "Archived" || asp.status === "Not Interested") return;
+        const parsed = parseDateString(asp.followUpDate);
+        if (!parsed) return;
+        list.push({
+          clientId: `aspiring-${asp.id}`,
+          clientName: `${asp.name} (Prospect)`,
+          isVip: false,
+          homeBrand: "CEO Printing Services",
+          label: `Follow up with ${asp.name} regarding ${asp.serviceInterestedIn}`,
+          type: "reminder",
+          month: parsed.month,
+          day: parsed.day,
+          isBusiness: true,
+          businessType: "Aspiring Client Follow-Up",
+          isAspiring: true
+        });
+      });
+    }
+
     // Load business events
     const businessEvents = (() => {
       const stored = localStorage.getItem("ceo_crm_business_events");
@@ -1029,7 +1801,7 @@ export function SmallCalendarWidget({ clients, onSelectClient, onOpenTask }: Com
     });
 
     return list;
-  }, [clients]);
+  }, [clients, aspiringClients]);
 
   // Calendar cells calculation
   const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
@@ -1161,6 +1933,10 @@ export function SmallCalendarWidget({ clients, onSelectClient, onOpenTask }: Com
                   <div
                     key={i}
                     onClick={() => {
+                      if ((ev as any).isAspiring && onNavigateToAspiring) {
+                        onNavigateToAspiring();
+                        return;
+                      }
                       if (isCorp) return;
                       if (ev.type === "reminder" && ev.reminderId && onOpenTask) {
                         onOpenTask(ev.clientId, ev.reminderId);

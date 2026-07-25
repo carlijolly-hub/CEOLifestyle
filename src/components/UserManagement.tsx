@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { AppUser, UserRole, UserStatus } from "../types";
+import { INITIAL_USERS } from "../data/mockData";
 import { 
   UserPlus, 
   Edit2, 
@@ -59,48 +60,21 @@ export default function UserManagement({ onUpdateMasterCredentials, masterUserna
     const storedUsers = localStorage.getItem("ceo_application_users");
     if (storedUsers) {
       try {
-        setUsers(JSON.parse(storedUsers));
+        const parsed = JSON.parse(storedUsers);
+        if (Array.isArray(parsed) && parsed.length >= INITIAL_USERS.length) {
+          setUsers(parsed);
+        } else {
+          setUsers(INITIAL_USERS);
+          localStorage.setItem("ceo_application_users", JSON.stringify(INITIAL_USERS));
+        }
       } catch (err) {
         console.error("Failed to parse app users:", err);
+        setUsers(INITIAL_USERS);
+        localStorage.setItem("ceo_application_users", JSON.stringify(INITIAL_USERS));
       }
     } else {
-      // Seed initial mock users for illustration
-      const seedUsers: AppUser[] = [
-        {
-          id: "USR-001",
-          fullName: "Charles Jolly",
-          username: "charles",
-          password: "ceo",
-          role: UserRole.ADMINISTRATOR,
-          status: UserStatus.ACTIVE
-        },
-        {
-          id: "USR-002",
-          fullName: "Janelle Bennett",
-          username: "janelle",
-          password: "staffpass",
-          role: UserRole.STAFF,
-          status: UserStatus.ACTIVE
-        },
-        {
-          id: "USR-003",
-          fullName: "Marcus Sterling",
-          username: "marcus",
-          password: "managerpass",
-          role: UserRole.MANAGER,
-          status: UserStatus.DEACTIVATED
-        },
-        {
-          id: "USR-004",
-          fullName: "Sasha Gray",
-          username: "sasha",
-          password: "readonly",
-          role: UserRole.READ_ONLY_USER,
-          status: UserStatus.ACTIVE
-        }
-      ];
-      setUsers(seedUsers);
-      localStorage.setItem("ceo_application_users", JSON.stringify(seedUsers));
+      setUsers(INITIAL_USERS);
+      localStorage.setItem("ceo_application_users", JSON.stringify(INITIAL_USERS));
     }
   }, []);
 

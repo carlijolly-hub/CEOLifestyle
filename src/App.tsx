@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { Client, LuxeBookInventoryItem, SystemSettings } from "./types";
-import { INITIAL_CLIENTS, INITIAL_INVENTORY } from "./data/mockData";
+import { Client, LuxeBookInventoryItem, SystemSettings, AspiringClient } from "./types";
+import { INITIAL_CLIENTS, INITIAL_INVENTORY, INITIAL_ASPIRING_CLIENTS } from "./data/mockData";
 import { syncFamilyBirthdayReminders } from "./utils/dateHelpers";
 import { getSystemSettings, saveSystemSettings } from "./utils/settingsHelper";
 import Dashboard from "./components/Dashboard";
@@ -11,6 +11,10 @@ import ExcelManager from "./components/ExcelManager";
 import MilestoneCalendar from "./components/MilestoneCalendar";
 import LuxeInventory from "./components/LuxeInventory";
 import UserManagement from "./components/UserManagement";
+import ProductionTools from "./components/ProductionTools";
+import AspiringClients from "./components/AspiringClients";
+import EndSessionBackupModal from "./components/EndSessionBackupModal";
+import SystemReferenceClock from "./components/SystemReferenceClock";
 import { 
   Users, 
   LayoutDashboard, 
@@ -25,7 +29,9 @@ import {
   CheckSquare,
   Settings,
   LogOut,
-  Shield
+  Shield,
+  Wrench,
+  UserPlus
 } from "lucide-react";
 // @ts-ignore
 import spaceBg from "./assets/images/space_background_1783612418079.jpg";
@@ -37,7 +43,7 @@ const LOCAL_STORAGE_KEY = "ceo_librarium_crm_customers";
 interface TourStep {
   title: string;
   text: string;
-  tab: "dashboard" | "directory" | "excel" | "calendar" | "inventory" | "branding" | "users";
+  tab: "dashboard" | "directory" | "excel" | "calendar" | "inventory" | "production" | "branding" | "users";
 }
 
 const TOURS: Record<string, { name: string; steps: TourStep[] }> = {
@@ -110,8 +116,8 @@ export default function App() {
   // State for Librarium Luxe Inventory
   const [inventory, setInventory] = useState<LuxeBookInventoryItem[]>([]);
   
-  // Tab state: "dashboard" | "directory" | "excel" | "calendar" | "inventory" | "branding" | "users"
-  const [activeTab, setActiveTab] = useState<"dashboard" | "directory" | "excel" | "calendar" | "inventory" | "branding" | "users">("dashboard");
+  // Tab state: "dashboard" | "directory" | "excel" | "calendar" | "inventory" | "production" | "branding" | "users"
+  const [activeTab, setActiveTab] = useState<"dashboard" | "directory" | "excel" | "calendar" | "inventory" | "production" | "branding" | "users">("dashboard");
 
   // Settings dropdown state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -241,6 +247,118 @@ export default function App() {
   
   // Selected client for detail view
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [isEndSessionModalOpen, setIsEndSessionModalOpen] = useState(false);
+
+  // Aspiring Clients state
+  const [aspiringClients, setAspiringClients] = useState<AspiringClient[]>(() => {
+    const stored = localStorage.getItem("ceo_aspiring_clients");
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length >= INITIAL_ASPIRING_CLIENTS.length) {
+          return parsed;
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    return INITIAL_ASPIRING_CLIENTS;
+  });
+
+  useEffect(() => {
+    localStorage.setItem("ceo_aspiring_clients", JSON.stringify(aspiringClients));
+  }, [aspiringClients]);
+
+  const handleConvertToClient = (asp: AspiringClient) => {
+    const nameParts = asp.name.trim().split(" ");
+    const firstName = nameParts[0] || "Prospect";
+    const lastName = nameParts.slice(1).join(" ") || "Client";
+    
+    let phone = "";
+    let email = "";
+    if (asp.contactInfo.includes("|")) {
+      const parts = asp.contactInfo.split("|");
+      phone = parts[0].trim();
+      email = parts[1].trim();
+    } else if (asp.contactInfo.includes("@")) {
+      email = asp.contactInfo.trim();
+    } else {
+      phone = asp.contactInfo.trim();
+    }
+
+    const newClientId = `CLI-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const newClient: Client = {
+      id: newClientId,
+      firstName,
+      lastName,
+      gender: "Other",
+      occupation: "Executive Prospect",
+      drive: "Yes",
+      tier: "Silver",
+      homeBrand: "CEO Printing Services",
+      marketingPermission: "Yes",
+      deactivated: false,
+      preferredCommunication: "Phone",
+      lastContactedDate: new Date().toISOString().split("T")[0],
+      contact: {
+        phoneNumber: phone || "+1 (876) 555-0000",
+        email: email || `${firstName.toLowerCase()}@client.jm`,
+        city: "Kingston",
+        parish: "St. Andrew",
+        country: "Jamaica",
+        deliveryAddress: "Kingston, Jamaica",
+        deliveryCountry: "Jamaica"
+      },
+      profile: {
+        motherName: "",
+        fatherName: "",
+        wifeName: "",
+        husbandName: "",
+        children: [],
+        pets: "",
+        personalNotes: `Converted from Aspiring Client Lead on ${new Date().toLocaleDateString()}.\nSource: ${asp.sourceOfInquiry}\nInterest: ${asp.serviceInterestedIn}\nNotes: ${asp.notes}`
+      },
+      importantDates: [],
+      history: {
+        firstOrderDate: new Date().toISOString().split("T")[0],
+        lastOrderDate: new Date().toISOString().split("T")[0],
+        totalOrders: 0,
+        productsPurchased: [asp.serviceInterestedIn],
+        preferredCategories: [asp.serviceInterestedIn],
+        clientPreferences: [],
+        lifetimeRevenue: 0,
+        averageOrderValue: 0
+      },
+      interests: {
+        sports: {
+          sport: "N/A",
+          favoriteTeam: "N/A",
+          teamOne: "N/A",
+          teamTwo: "N/A",
+          favoritePlayer: "N/A",
+          nationalTeam: "N/A"
+        },
+        hobbies: ["Corporate Executive", "Lifestyle"],
+        favoriteColors: ["Navy", "Gold"],
+        giftPreferences: []
+      },
+      reminders: [],
+      timeline: [
+        {
+          id: `TL-${Date.now()}`,
+          type: "Conversation",
+          date: new Date().toISOString().split("T")[0],
+          content: `Account converted from Aspiring Client Lead (${asp.serviceInterestedIn}). Notes: ${asp.notes}`
+        }
+      ]
+    };
+
+    saveClients([newClient, ...clients]);
+    setAspiringClients(prev => prev.map(item => item.id === asp.id ? { ...item, status: "Converted to Client" } : item));
+    setSelectedClientId(newClientId);
+    setActiveTab("directory");
+  };
   
   // Walkthrough tour state
   const [activeTour, setActiveTour] = useState<{ id: string; currentStep: number } | null>(() => {
@@ -345,20 +463,34 @@ export default function App() {
 
   // Initialize clients from localStorage or initial dummy data
   useEffect(() => {
-    const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const stored = localStorage.getItem(LOCAL_STORAGE_KEY) || localStorage.getItem("ceo_client_management_data");
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        const synced = parsed.map((c: Client) => syncFamilyBirthdayReminders(c, settings));
-        setClients(synced);
+        if (Array.isArray(parsed) && parsed.length >= INITIAL_CLIENTS.length) {
+          const synced = parsed.map((c: Client) => syncFamilyBirthdayReminders(c, settings));
+          setClients(synced);
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(synced));
+          localStorage.setItem("ceo_client_management_data", JSON.stringify(synced));
+        } else {
+          // Upgrade or populate with full 45 profiles
+          const synced = INITIAL_CLIENTS.map(c => syncFamilyBirthdayReminders(c, settings));
+          setClients(synced);
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(synced));
+          localStorage.setItem("ceo_client_management_data", JSON.stringify(synced));
+        }
       } catch (err) {
         console.error("Failed to parse stored clients, using fallback mock dataset:", err);
         const synced = INITIAL_CLIENTS.map(c => syncFamilyBirthdayReminders(c, settings));
         setClients(synced);
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(synced));
+        localStorage.setItem("ceo_client_management_data", JSON.stringify(synced));
       }
     } else {
       const synced = INITIAL_CLIENTS.map(c => syncFamilyBirthdayReminders(c, settings));
       setClients(synced);
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(synced));
+      localStorage.setItem("ceo_client_management_data", JSON.stringify(synced));
     }
 
     // Initialize Luxe Inventory
@@ -366,38 +498,45 @@ export default function App() {
     if (storedInv) {
       try {
         const parsed = JSON.parse(storedInv);
-        const dummyIds = ["LUX-001", "LUX-002", "LUX-003", "LUX-004", "LUX-005", "LUX-006"];
-        const filtered = Array.isArray(parsed) 
-          ? parsed.filter((item: LuxeBookInventoryItem) => !dummyIds.includes(item.id))
-          : [];
-        
-        const seenIds = new Set<string>();
-        const deduped: LuxeBookInventoryItem[] = [];
-        filtered.forEach((item: LuxeBookInventoryItem) => {
-          if (!item.id) return;
-          if (!seenIds.has(item.id)) {
-            seenIds.add(item.id);
-            deduped.push(item);
-          } else {
-            let newId = item.id;
-            while (seenIds.has(newId)) {
-              newId = `LUX-${Math.floor(100 + Math.random() * 900)}`;
+        if (Array.isArray(parsed) && parsed.length >= INITIAL_INVENTORY.length) {
+          const dummyIds = ["LUX-001", "LUX-002", "LUX-003", "LUX-004", "LUX-005", "LUX-006"];
+          const filtered = parsed.filter((item: LuxeBookInventoryItem) => !dummyIds.includes(item.id));
+          
+          const seenIds = new Set<string>();
+          const deduped: LuxeBookInventoryItem[] = [];
+          filtered.forEach((item: LuxeBookInventoryItem) => {
+            if (!item.id) return;
+            if (!seenIds.has(item.id)) {
+              seenIds.add(item.id);
+              deduped.push(item);
+            } else {
+              let newId = item.id;
+              while (seenIds.has(newId)) {
+                newId = `LUX-${Math.floor(100 + Math.random() * 900)}`;
+              }
+              seenIds.add(newId);
+              deduped.push({ ...item, id: newId });
             }
-            seenIds.add(newId);
-            deduped.push({ ...item, id: newId });
-          }
-        });
+          });
 
-        setInventory(deduped);
-        if (deduped.length !== parsed.length) {
-          localStorage.setItem("luxe_book_inventory", JSON.stringify(deduped));
+          if (deduped.length >= INITIAL_INVENTORY.length) {
+            setInventory(deduped);
+          } else {
+            setInventory(INITIAL_INVENTORY);
+            localStorage.setItem("luxe_book_inventory", JSON.stringify(INITIAL_INVENTORY));
+          }
+        } else {
+          setInventory(INITIAL_INVENTORY);
+          localStorage.setItem("luxe_book_inventory", JSON.stringify(INITIAL_INVENTORY));
         }
       } catch (err) {
         console.error("Failed to parse stored inventory, using fallback:", err);
         setInventory(INITIAL_INVENTORY);
+        localStorage.setItem("luxe_book_inventory", JSON.stringify(INITIAL_INVENTORY));
       }
     } else {
       setInventory(INITIAL_INVENTORY);
+      localStorage.setItem("luxe_book_inventory", JSON.stringify(INITIAL_INVENTORY));
     }
   }, []);
 
@@ -407,6 +546,7 @@ export default function App() {
       const updated = clients.map(c => syncFamilyBirthdayReminders(c, settings));
       setClients(updated);
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updated));
+      localStorage.setItem("ceo_client_management_data", JSON.stringify(updated));
     }
   }, [
     settings.birthdayReminderDays,
@@ -424,15 +564,25 @@ export default function App() {
   // Restore application backup
   const handleRestoreBackup = (backupData: {
     clients?: Client[];
+    aspiringClients?: AspiringClient[];
     inventory?: LuxeBookInventoryItem[];
     settings?: SystemSettings;
     users?: any[];
     masterUsername?: string;
     masterPassword?: string;
     guideLogs?: any[];
+    businessEvents?: any[];
+    savedQuotations?: any[];
+    appBg?: string;
+    authBg?: string;
+    backupHistory?: any[];
   }) => {
     if (backupData.clients) {
       saveClients(backupData.clients);
+    }
+    if (backupData.aspiringClients) {
+      setAspiringClients(backupData.aspiringClients);
+      localStorage.setItem("ceo_aspiring_clients", JSON.stringify(backupData.aspiringClients));
     }
     if (backupData.inventory) {
       saveInventory(backupData.inventory);
@@ -443,19 +593,37 @@ export default function App() {
     if (backupData.users) {
       localStorage.setItem("ceo_application_users", JSON.stringify(backupData.users));
     }
+    if (backupData.businessEvents) {
+      localStorage.setItem("ceo_crm_business_events", JSON.stringify(backupData.businessEvents));
+    }
+    if (backupData.savedQuotations) {
+      localStorage.setItem("ceo_saved_quotations", JSON.stringify(backupData.savedQuotations));
+    }
     if (backupData.masterUsername && backupData.masterPassword) {
       handleUpdateMasterCredentials(backupData.masterUsername, backupData.masterPassword);
     }
     if (backupData.guideLogs) {
       localStorage.setItem("ceo_admin_guide_logs", JSON.stringify(backupData.guideLogs));
-      window.dispatchEvent(new Event("storage"));
     }
+    if (backupData.appBg) {
+      setAppBg(backupData.appBg);
+      localStorage.setItem("ceo_app_background_base64", backupData.appBg);
+    }
+    if (backupData.authBg) {
+      setAuthBg(backupData.authBg);
+      localStorage.setItem("ceo_auth_background_base64", backupData.authBg);
+    }
+    if (backupData.backupHistory) {
+      localStorage.setItem("ceo_backup_history", JSON.stringify(backupData.backupHistory));
+    }
+    window.dispatchEvent(new Event("storage"));
   };
 
   // Save clients to localStorage whenever changed
   const saveClients = (updatedList: Client[]) => {
     setClients(updatedList);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
+    localStorage.setItem("ceo_client_management_data", JSON.stringify(updatedList));
   };
 
   // Select client and force directory tab open
@@ -635,6 +803,22 @@ export default function App() {
 
             <button
               onClick={() => {
+                setActiveTab("aspiring");
+                setIsAdding(false);
+                setIsEditing(false);
+              }}
+              className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+                activeTab === "aspiring" 
+                  ? "bg-white text-slate-950 shadow-sm border border-slate-200/50" 
+                  : "text-slate-500 hover:text-slate-950 hover:bg-slate-50/80"
+              }`}
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              Aspiring Clients
+            </button>
+
+            <button
+              onClick={() => {
                 setActiveTab("calendar");
                 setIsAdding(false);
                 setIsEditing(false);
@@ -646,7 +830,7 @@ export default function App() {
               }`}
             >
               <Calendar className="w-3.5 h-3.5" />
-              Milestone Calendar
+              Milestone Hub
             </button>
             <button
               onClick={() => {
@@ -662,6 +846,21 @@ export default function App() {
             >
               <BookOpen className="w-3.5 h-3.5" />
               Luxe Inventory
+            </button>
+            <button
+              onClick={() => {
+                setActiveTab("production");
+                setIsAdding(false);
+                setIsEditing(false);
+              }}
+              className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+                activeTab === "production" 
+                  ? "bg-white text-slate-950 shadow-sm border border-slate-200/50" 
+                  : "text-slate-500 hover:text-slate-950 hover:bg-slate-50/80"
+              }`}
+            >
+              <Wrench className="w-3.5 h-3.5" />
+              Production Tools
             </button>
 
           </nav>
@@ -757,10 +956,10 @@ export default function App() {
                     
                     <button
                       onClick={() => {
-                        handleLogout();
                         setIsSettingsOpen(false);
+                        setIsEndSessionModalOpen(true);
                       }}
-                      className="flex items-center gap-2.5 w-full px-4 py-2.5 text-xs font-bold text-rose-600 hover:bg-rose-50 transition-all"
+                      className="flex items-center gap-2.5 w-full px-4 py-2.5 text-xs font-bold text-rose-600 hover:bg-rose-50 transition-all cursor-pointer"
                     >
                       <LogOut className="w-3.5 h-3.5 text-rose-500" />
                       Sign Out
@@ -804,6 +1003,19 @@ export default function App() {
           </button>
           <button
             onClick={() => {
+              setActiveTab("aspiring");
+              setIsAdding(false);
+              setIsEditing(false);
+            }}
+            className={`flex flex-col items-center gap-0.5 p-1 text-[10px] font-bold ${
+              activeTab === "aspiring" ? "text-neutral-900" : "text-neutral-400"
+            }`}
+          >
+            <UserPlus className="w-4 h-4" />
+            Leads
+          </button>
+          <button
+            onClick={() => {
               setActiveTab("calendar");
               setIsAdding(false);
               setIsEditing(false);
@@ -813,7 +1025,7 @@ export default function App() {
             }`}
           >
             <Calendar className="w-4 h-4" />
-            Calendar
+            Milestone Hub
           </button>
           <button
             onClick={() => {
@@ -827,6 +1039,19 @@ export default function App() {
           >
             <BookOpen className="w-4 h-4" />
             Inventory
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab("production");
+              setIsAdding(false);
+              setIsEditing(false);
+            }}
+            className={`flex flex-col items-center gap-0.5 p-1 text-[10px] font-bold ${
+              activeTab === "production" ? "text-neutral-900" : "text-neutral-400"
+            }`}
+          >
+            <Wrench className="w-4 h-4" />
+            Tools
           </button>
         </div>
       </header>
@@ -850,46 +1075,53 @@ export default function App() {
             <h1 className="text-3xl md:text-4xl font-normal tracking-tight text-white drop-shadow-sm mt-3">
               {activeTab === "dashboard" && "Client Watchtower"}
               {activeTab === "directory" && (activeClient ? `Profile: ${activeClient.fullName}` : isAdding ? "Create Profile" : isEditing ? "Modify Profile" : "Brand Directory")}
+              {activeTab === "aspiring" && "Aspiring Clients & Lead Management"}
               {activeTab === "excel" && "Excel Exchange"}
               {activeTab === "calendar" && "Milestone Calendar"}
               {activeTab === "inventory" && "Librarium Luxe Inventory"}
+              {activeTab === "production" && "Production Tools Workspace"}
               {activeTab === "branding" && "Centralized System Settings"}
               {activeTab === "users" && "User Access & Governance"}
             </h1>
             <p className="text-slate-300 text-xs md:text-sm leading-relaxed max-w-2xl font-medium mt-1">
               {activeTab === "dashboard" && `Welcome, ${userFullName}. Let's look at who needs your personal attention today to foster authentic, high-value client experiences.`}
               {activeTab === "directory" && (activeClient ? `Managing high-net-worth portfolio for ${activeClient.fullName}.` : "A curated look book of high-net-worth client profiles, interaction histories, preferences, and private directories.")}
+              {activeTab === "aspiring" && "Track potential future customers, schedule follow-ups, and convert leads into active portfolio clients."}
               {activeTab === "excel" && "Maintain perfect backup parity. Seamlessly ingest or export customer files and private catalog items."}
-              {activeTab === "calendar" && "Your visual guide to critical client anniversaries, birthdays, and time-sensitive lifestyle touchpoints."}
+              {activeTab === "calendar" && "Your visual guide to critical client anniversaries, birthdays, and important lifestyle touchpoints."}
               {activeTab === "inventory" && "Manage and inspect exquisite private catalog items, standard stock quotas, and client-allocated assets."}
+              {activeTab === "production" && "Centralized workspace for production layout calculations, apparel studio quotation, book cost estimation, and travel logistics."}
               {activeTab === "branding" && "Configure pricing equations, warehouse alerts, dynamic milestone triggers, and workspace branding styles."}
               {activeTab === "users" && "Manage application user credentials, provision future workspace roles, and control active status."}
             </p>
           </div>
           
-          {/* Sim Date Flag */}
-          <div className="px-4 py-2.5 bg-slate-900/40 backdrop-blur-md border border-slate-700/50 rounded-xl text-left self-start md:self-end">
-            <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">SYSTEM REFERENCE DATE</span>
-            <span className="text-xs font-semibold text-white font-mono">
-              {new Date().toLocaleDateString("en-US", {
-                weekday: "long",
-                year: "numeric",
-                month: "long",
-                day: "numeric"
-              })}
-            </span>
-          </div>
+          {/* System Reference Date & Time Block */}
+          <SystemReferenceClock />
         </div>
         
         {/* Tab 1: Dashboard */}
         {activeTab === "dashboard" && (
           <Dashboard 
             clients={clients} 
+            aspiringClients={aspiringClients}
+            setAspiringClients={setAspiringClients}
+            onConvertToClient={handleConvertToClient}
             inventory={inventory}
             onSelectClient={handleSelectClient}
             onNavigateToTab={setActiveTab}
             onOpenTask={(clientId, reminderId) => setActiveTaskInfo({ clientId, reminderId })}
             settings={settings}
+          />
+        )}
+
+        {/* Tab: Aspiring Clients */}
+        {activeTab === "aspiring" && (
+          <AspiringClients
+            aspiringClients={aspiringClients}
+            setAspiringClients={setAspiringClients}
+            onConvertToClient={handleConvertToClient}
+            onNavigateToCalendar={() => setActiveTab("calendar")}
           />
         )}
 
@@ -997,6 +1229,7 @@ export default function App() {
         {activeTab === "calendar" && (
           <MilestoneCalendar 
             clients={clients}
+            aspiringClients={aspiringClients}
             onSelectClient={handleSelectClient}
             onOpenTask={(clientId, reminderId) => setActiveTaskInfo({ clientId, reminderId })}
           />
@@ -1008,6 +1241,14 @@ export default function App() {
             inventory={inventory}
             onUpdateInventory={saveInventory}
             settings={settings}
+          />
+        )}
+
+        {/* Tab: Production Tools Workspace */}
+        {activeTab === "production" && (
+          <ProductionTools 
+            settings={settings}
+            inventory={inventory}
           />
         )}
 
@@ -1024,9 +1265,11 @@ export default function App() {
             settings={settings}
             onUpdateSettings={handleUpdateSettings}
             userRole={userRole}
+            userFullName={userFullName}
             onRestoreBackup={handleRestoreBackup}
             onStartTour={handleStartTour}
             onNavigateToTab={setActiveTab}
+            clients={clients}
           />
         )}
 
@@ -1250,6 +1493,17 @@ export default function App() {
           </div>
         );
       })()}
+
+      {/* End of Session Backup Modal */}
+      <EndSessionBackupModal
+        isOpen={isEndSessionModalOpen}
+        onClose={() => setIsEndSessionModalOpen(false)}
+        onConfirmLogout={() => {
+          setIsEndSessionModalOpen(false);
+          handleLogout();
+        }}
+        userFullName={userFullName}
+      />
 
     </div>
   );

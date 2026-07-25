@@ -12,6 +12,7 @@ export default function LoginScreen({ onLoginSuccess, backgroundUrl }: LoginScre
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -195,11 +196,40 @@ export default function LoginScreen({ onLoginSuccess, backgroundUrl }: LoginScre
         </form>
 
         {/* Elegant Micro-Credentials help (Apple Style) */}
-        <div className="mt-6 pt-5 border-t border-slate-900/5 flex flex-col items-center text-center space-y-1 text-[9.5px] text-slate-400 font-semibold leading-relaxed">
-          <div className="flex items-center gap-1 text-slate-500">
+        <div className="mt-6 pt-5 border-t border-slate-900/5 flex flex-col items-center text-center space-y-2 text-[9.5px] text-slate-400 font-semibold leading-relaxed">
+          <div className="flex items-center gap-1 text-slate-500 justify-center">
             <Sparkles className="w-3 h-3 text-slate-400" />
             <span>Authorized Credentials Only</span>
           </div>
+          
+          <button
+            type="button"
+            onClick={() => setShowHelp(!showHelp)}
+            className="text-[9.5px] text-indigo-600 hover:text-indigo-700 hover:underline font-bold mt-1 cursor-pointer transition-all focus:outline-hidden"
+          >
+            {showHelp ? "Hide Deployment Help" : "First time logging into this deployed URL?"}
+          </button>
+          
+          {showHelp && (
+            <div className="mt-2 p-3 bg-indigo-50/75 border border-indigo-100 rounded-xl text-left text-[9.5px] text-indigo-900 leading-normal space-y-1.5 animate-fade-in shadow-3xs w-full">
+              <p className="font-bold text-indigo-950 flex items-center gap-1">
+                <span>🔑</span> New Origin Environment detected
+              </p>
+              <p>
+                Because this is a newly deployed version or a new domain/origin, your browser's LocalStorage database is initially empty.
+              </p>
+              <p>
+                To unlock, log in using the <strong>default factory credentials</strong>:
+              </p>
+              <div className="bg-white/80 border border-indigo-200/60 rounded-lg p-2 font-mono text-center font-bold text-slate-800 tracking-wide">
+                Username: <span className="text-indigo-600">admin</span><br/>
+                Password: <span className="text-indigo-600">ceo</span>
+              </div>
+              <p className="text-[9px] text-slate-500">
+                Once logged in, navigate to <span className="font-semibold text-slate-700">System Settings &rarr; Backup &amp; Restore</span> to import your JSON backup file, or update your password.
+              </p>
+            </div>
+          )}
         </div>
 
       </div>

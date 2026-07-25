@@ -21,8 +21,10 @@ import {
   Megaphone,
   Trash2,
   Archive,
-  RefreshCw
+  RefreshCw,
+  Download
 } from "lucide-react";
+import ClientExportModal from "./ClientExportModal";
 
 interface ClientListProps {
   clients: Client[];
@@ -43,6 +45,7 @@ export default function ClientList({
   const [searchTerm, setSearchTerm] = useState("");
   const [expandedClientId, setExpandedClientId] = useState<string | null>(null);
   const [showDeactivated, setShowDeactivated] = useState<boolean>(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   
   // Filter panel toggle
   const [showFilters, setShowFilters] = useState(false);
@@ -154,7 +157,7 @@ export default function ClientList({
 
       // 8. Client Value (LTV in JMD)
       if (filterValue !== "All") {
-        const ltv = client.history.lifetimeRevenue;
+        const ltv = client.history?.lifetimeRevenue || 0;
         if (filterValue === "vip_tier") {
           if (ltv < 500000) return false;
         } else if (filterValue === "high_tier") {
@@ -283,6 +286,15 @@ export default function ClientList({
                 {[filterBrand, filterTier, filterCountry, filterParish, filterCategory, filterFrequency, filterValue, filterUpcoming, filterMarketing].filter(v => v !== "All").length}
               </span>
             )}
+          </button>
+
+          <button
+            onClick={() => setIsExportModalOpen(true)}
+            className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 text-xs font-bold rounded-xl transition-all shadow-xs"
+            title="Export current client database (V2.1)"
+          >
+            <Download className="w-4 h-4 text-indigo-600" />
+            Export Database
           </button>
 
           <button
@@ -471,8 +483,8 @@ export default function ClientList({
               const isOverseas = client.contact.country !== "Jamaica";
 
               // Calculate Average Order Value and Relationship Span
-              const computedAOV = client.history.averageOrderValue || (client.history.totalOrders > 0 ? Math.round(client.history.lifetimeRevenue / client.history.totalOrders) : 0);
-              const relationshipSpanStr = `Since ${client.history.firstOrderDate ? client.history.firstOrderDate.slice(0, 4) : "2024"}`;
+              const computedAOV = client.history?.averageOrderValue || (client.history?.totalOrders ? Math.round((client.history.lifetimeRevenue || 0) / client.history.totalOrders) : 0);
+              const relationshipSpanStr = `Since ${client.history?.firstOrderDate ? client.history.firstOrderDate.slice(0, 4) : "2024"}`;
 
               return (
                 <div
@@ -622,7 +634,7 @@ export default function ClientList({
                           <div>
                             <span className="text-[8.5px] font-extrabold text-slate-400 uppercase tracking-widest block">Preferred Product Lines:</span>
                             <div className="flex flex-wrap gap-1 mt-1">
-                              {client.history.preferredCategories.length > 0 ? (
+                              {client.history?.preferredCategories && client.history.preferredCategories.length > 0 ? (
                                 client.history.preferredCategories.map((cat, i) => (
                                   <span key={i} className="bg-slate-100 text-slate-700 border border-slate-200/40 px-1.5 py-0.5 rounded font-semibold text-[9px] uppercase tracking-wider">
                                     {cat}
@@ -637,7 +649,7 @@ export default function ClientList({
                           <div className="pt-1">
                             <span className="text-[8.5px] font-extrabold text-slate-400 uppercase tracking-widest block">Client Taste & Notes:</span>
                             <p className="text-slate-500 font-semibold leading-relaxed mt-0.5 text-[11px]">
-                              {client.history.clientPreferences.length > 0 
+                              {client.history?.clientPreferences && client.history.clientPreferences.length > 0 
                                 ? `Interests: ${client.history.clientPreferences.join(", ")}` 
                                 : "No custom preference tags recorded."}
                             </p>
@@ -693,6 +705,12 @@ export default function ClientList({
           </div>
         </div>
       )}
+
+      <ClientExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        clients={clients}
+      />
     </div>
   );
 }

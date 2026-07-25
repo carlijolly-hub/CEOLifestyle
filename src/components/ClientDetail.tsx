@@ -388,25 +388,25 @@ export default function ClientDetail({
               <div className="bg-white border border-slate-200/60 p-3 rounded-xl shadow-xs min-w-0 flex flex-col justify-between">
                 <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold uppercase block tracking-wider truncate">Lifetime Value</span>
                 <span className="text-xs sm:text-[13px] md:text-sm font-black text-slate-900 block mt-1 font-mono break-words leading-tight">
-                  {formatCurrency(customer.history.lifetimeRevenue)}
+                  {formatCurrency(customer.history?.lifetimeRevenue || 0)}
                 </span>
               </div>
               <div className="bg-white border border-slate-200/60 p-3 rounded-xl shadow-xs min-w-0 flex flex-col justify-between">
                 <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold uppercase block tracking-wider truncate">Total Orders</span>
                 <span className="text-xs sm:text-[13px] md:text-sm font-black text-slate-900 block mt-1 break-words leading-tight">
-                  {customer.history.totalOrders} {customer.history.totalOrders === 1 ? 'order' : 'orders'}
+                  {customer.history?.totalOrders || 0} {(customer.history?.totalOrders || 0) === 1 ? 'order' : 'orders'}
                 </span>
               </div>
               <div className="bg-white border border-slate-200/60 p-3 rounded-xl shadow-xs min-w-0 flex flex-col justify-between">
                 <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold uppercase block tracking-wider truncate">Avg Order Value</span>
                 <span className="text-xs sm:text-[13px] md:text-sm font-black text-slate-900 block mt-1 font-mono break-words leading-tight">
-                  {formatCurrency(customer.history.averageOrderValue || (customer.history.totalOrders > 0 ? Math.round(customer.history.lifetimeRevenue / customer.history.totalOrders) : 0))}
+                  {formatCurrency(customer.history?.averageOrderValue || (customer.history?.totalOrders ? Math.round((customer.history.lifetimeRevenue || 0) / customer.history.totalOrders) : 0))}
                 </span>
               </div>
               <div className="bg-white border border-slate-200/60 p-3 rounded-xl shadow-xs min-w-0 flex flex-col justify-between">
                 <span className="text-[9px] sm:text-[10px] text-slate-400 font-bold uppercase block tracking-wider truncate">Relationship Span</span>
                 <span className="text-xs sm:text-[13px] md:text-sm font-black text-slate-800 block mt-1 break-words leading-tight">
-                  Since {customer.history.firstOrderDate ? customer.history.firstOrderDate.slice(0, 4) : "2024"}
+                  Since {customer.history?.firstOrderDate ? customer.history.firstOrderDate.slice(0, 4) : "2024"}
                 </span>
               </div>
             </div>
@@ -417,7 +417,7 @@ export default function ClientDetail({
                 <div>
                   <span className="text-slate-400 font-bold block uppercase text-[9px] tracking-wider mb-2">Purchased Categories</span>
                   <div className="flex flex-wrap gap-1.5">
-                    {customer.history.preferredCategories.map(cat => (
+                    {(customer.history?.preferredCategories || []).map(cat => (
                       <span key={cat} className="bg-slate-100 text-slate-800 font-bold px-2 py-0.5 rounded text-[10px] border border-slate-200/30">
                         {cat}
                       </span>
@@ -427,7 +427,7 @@ export default function ClientDetail({
                 <div>
                   <span className="text-slate-400 font-bold block uppercase text-[9px] tracking-wider mb-2">Products Ordered</span>
                   <div className="flex flex-wrap gap-1.5">
-                    {customer.history.productsPurchased.map(prod => (
+                    {(customer.history?.productsPurchased || []).map(prod => (
                       <span key={prod} className="bg-white border border-slate-200/60 text-slate-700 px-2 py-0.5 rounded text-[10px] font-medium shadow-xs">
                         {prod}
                       </span>
@@ -439,7 +439,7 @@ export default function ClientDetail({
               <div>
                 <span className="text-slate-400 font-bold block uppercase text-[9px] tracking-wider mb-1.5">Bespoke Preferences</span>
                 <div className="flex flex-wrap gap-1.5">
-                  {customer.history.clientPreferences.map(pref => (
+                  {(customer.history?.clientPreferences || []).map(pref => (
                     <span key={pref} className="bg-slate-100 text-slate-800 border border-slate-200/60 font-bold px-2.5 py-0.5 rounded-full text-[10px]">
                       {pref}
                     </span>

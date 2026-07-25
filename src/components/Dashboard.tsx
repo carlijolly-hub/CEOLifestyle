@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Client, FollowUpReminder, TimelineEvent, LuxeBookInventoryItem, BusinessEvent, SystemSettings } from "../types";
+import { Client, FollowUpReminder, TimelineEvent, LuxeBookInventoryItem, BusinessEvent, SystemSettings, AspiringClient, AspiringClientStatus } from "../types";
 import { 
   Users, 
   Printer, 
@@ -25,17 +25,17 @@ import {
   CheckCircle2,
   Smartphone,
   Mail,
-  Calculator,
-  Shirt
+  UserPlus,
+  UserCheck
 } from "lucide-react";
 import { SmallCalendarWidget } from "./MilestoneCalendar";
-import BookCostCalculator from "./BookCostCalculator";
-import LocationCostCalculator from "./LocationCostCalculator";
-import TShirtStudioQuoteCalculator from "./TShirtStudioQuoteCalculator";
 import { getRelationshipEventTitle, getClientMilestones } from "../utils/dateHelpers";
 
 interface DashboardProps {
   clients: Client[];
+  aspiringClients?: AspiringClient[];
+  setAspiringClients?: React.Dispatch<React.SetStateAction<AspiringClient[]>>;
+  onConvertToClient?: (aspiringClient: AspiringClient) => void;
   inventory?: LuxeBookInventoryItem[];
   onSelectClient: (clientId: string) => void;
   onNavigateToTab: (tab: string) => void;
@@ -153,13 +153,61 @@ interface FocusProfile {
   client: Client;
   highestPriority: number;
   triggers: TriggerItem[];
+  isAspiring?: boolean;
+  aspiringClient?: AspiringClient;
 }
 
-export default function Dashboard({ clients, inventory = [], onSelectClient, onNavigateToTab, onOpenTask, settings }: DashboardProps) {
-  const [focusFilter, setFocusFilter] = useState<"all" | "urgent" | "milestones" | "dormant" | "tasks" | "inventory">("all");
+// Helper to calculate Average Order Value safely without crashing if history is undefined
+const getClientHistoryAOV = (client: any): number => {
+  if (!client || !client.history) return 0;
+  if (client.history.averageOrderValue) return client.history.averageOrderValue;
+  if (client.history.totalOrders > 0 && client.history.lifetimeRevenue) {
+    return Math.round(client.history.lifetimeRevenue / client.history.totalOrders);
+  }
+  return 0;
+};
+
+export default function Dashboard({ clients, aspiringClients, setAspiringClients, onConvertToClient, inventory = [], onSelectClient, onNavigateToTab, onOpenTask, settings }: DashboardProps) {
+  const [focusFilter, setFocusFilter] = useState<"all" | "urgent" | "milestones" | "tasks" | "inventory">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [summaryTab, setSummaryTab] = useState<"today" | "this_week" | "overview">("today");
   const [expandedAttentionId, setExpandedAttentionId] = useState<string | null>(null);
+
+  // Aspiring Clients Follow-Up Calculation
+  const aspiringFollowUps = useMemo(() => {
+    if (!aspiringClients) return [];
+
+    return aspiringClients
+      .filter(c => c.status !== "Converted to Client" && c.status !== "Archived" && c.status !== "Not Interested" && c.followUpDate)
+      .map(c => {
+        const daysOverdue = getDaysSince(c.followUpDate); // >0 = overdue, 0 = today, <0 = future
+        return {
+          ...c,
+          isOverdue: daysOverdue > 0,
+          isDueToday: daysOverdue === 0,
+          daysOverdue
+        };
+      })
+      .sort((a, b) => b.daysOverdue - a.daysOverdue); // Overdue first
+  }, [aspiringClients]);
+
+  const aspiringOverdueCount = aspiringFollowUps.filter(f => f.isOverdue).length;
+  const aspiringDueTodayCount = aspiringFollowUps.filter(f => f.isDueToday).length;
+
+  const handleQuickRescheduleAspiring = (id: string, newDate: string, newStatus?: AspiringClientStatus) => {
+    if (setAspiringClients) {
+      setAspiringClients(prev => prev.map(item => {
+        if (item.id === id) {
+          return {
+            ...item,
+            followUpDate: newDate,
+            status: newStatus || item.status
+          };
+        }
+        return item;
+      }));
+    }
+  };
 
   // Dashboard Module Carousel Navigation
   const [currentCarouselIndex, setCurrentCarouselIndex] = useState(() => {
@@ -440,12 +488,12 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
         }
 
         // F. Gold/VIP Dormant Purchaser (no orders in 180 days)
-        const daysSinceOrder = getDaysSince(client.history.lastOrderDate);
+        const daysSinceOrder = getDaysSince(client.history?.lastOrderDate);
         if (daysSinceOrder > 180) {
           triggers.push({
             type: "no_order",
             priority: 2, // Gold client + no recent interaction
-            reason: `Dormant Account: No purchase transactions recorded in ${daysSinceOrder} days (Last order: ${client.history.lastOrderDate || "Never"}).`
+            reason: `Dormant Account: No purchase transactions recorded in ${daysSinceOrder} days (Last order: ${client.history?.lastOrderDate || "Never"}).`
           });
         }
       }
@@ -468,6 +516,119 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
       }
     });
 
+    // Process Aspiring Client Follow-Ups into Clients Needing Attention Today
+    if (aspiringClients) {
+      aspiringClients.forEach(asp => {
+        if (!asp.followUpDate || asp.status === "Converted to Client" || asp.status === "Archived" || asp.status === "Not Interested") return;
+
+        const daysSince = getDaysSince(asp.followUpDate);
+        const daysDiff = -daysSince; // Negative if overdue, 0 if today, positive if upcoming
+
+        if (daysSince >= 0 || daysDiff <= 15 || asp.status === "Follow Up Required") {
+          const isOverdue = daysSince > 0;
+          const isDueToday = daysSince === 0;
+
+          const priority: 1 | 2 | 3 | 4 = (isOverdue || isDueToday) ? 1 : (asp.status === "Follow Up Required" ? 2 : 3);
+
+          let reason = "";
+          if (isOverdue) {
+            reason = `Aspiring Client Overdue (${daysSince}d): Contact ${asp.name} regarding "${asp.serviceInterestedIn}"`;
+          } else if (isDueToday) {
+            reason = `Aspiring Client Due TODAY: Follow up with ${asp.name} regarding "${asp.serviceInterestedIn}"`;
+          } else {
+            reason = `Aspiring Client Follow-up: Contact ${asp.name} regarding "${asp.serviceInterestedIn}" in ${daysDiff} day${daysDiff > 1 ? 's' : ''}`;
+          }
+
+          const aspPseudoClient: Client = {
+            id: `aspiring-${asp.id}`,
+            firstName: asp.name.split(" ")[0],
+            lastName: asp.name.split(" ").slice(1).join(" ") || "(Aspiring Lead)",
+            gender: "Other",
+            occupation: "Prospective Client",
+            drive: "No",
+            tier: "Silver",
+            homeBrand: "CEO Printing Services",
+            marketingPermission: "Yes",
+            deactivated: false,
+            preferredCommunication: "WhatsApp",
+            lastContactedDate: asp.dateContacted,
+            contact: {
+              phoneNumber: asp.contactInfo.includes("@") ? "" : asp.contactInfo,
+              email: asp.contactInfo.includes("@") ? asp.contactInfo : "",
+              city: "Kingston",
+              parish: "St. Andrew",
+              country: "Jamaica",
+              deliveryAddress: "Kingston, Jamaica",
+              deliveryCountry: "Jamaica"
+            },
+            profile: {
+              motherName: "", fatherName: "", wifeName: "", husbandName: "", children: [], pets: "",
+              personalNotes: `Inquiry Source: ${asp.sourceOfInquiry} | Assigned Staff: ${asp.assignedUser}\nNotes: ${asp.notes}`
+            },
+            importantDates: [],
+            history: {
+              firstOrderDate: asp.dateContacted,
+              lastOrderDate: asp.dateContacted,
+              totalOrders: 0,
+              productsPurchased: [asp.serviceInterestedIn],
+              preferredCategories: [asp.serviceInterestedIn],
+              clientPreferences: [asp.status, `Inquiry: ${asp.sourceOfInquiry}`],
+              lifetimeRevenue: 0,
+              averageOrderValue: 0
+            },
+            interests: {
+              sports: { sport: "N/A", favoriteTeam: "N/A", teamOne: "N/A", teamTwo: "N/A", favoritePlayer: "N/A", nationalTeam: "N/A" },
+              hobbies: ["Aspiring Opportunity"],
+              favoriteColors: [],
+              giftPreferences: []
+            },
+            reminders: [
+              {
+                id: `asp-rem-${asp.id}`,
+                date: asp.followUpDate,
+                task: `Follow up regarding ${asp.serviceInterestedIn}`,
+                completed: false
+              }
+            ],
+            timeline: [
+              {
+                id: `asp-tl-${asp.id}`,
+                type: "Follow-up",
+                date: asp.dateContacted,
+                content: `Inquiry recorded via ${asp.sourceOfInquiry}. Interested in: ${asp.serviceInterestedIn}. Notes: ${asp.notes}`
+              }
+            ]
+          };
+
+          const trigger: TriggerItem = {
+            type: "reminder",
+            priority,
+            reason,
+            daysRemaining: daysDiff,
+            metadata: {
+              task: `Follow up regarding ${asp.serviceInterestedIn}`,
+              date: asp.followUpDate,
+              aspiringClient: asp,
+              isAspiring: true,
+              service: asp.serviceInterestedIn,
+              status: asp.status,
+              assignedUser: asp.assignedUser,
+              sourceOfInquiry: asp.sourceOfInquiry,
+              notes: asp.notes
+            }
+          };
+
+          profiles.push({
+            client: aspPseudoClient,
+            highestPriority: priority,
+            triggers: [trigger],
+            isAspiring: true,
+            aspiringClient: asp
+          });
+        }
+      });
+    }
+
     // Main focus profiles sort order:
     // 1. Highest Priority level (Priority 1 first, then 2, 3, 4)
     // 2. Gold/VIP clients rank higher within same priority levels
@@ -481,14 +642,17 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
       if (aIsGold !== bIsGold) return bIsGold - aIsGold; // Gold first
       return `${a.client.firstName} ${a.client.lastName}`.localeCompare(`${b.client.firstName} ${b.client.lastName}`);
     });
-  }, [clients]);
+  }, [clients, aspiringClients]);
 
   // 5. FILTER focus profiles by state selections & search query
   const filteredFocusProfiles = useMemo(() => {
     return focusProfiles.filter(profile => {
       // Apply Search filter
       const fullName = `${profile.client.firstName} ${profile.client.lastName}`.toLowerCase();
-      if (searchQuery && !fullName.includes(searchQuery.toLowerCase())) {
+      const serviceText = profile.aspiringClient ? profile.aspiringClient.serviceInterestedIn.toLowerCase() : "";
+      const notesText = profile.aspiringClient ? profile.aspiringClient.notes.toLowerCase() : "";
+      const q = searchQuery.toLowerCase();
+      if (searchQuery && !fullName.includes(q) && !serviceText.includes(q) && !notesText.includes(q)) {
         return false;
       }
 
@@ -498,9 +662,6 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
       }
       if (focusFilter === "milestones") {
         return profile.triggers.some(t => ["birthday", "anniversary", "child_birthday", "order_anniversary"].includes(t.type));
-      }
-      if (focusFilter === "dormant") {
-        return profile.triggers.some(t => ["no_contact", "no_order"].includes(t.type));
       }
       if (focusFilter === "tasks") {
         return profile.triggers.some(t => t.type === "reminder");
@@ -580,7 +741,7 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
 
     // Aggregate preferences of Gold Clients
     const preferencesList = Array.from(
-      new Set(goldList.flatMap(c => c.history.clientPreferences))
+      new Set(goldList.flatMap(c => c.history?.clientPreferences || []))
     ).slice(0, 5);
 
     return {
@@ -649,6 +810,35 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
         });
       });
     });
+
+    // 1.5 Process Aspiring Client follow-ups
+    if (aspiringClients) {
+      aspiringClients.forEach(asp => {
+        if (!asp.followUpDate || asp.status === "Converted to Client" || asp.status === "Archived" || asp.status === "Not Interested") return;
+        const parsed = parseDateString(asp.followUpDate);
+        if (!parsed) return;
+
+        eventsList.push({
+          id: `aspiring-${asp.id}`,
+          client: {
+            id: `aspiring-${asp.id}`,
+            firstName: asp.name.split(" ")[0],
+            lastName: asp.name.split(" ").slice(1).join(" ") || "Prospect",
+            homeBrand: "CEO Printing Services",
+            tier: "Silver"
+          } as any,
+          type: "reminder",
+          businessType: "Aspiring Client Follow-Up",
+          label: `Follow up with ${asp.name} regarding ${asp.serviceInterestedIn}`,
+          dateStr: asp.followUpDate,
+          parsedMonth: parsed.month,
+          parsedDay: parsed.day,
+          parsedYear: parsed.year,
+          isVip: false,
+          description: `Assigned: ${asp.assignedUser} | Status: ${asp.status}`
+        });
+      });
+    }
 
     // 2. Process business events
     const businessEvents = (() => {
@@ -765,8 +955,35 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
         };
       });
 
+    const activeAspiringRemindersToday = (aspiringClients || [])
+      .filter(c => c.status !== "Converted to Client" && c.status !== "Archived" && c.status !== "Not Interested" && c.followUpDate)
+      .filter(c => getDaysSince(c.followUpDate) >= 0 || c.status === "Follow Up Required")
+      .map(c => {
+        const overdueBy = getDaysSince(c.followUpDate);
+        return {
+          client: {
+            id: `aspiring-${c.id}`,
+            firstName: c.name.split(" ")[0],
+            lastName: c.name.split(" ").slice(1).join(" ") || "Prospect",
+            homeBrand: "CEO Printing Services",
+            tier: "Silver"
+          } as any,
+          reminder: {
+            id: `aspiring-rem-${c.id}`,
+            date: c.followUpDate,
+            task: `Follow up regarding ${c.serviceInterestedIn}`,
+            completed: false,
+            timestamp: c.id
+          },
+          isAspiringTask: true,
+          aspiringClient: c,
+          overdueBy
+        };
+      });
+
     const pendingRemindersToday = [
       ...businessEventsToday,
+      ...activeAspiringRemindersToday,
       ...clients.flatMap(c => 
         c.reminders
           .filter(r => !r.completed && getDaysSince(r.date) >= 0) // Include overdue and due today
@@ -776,6 +993,9 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
       const getPriorityVal = (item: any) => {
         if (item.isInventoryTask) {
           return item.severity === "urgent" ? 1 : 2;
+        }
+        if (item.isAspiringTask) {
+          return item.overdueBy > 0 ? 1 : 2;
         }
         if (item.overdueBy > 0) {
           return 1;
@@ -822,7 +1042,7 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
     ).sort((a, b) => a.daysLeft - b.daysLeft);
 
     // GENERAL OVERVIEW CALCULATIONS
-    const totalRevenue = clients.reduce((sum, c) => sum + c.history.lifetimeRevenue, 0);
+    const totalRevenue = clients.reduce((sum, c) => sum + (c.history?.lifetimeRevenue || 0), 0);
     const totalStandard = clients.filter(c => c.tier === "Silver").length;
     const totalVIP = clients.filter(c => c.tier === "Gold").length;
     const totalCorporate = clients.filter(c => c.tier === "Platinum").length;
@@ -920,16 +1140,6 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
               }`}
             >
               Milestones ({focusProfiles.filter(p => p.triggers.some(t => ["birthday", "anniversary", "child_birthday", "order_anniversary"].includes(t.type))).length})
-            </button>
-            <button
-              onClick={() => setFocusFilter("dormant")}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
-                focusFilter === "dormant" 
-                  ? "bg-slate-900 text-white border-transparent" 
-                  : "bg-white text-slate-500 border-slate-200/60 hover:border-slate-300"
-              }`}
-            >
-              Dormant Contacts ({focusProfiles.filter(p => p.triggers.some(t => ["no_contact", "no_order"].includes(t.type))).length})
             </button>
             <button
               onClick={() => setFocusFilter("tasks")}
@@ -1072,31 +1282,47 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                             <h3 className="text-sm font-bold text-slate-950 truncate">
                               {client.firstName} {client.lastName}
                             </h3>
-                            <span className={`px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-widest border ${
-                              client.tier === "Gold" 
-                                ? "bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-500 text-amber-950 border-amber-600 shadow-[0_1px_4px_rgba(245,158,11,0.2)]" 
-                                : client.tier === "Platinum" 
-                                  ? "bg-slate-900 text-slate-100 border-slate-950 font-extrabold shadow-[0_1px_4px_rgba(0,0,0,0.1)]" 
-                                  : "bg-slate-100 text-slate-700 border-slate-200"
-                            }`}>
-                              {client.tier}
-                            </span>
-                            {isOverseas && (
+                            {profile.isAspiring ? (
+                              <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-amber-100 text-amber-900 border border-amber-300 shadow-xs">
+                                Aspiring Client
+                              </span>
+                            ) : (
+                              <span className={`px-1.5 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-widest border ${
+                                client.tier === "Gold" 
+                                  ? "bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-500 text-amber-950 border-amber-600 shadow-[0_1px_4px_rgba(245,158,11,0.2)]" 
+                                  : client.tier === "Platinum" 
+                                    ? "bg-slate-900 text-slate-100 border-slate-950 font-extrabold shadow-[0_1px_4px_rgba(0,0,0,0.1)]" 
+                                    : "bg-slate-100 text-slate-700 border-slate-200"
+                              }`}>
+                                {client.tier}
+                              </span>
+                            )}
+                            {isOverseas && !profile.isAspiring && (
                               <span className="bg-slate-50 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest">
                                 Overseas
                               </span>
                             )}
                           </div>
                           
-                          <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-400 font-semibold truncate flex-wrap">
-                            <span className="font-bold uppercase tracking-wider">ID: {client.id}</span>
-                            <span>•</span>
-                            <span className="uppercase tracking-widest">{client.homeBrand}</span>
-                            <span>•</span>
-                            <span className="text-indigo-600 font-bold">
-                              Avg Order: {formatCurrency(client.history.averageOrderValue || (client.history.totalOrders > 0 ? Math.round(client.history.lifetimeRevenue / client.history.totalOrders) : 0))}
-                            </span>
-                          </div>
+                          {profile.isAspiring && profile.aspiringClient ? (
+                            <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-500 font-semibold truncate flex-wrap">
+                              <span className="font-extrabold text-amber-800 uppercase tracking-wider">Status: {profile.aspiringClient.status}</span>
+                              <span>•</span>
+                              <span>Source: {profile.aspiringClient.sourceOfInquiry}</span>
+                              <span>•</span>
+                              <span className="text-slate-600 font-bold">Assigned: {profile.aspiringClient.assignedUser}</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-400 font-semibold truncate flex-wrap">
+                              <span className="font-bold uppercase tracking-wider">ID: {client.id}</span>
+                              <span>•</span>
+                              <span className="uppercase tracking-widest">{client.homeBrand}</span>
+                              <span>•</span>
+                              <span className="text-indigo-600 font-bold">
+                                Avg Order: {formatCurrency(getClientHistoryAOV(client))}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -1116,12 +1342,14 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                       {/* Right side controls */}
                       <div className="flex items-center justify-between sm:justify-end gap-4 flex-shrink-0">
                         {/* Desktop Average Order Value display */}
-                        <div className="hidden md:block text-right pr-2">
-                          <span className="text-slate-400 block font-extrabold uppercase text-[7px] tracking-wider">Avg Order</span>
-                          <span className="text-indigo-600 font-bold text-xs block font-mono">
-                            {formatCurrency(client.history.averageOrderValue || (client.history.totalOrders > 0 ? Math.round(client.history.lifetimeRevenue / client.history.totalOrders) : 0))}
-                          </span>
-                        </div>
+                        {!profile.isAspiring && (
+                          <div className="hidden md:block text-right pr-2">
+                            <span className="text-slate-400 block font-extrabold uppercase text-[7px] tracking-wider">Avg Order</span>
+                            <span className="text-indigo-600 font-bold text-xs block font-mono">
+                              {formatCurrency(getClientHistoryAOV(client))}
+                            </span>
+                          </div>
+                        )}
 
                         <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-widest border ${
                           highestPriority === 1 
@@ -1139,31 +1367,39 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                       </div>
                     </div>
 
-                    {/* Compact Metric Dashboard Summary (Always Visible, Optimized for Laptop/Desktop) */}
+                    {/* Compact Metric Dashboard Summary (Always Visible) */}
                     <div className="px-4 pb-4 md:px-5">
                       <div className="grid grid-cols-4 gap-1 p-1.5 bg-slate-50/50 rounded-xl border border-slate-100">
                         <div className="text-left min-w-0">
-                          <span className="text-slate-400 block font-bold uppercase text-[6.5px] sm:text-[7px] tracking-tight truncate">Lifetime Value</span>
+                          <span className="text-slate-400 block font-bold uppercase text-[6.5px] sm:text-[7px] tracking-tight truncate">
+                            {profile.isAspiring ? "Status" : "Lifetime Value"}
+                          </span>
                           <span className="text-slate-900 font-extrabold text-[9px] sm:text-[10px] xl:text-[11px] block mt-0.5 truncate leading-tight font-mono">
-                            {formatCurrency(client.history.lifetimeRevenue)}
+                            {profile.isAspiring ? (profile.aspiringClient?.status || "Inquiry") : formatCurrency(client.history?.lifetimeRevenue || 0)}
                           </span>
                         </div>
                         <div className="text-left min-w-0">
-                          <span className="text-slate-400 block font-bold uppercase text-[6.5px] sm:text-[7px] tracking-tight truncate">Total Orders</span>
+                          <span className="text-slate-400 block font-bold uppercase text-[6.5px] sm:text-[7px] tracking-tight truncate">
+                            {profile.isAspiring ? "Interest" : "Total Orders"}
+                          </span>
                           <span className="text-slate-900 font-extrabold text-[9px] sm:text-[10px] xl:text-[11px] block mt-0.5 truncate leading-tight font-mono">
-                            {client.history.totalOrders}
+                            {profile.isAspiring ? (profile.aspiringClient?.serviceInterestedIn || "Custom Apparel") : (client.history?.totalOrders || 0)}
                           </span>
                         </div>
                         <div className="text-left min-w-0">
-                          <span className="text-slate-400 block font-bold uppercase text-[6.5px] sm:text-[7px] tracking-tight truncate">Avg Order Value</span>
+                          <span className="text-slate-400 block font-bold uppercase text-[6.5px] sm:text-[7px] tracking-tight truncate">
+                            {profile.isAspiring ? "Assigned Staff" : "Avg Order Value"}
+                          </span>
                           <span className="text-indigo-600 font-extrabold text-[9px] sm:text-[10px] xl:text-[11px] block mt-0.5 truncate leading-tight font-mono">
-                            {formatCurrency(client.history.averageOrderValue || (client.history.totalOrders > 0 ? Math.round(client.history.lifetimeRevenue / client.history.totalOrders) : 0))}
+                            {profile.isAspiring ? (profile.aspiringClient?.assignedUser || "Unassigned") : formatCurrency(getClientHistoryAOV(client))}
                           </span>
                         </div>
                         <div className="text-left min-w-0">
-                          <span className="text-slate-400 block font-bold uppercase text-[6.5px] sm:text-[7px] tracking-tight truncate">Rel. Span</span>
+                          <span className="text-slate-400 block font-bold uppercase text-[6.5px] sm:text-[7px] tracking-tight truncate">
+                            {profile.isAspiring ? "Inquiry Date" : "Rel. Span"}
+                          </span>
                           <span className="text-slate-800 font-bold text-[9px] sm:text-[10px] xl:text-[11px] block mt-0.5 truncate leading-tight">
-                            Since {client.history.firstOrderDate ? client.history.firstOrderDate.slice(0, 4) : "2024"}
+                            {profile.isAspiring ? (profile.aspiringClient?.dateContacted || "Recent") : `Since ${client.history?.firstOrderDate ? client.history.firstOrderDate.slice(0, 4) : "2024"}`}
                           </span>
                         </div>
                       </div>
@@ -1179,7 +1415,10 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                             let title = "";
                             let description = "";
 
-                            if (trig.type === "birthday" || trig.type === "child_birthday" || trig.type === "anniversary") {
+                            if (trig.metadata?.isAspiring) {
+                              title = `Aspiring Client Follow-Up: ${trig.metadata.service || 'Quote Request'}`;
+                              description = `Action required: Contact prospective client regarding ${trig.metadata.service}. Status: ${trig.metadata.status}. Notes: "${trig.metadata.notes || 'Inquiry pending follow-up.'}"`;
+                            } else if (trig.type === "birthday" || trig.type === "child_birthday" || trig.type === "anniversary") {
                               title = trig.metadata?.label || "Milestone Event";
                               if (trig.daysRemaining === 0) {
                                 if (trig.type === "birthday" || trig.type === "child_birthday") {
@@ -1249,31 +1488,43 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                         {/* Preferences & Quick Context info */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs">
                           <div className="space-y-1.5 text-left">
-                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">CLIENT TASTES & NOTES:</span>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
+                              {profile.isAspiring ? "INQUIRY DETAILS & NOTES:" : "CLIENT TASTES & NOTES:"}
+                            </span>
                             <p className="text-slate-500 leading-relaxed font-semibold">
-                              {client.history.clientPreferences.length > 0 
-                                ? `Likes: ${client.history.clientPreferences.join(", ")}` 
-                                : "No preference tags on file."}
+                              {profile.isAspiring && profile.aspiringClient
+                                ? `Inquiry Source: ${profile.aspiringClient.sourceOfInquiry} | Service: ${profile.aspiringClient.serviceInterestedIn}`
+                                : (client.history?.clientPreferences && client.history.clientPreferences.length > 0 
+                                    ? `Likes: ${client.history.clientPreferences.join(", ")}` 
+                                    : "No preference tags on file.")}
                             </p>
                             <p className="text-slate-400 text-[11px] italic leading-normal">
-                              "{client.profile.personalNotes || "No specific relationship guidelines cataloged."}"
+                              "{profile.isAspiring && profile.aspiringClient
+                                ? (profile.aspiringClient.notes || "No notes cataloged.")
+                                : (client.profile.personalNotes || "No specific relationship guidelines cataloged.")}"
                             </p>
                           </div>
 
                           <div className="space-y-1.5 text-left md:text-right flex flex-col justify-between">
                             <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">PREVIOUS ORDERS:</span>
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
+                                {profile.isAspiring ? "CONTACT INFO:" : "PREVIOUS ORDERS:"}
+                              </span>
                               <p className="text-slate-500 font-semibold leading-relaxed">
-                                {client.history.productsPurchased.slice(0, 3).join(", ") || "No recorded history."}
+                                {profile.isAspiring && profile.aspiringClient
+                                  ? (profile.aspiringClient.contactInfo || "No phone/email provided.")
+                                  : (client.history?.productsPurchased ? client.history.productsPurchased.slice(0, 3).join(", ") : "No recorded history.")}
                               </p>
                             </div>
 
-                            <div>
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">AVERAGE ORDER VALUE:</span>
-                              <p className="text-indigo-600 font-extrabold leading-normal text-[11px] font-mono">
-                                {formatCurrency(client.history.averageOrderValue || (client.history.totalOrders > 0 ? Math.round(client.history.lifetimeRevenue / client.history.totalOrders) : 0))}
-                              </p>
-                            </div>
+                            {!profile.isAspiring && (
+                              <div>
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">AVERAGE ORDER VALUE:</span>
+                                <p className="text-indigo-600 font-extrabold leading-normal text-[11px] font-mono">
+                                  {formatCurrency(getClientHistoryAOV(client))}
+                                </p>
+                              </div>
+                            )}
                             
                             {/* Preferred Communication */}
                             <div className="flex items-center gap-1.5 justify-start md:justify-end text-slate-400 font-bold uppercase tracking-widest text-[9px] mt-2">
@@ -1288,19 +1539,50 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                         {/* Card Actions Footer */}
                         <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center">
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                            LAST CONTACT LOGGED: {client.lastContactedDate || "NEVER"}
+                            {profile.isAspiring && profile.aspiringClient
+                              ? `SCHEDULED FOLLOW-UP: ${profile.aspiringClient.followUpDate || "TODAY"}`
+                              : `LAST CONTACT LOGGED: ${client.lastContactedDate || "NEVER"}`}
                           </span>
                           
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSelectClient(client.id);
-                            }}
-                            className="flex items-center gap-1 text-xs font-bold text-slate-900 hover:text-slate-700 transition-colors cursor-pointer hover:translate-x-1 duration-200"
-                          >
-                            Launch Client File
-                            <ChevronRight className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {profile.isAspiring && profile.aspiringClient ? (
+                              <>
+                                {onConvertToClient && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onConvertToClient(profile.aspiringClient!);
+                                    }}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                                  >
+                                    <UserCheck className="w-3.5 h-3.5" />
+                                    Convert to Client
+                                  </button>
+                                )}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onNavigateToTab("aspiring");
+                                  }}
+                                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-900 rounded-xl transition-colors cursor-pointer"
+                                >
+                                  View Lead Details
+                                  <ChevronRight className="w-4 h-4" />
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onSelectClient(client.id);
+                                }}
+                                className="flex items-center gap-1 text-xs font-bold text-slate-900 hover:text-slate-700 transition-colors cursor-pointer hover:translate-x-1 duration-200"
+                              >
+                                Launch Client File
+                                <ChevronRight className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     )}
@@ -1481,18 +1763,6 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                 )
               },
               {
-                id: "book-calculator",
-                title: "Librarium Book Cost Calculator",
-                icon: <Calculator className="w-4 h-4 text-slate-300" />,
-                render: () => <BookCostCalculator settings={settings} inventory={inventory} />
-              },
-              {
-                id: "location-calculator",
-                title: "Location Cost Calculator",
-                icon: <DollarSign className="w-4 h-4 text-indigo-400" />,
-                render: () => <LocationCostCalculator settings={settings} />
-              },
-              {
                 id: "agenda",
                 title: "Interactive Agenda",
                 icon: <Calendar className="w-4 h-4 text-emerald-400" />,
@@ -1503,12 +1773,6 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                     onOpenTask={onOpenTask}
                   />
                 )
-              },
-              {
-                id: "tshirt-calculator",
-                title: "T-Shirt Studio Quote Calculator",
-                icon: <Shirt className="w-4 h-4 text-rose-400" />,
-                render: () => <TShirtStudioQuoteCalculator settings={settings} />
               }
             ];
 
@@ -1749,7 +2013,7 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                           </span>
                           <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">• {p.client.preferredCommunication}</span>
                         </div>
-                        <span className="text-[10px] text-indigo-600 font-mono font-bold">AOV: {formatCurrency(p.client.history.averageOrderValue || (p.client.history.totalOrders > 0 ? Math.round(p.client.history.lifetimeRevenue / p.client.history.totalOrders) : 0))}</span>
+                        <span className="text-[10px] text-indigo-600 font-mono font-bold">AOV: {formatCurrency(getClientHistoryAOV(p.client))}</span>
                       </div>
                     </div>
                   ))
@@ -1784,7 +2048,7 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                             {item.trigger.metadata?.label || "Event"}
                           </span>
                         </div>
-                        <p className="text-[10px] text-indigo-600 font-mono font-bold mt-1">AOV: {formatCurrency(item.client.history.averageOrderValue || (item.client.history.totalOrders > 0 ? Math.round(item.client.history.lifetimeRevenue / item.client.history.totalOrders) : 0))}</p>
+                        <p className="text-[10px] text-indigo-600 font-mono font-bold mt-1">AOV: {formatCurrency(getClientHistoryAOV(item.client))}</p>
                       </div>
                       <span className="text-[9px] font-mono font-bold bg-slate-200/80 px-1.5 py-0.5 rounded text-slate-700 whitespace-nowrap">
                         {item.trigger.daysRemaining === 0 ? "Today" : `${item.trigger.daysRemaining}d`}
@@ -1803,6 +2067,48 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                   </p>
                 ) : (
                   summaries.today.reminders.map(item => {
+                    const isAspiringTask = (item as any).isAspiringTask;
+                    if (isAspiringTask) {
+                      const asp: AspiringClient = (item as any).aspiringClient;
+                      return (
+                        <div 
+                          key={item.reminder.id}
+                          onClick={() => onNavigateToTab("aspiring")}
+                          className="p-3 border border-amber-200/80 bg-amber-50/40 hover:bg-amber-50/90 rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 text-left shadow-xs border-l-4 border-l-amber-500"
+                        >
+                          <div className="flex justify-between items-start gap-2">
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200">
+                                  Aspiring Client
+                                </span>
+                                <span className="font-extrabold text-xs text-slate-900">{asp?.name || item.client.firstName}</span>
+                              </div>
+                              <p className="text-[11px] text-slate-700 font-semibold mt-1">
+                                {asp?.serviceInterestedIn ? `Follow up regarding ${asp.serviceInterestedIn}` : item.reminder.task}
+                              </p>
+                            </div>
+                            <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border ${
+                              item.overdueBy > 0 
+                                ? "bg-rose-600 text-white border-rose-600 shadow-[0_0_8px_rgba(225,29,72,0.3)] animate-pulse" 
+                                : "bg-amber-100 text-amber-800 border-amber-200"
+                            }`}>
+                              {item.overdueBy > 0 ? `Overdue ${item.overdueBy}d` : "Due Today"}
+                            </span>
+                          </div>
+                          {asp?.notes && (
+                            <p className="text-[10px] text-slate-500 italic leading-snug bg-white/70 p-1.5 rounded border border-slate-100/80">
+                              "{asp.notes}"
+                            </p>
+                          )}
+                          <div className="flex items-center justify-between text-[9px] text-slate-400 font-semibold pt-0.5">
+                            {asp?.assignedUser ? <span>Assigned: {asp.assignedUser}</span> : <span>Opportunity</span>}
+                            <span className="text-amber-700 font-bold">{asp?.status || "Follow Up"}</span>
+                          </div>
+                        </div>
+                      );
+                    }
+
                     const isInventoryTask = (item as any).isInventoryTask;
                     if (isInventoryTask) {
                       const inv = item as any;
@@ -1932,7 +2238,7 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                               }`}>
                                 {item.client.tier}
                               </span>
-                              <span className="text-[10px] text-indigo-600 font-mono font-bold">AOV: {formatCurrency(item.client.history.averageOrderValue || (item.client.history.totalOrders > 0 ? Math.round(item.client.history.lifetimeRevenue / item.client.history.totalOrders) : 0))}</span>
+                              <span className="text-[10px] text-indigo-600 font-mono font-bold">AOV: {formatCurrency(getClientHistoryAOV(item.client))}</span>
                             </div>
                           </div>
                           <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border ${
@@ -1975,7 +2281,7 @@ export default function Dashboard({ clients, inventory = [], onSelectClient, onN
                             }`}>
                               {item.client.tier}
                             </span>
-                            <span className="text-[10px] text-indigo-600 font-mono font-bold">AOV: {formatCurrency(item.client.history.averageOrderValue || (item.client.history.totalOrders > 0 ? Math.round(item.client.history.lifetimeRevenue / item.client.history.totalOrders) : 0))}</span>
+                            <span className="text-[10px] text-indigo-600 font-mono font-bold">AOV: {formatCurrency(getClientHistoryAOV(item.client))}</span>
                           </div>
                         </div>
                         <span className="font-mono font-bold text-slate-950 whitespace-nowrap bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200/50">{formatCurrency(item.event.amount || 0)}</span>

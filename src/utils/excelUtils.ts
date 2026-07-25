@@ -3,63 +3,69 @@ import { Client, ImportantDate } from "../types";
 
 // Flatten customer object to a simple flat row for spreadsheets
 export function customerToFlatRow(customer: Client) {
-  const otherDates = customer.importantDates
+  const importantDates = customer.importantDates || [];
+  const otherDates = importantDates
     .filter(d => !["Birthday", "Anniversary", "Wedding Date", "Proposal Date"].includes(d.label))
     .map(d => `${d.label}: ${d.date}`)
     .join("; ");
 
-  const childrenStr = customer.profile.children
+  const children = customer.profile?.children || [];
+  const childrenStr = children
     .map(c => `${c.name}${c.birthday ? ` (${c.birthday})` : ""}`)
     .join(", ");
 
+  const hobbies = customer.interests?.hobbies || [];
+  const favoriteColors = customer.interests?.favoriteColors || [];
+  const giftPreferences = customer.interests?.giftPreferences || [];
+
   return {
-    "Client ID": customer.id,
+    "Client ID": customer.id || "",
     "Status": customer.deactivated ? "Deactivated" : "Active",
-    "First Name": customer.firstName,
-    "Last Name": customer.lastName,
-    "Gender": customer.gender,
-    "Occupation": customer.occupation,
-    "Drive (Yes/No)": customer.drive,
-    "Client Tier": customer.tier,
-    "Home Brand": customer.homeBrand,
-    "Phone Number": customer.contact.phoneNumber,
-    "Email Address": customer.contact.email,
-    "City": customer.contact.city,
-    "Parish (Jamaica)": customer.contact.parish,
-    "Country": customer.contact.country,
-    "Delivery Address": customer.contact.deliveryAddress,
-    "Delivery Country": customer.contact.deliveryCountry,
-    "Mother Name": customer.profile.motherName,
-    "Father Name": customer.profile.fatherName,
-    "Wife Name": customer.profile.wifeName,
-    "Husband Name": customer.profile.husbandName,
+    "First Name": customer.firstName || "",
+    "Last Name": customer.lastName || "",
+    "Gender": customer.gender || "",
+    "Occupation": customer.occupation || "",
+    "Drive (Yes/No)": customer.drive || "",
+    "Client Tier": customer.tier || "Silver",
+    "Home Brand": customer.homeBrand || "",
+    "Phone Number": customer.contact?.phoneNumber || "",
+    "Email Address": customer.contact?.email || "",
+    "City": customer.contact?.city || "",
+    "Parish (Jamaica)": customer.contact?.parish || "",
+    "Country": customer.contact?.country || "",
+    "Delivery Address": customer.contact?.deliveryAddress || "",
+    "Delivery Country": customer.contact?.deliveryCountry || "",
+    "Mother Name": customer.profile?.motherName || "",
+    "Father Name": customer.profile?.fatherName || "",
+    "Wife Name": customer.profile?.wifeName || "",
+    "Husband Name": customer.profile?.husbandName || "",
     "Children Names & Birthdays": childrenStr,
-    "Pets": customer.profile.pets,
-    "Personal Notes": customer.profile.personalNotes,
-    "Birthday": customer.importantDates.find(d => d.label === "Birthday")?.date || "",
-    "Anniversary": customer.importantDates.find(d => d.label === "Anniversary")?.date || "",
-    "Wedding Date": customer.importantDates.find(d => d.label === "Wedding Date")?.date || "",
-    "Proposal Date": customer.importantDates.find(d => d.label === "Proposal Date")?.date || "",
+    "Pets": customer.profile?.pets || "",
+    "Personal Notes": customer.profile?.personalNotes || "",
+    "Birthday": importantDates.find(d => d.label === "Birthday")?.date || "",
+    "Anniversary": importantDates.find(d => d.label === "Anniversary")?.date || "",
+    "Wedding Date": importantDates.find(d => d.label === "Wedding Date")?.date || "",
+    "Proposal Date": importantDates.find(d => d.label === "Proposal Date")?.date || "",
     "Other Important Dates": otherDates,
-    "First Order Date": customer.history.firstOrderDate,
-    "Last Order Date": customer.history.lastOrderDate,
-    "Total Orders": customer.history.totalOrders,
-    "Products Purchased": customer.history.productsPurchased.join(", "),
-    "Preferred Products / Categories": customer.history.preferredCategories.join(", "),
-    "Client Preferences": customer.history.clientPreferences.join(", "),
-    "Lifetime Revenue (JMD)": customer.history.lifetimeRevenue,
-    "Average Order Value (JMD)": customer.history.averageOrderValue,
-    "Hobbies": customer.interests.hobbies.join(", "),
-    "Favorite Colors": customer.interests.favoriteColors.join(", "),
-    "Gift Preferences": customer.interests.giftPreferences.join(", "),
-    "Sport / League": customer.interests.sports.sport,
-    "Favorite Team": customer.interests.sports.favoriteTeam,
-    "Team One": customer.interests.sports.teamOne,
-    "Team Two": customer.interests.sports.teamTwo,
-    "National Team": customer.interests.sports.nationalTeam,
-    "Favorite Player": customer.interests.sports.favoritePlayer,
-    "Preferred Communication Method": customer.preferredCommunication,
-    "Last Contacted Date": customer.lastContactedDate
+    "First Order Date": customer.history?.firstOrderDate || "",
+    "Last Order Date": customer.history?.lastOrderDate || "",
+    "Total Orders": customer.history?.totalOrders || 0,
+    "Products Purchased": (customer.history?.productsPurchased || []).join(", "),
+    "Preferred Products / Categories": (customer.history?.preferredCategories || []).join(", "),
+    "Client Preferences": (customer.history?.clientPreferences || []).join(", "),
+    "Lifetime Revenue (JMD)": customer.history?.lifetimeRevenue || 0,
+    "Average Order Value (JMD)": customer.history?.averageOrderValue || 0,
+    "Hobbies": hobbies.join(", "),
+    "Favorite Colors": favoriteColors.join(", "),
+    "Gift Preferences": giftPreferences.join(", "),
+    "Sport / League": customer.interests?.sports?.sport || "",
+    "Favorite Team": customer.interests?.sports?.favoriteTeam || "",
+    "Team One": customer.interests?.sports?.teamOne || "",
+    "Team Two": customer.interests?.sports?.teamTwo || "",
+    "National Team": customer.interests?.sports?.nationalTeam || "",
+    "Favorite Player": customer.interests?.sports?.favoritePlayer || "",
+    "Preferred Communication Method": customer.preferredCommunication || "",
+    "Last Contacted Date": customer.lastContactedDate || ""
   };
 }
 
@@ -216,12 +222,33 @@ export function downloadExcel(sheets: { name: string; data: any[] }[], filename:
 
 // 1. Download Master Customer Database
 export function exportClientsExcel(customers: Client[], category: string) {
-  const flatData = customers.map(c => customerToFlatRow(c));
+  let list = Array.isArray(customers) && customers.length > 0 ? customers : [];
+  if (list.length === 0) {
+    try {
+      const stored = localStorage.getItem("ceo_librarium_crm_customers") || localStorage.getItem("ceo_client_management_data");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) list = parsed;
+      }
+    } catch (e) {}
+  }
+  const flatData = list.map(c => customerToFlatRow(c));
   downloadExcel([{ name: "Clients", data: flatData }], `CRM_Clients_${category}`);
 }
 
 // 2. Export Custom Reports
 export function exportReport(type: string, customers: Client[]) {
+  let list = Array.isArray(customers) && customers.length > 0 ? customers : [];
+  if (list.length === 0) {
+    try {
+      const stored = localStorage.getItem("ceo_librarium_crm_customers") || localStorage.getItem("ceo_client_management_data");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) list = parsed;
+      }
+    } catch (e) {}
+  }
+
   let sheets: { name: string; data: any[] }[] = [];
   let filename = `CRM_Report_${type}`;
 
@@ -230,7 +257,7 @@ export function exportReport(type: string, customers: Client[]) {
       sheets = [
         {
           name: "Lifetime Client Value",
-          data: customers
+          data: list
             .map(c => ({
               "Client ID": c.id,
               "Status": c.deactivated ? "Deactivated" : "Active",
@@ -252,17 +279,17 @@ export function exportReport(type: string, customers: Client[]) {
       sheets = [
         {
           name: "Repeat Clients",
-          data: customers
-            .filter(c => c.history.totalOrders >= 2)
+          data: list
+            .filter(c => (c.history?.totalOrders || 0) >= 2)
             .map(c => ({
               "Client ID": c.id,
               "Status": c.deactivated ? "Deactivated" : "Active",
               "Client Name": `${c.firstName} ${c.lastName}`,
               "Client Tier": c.tier,
               "Home Brand": c.homeBrand,
-              "Total Orders": c.history.totalOrders,
-              "Lifetime Revenue (JMD)": c.history.lifetimeRevenue,
-              "Average Order Value (JMD)": c.history.averageOrderValue
+              "Total Orders": c.history?.totalOrders || 0,
+              "Lifetime Revenue (JMD)": c.history?.lifetimeRevenue || 0,
+              "Average Order Value (JMD)": c.history?.averageOrderValue || 0
             }))
             .sort((a, b) => b["Total Orders"] - a["Total Orders"])
         }
@@ -273,17 +300,17 @@ export function exportReport(type: string, customers: Client[]) {
       sheets = [
         {
           name: "Product Preferences",
-          data: customers.map(c => ({
+          data: list.map(c => ({
             "Client ID": c.id,
             "Status": c.deactivated ? "Deactivated" : "Active",
             "Client Name": `${c.firstName} ${c.lastName}`,
             "Client Tier": c.tier,
             "Home Brand": c.homeBrand,
-            "Preferred Categories": c.history.preferredCategories.join(", "),
-            "Products Purchased": c.history.productsPurchased.join(", "),
-            "Client Preferences": c.history.clientPreferences.join(", "),
-            "Favorite Colors": c.interests.favoriteColors.join(", "),
-            "Gift Preferences": c.interests.giftPreferences.join(", ")
+            "Preferred Categories": (c.history?.preferredCategories || []).join(", "),
+            "Products Purchased": (c.history?.productsPurchased || []).join(", "),
+            "Client Preferences": (c.history?.clientPreferences || []).join(", "),
+            "Favorite Colors": (c.interests?.favoriteColors || []).join(", "),
+            "Gift Preferences": (c.interests?.giftPreferences || []).join(", ")
           }))
         }
       ];
@@ -293,17 +320,17 @@ export function exportReport(type: string, customers: Client[]) {
       sheets = [
         {
           name: "Upcoming Dates & Birthdays",
-          data: customers.flatMap(c =>
-            c.importantDates.map(d => ({
+          data: list.flatMap(c =>
+            (c.importantDates || []).map(d => ({
               "Client ID": c.id,
               "Status": c.deactivated ? "Deactivated" : "Active",
               "Client Name": `${c.firstName} ${c.lastName}`,
               "Client Tier": c.tier,
               "Event / Occasion": d.label,
               "Date Details": d.date,
-              "Preferred Contact Method": c.preferredCommunication,
-              "Phone Number": c.contact.phoneNumber,
-              "Email Address": c.contact.email
+              "Preferred Contact Method": c.preferredCommunication || "",
+              "Phone Number": c.contact?.phoneNumber || "",
+              "Email Address": c.contact?.email || ""
             }))
           )
         }
@@ -314,20 +341,20 @@ export function exportReport(type: string, customers: Client[]) {
       sheets = [
         {
           name: "Overseas Ordering Family Gifts",
-          data: customers
-            .filter(c => c.contact.country !== "Jamaica")
+          data: list
+            .filter(c => c.contact?.country && c.contact.country !== "Jamaica")
             .map(c => ({
               "Client ID": c.id,
               "Status": c.deactivated ? "Deactivated" : "Active",
               "Client Name": `${c.firstName} ${c.lastName}`,
               "Client Tier": c.tier,
-              "Residing Country": c.contact.country,
-              "Residing City": c.contact.city,
-              "Recipient Delivery Address": c.contact.deliveryAddress,
-              "Recipient Delivery Country": c.contact.deliveryCountry,
-              "Phone Number": c.contact.phoneNumber,
-              "Email Address": c.contact.email,
-              "Personal Notes": c.profile.personalNotes
+              "Residing Country": c.contact?.country || "",
+              "Residing City": c.contact?.city || "",
+              "Recipient Delivery Address": c.contact?.deliveryAddress || "",
+              "Recipient Delivery Country": c.contact?.deliveryCountry || "",
+              "Phone Number": c.contact?.phoneNumber || "",
+              "Email Address": c.contact?.email || "",
+              "Personal Notes": c.profile?.personalNotes || ""
             }))
         }
       ];
@@ -337,15 +364,15 @@ export function exportReport(type: string, customers: Client[]) {
       sheets = [
         {
           name: "Sales Metrics",
-          data: customers.map(c => ({
+          data: list.map(c => ({
             "Client ID": c.id,
             "Status": c.deactivated ? "Deactivated" : "Active",
             "Client Name": `${c.firstName} ${c.lastName}`,
             "Tier": c.tier,
             "Brand": c.homeBrand,
-            "Total Orders Placed": c.history.totalOrders,
-            "Revenue Liftiver Value (JMD)": c.history.lifetimeRevenue,
-            "Average Invoice Amount": c.history.averageOrderValue
+            "Total Orders Placed": c.history?.totalOrders || 0,
+            "Revenue Lifetime Value (JMD)": c.history?.lifetimeRevenue || 0,
+            "Average Invoice Amount": c.history?.averageOrderValue || 0
           }))
         }
       ];
@@ -353,7 +380,7 @@ export function exportReport(type: string, customers: Client[]) {
 
     default:
       // Default Master Database Report
-      sheets = [{ name: "Database Report", data: customers.map(c => customerToFlatRow(c)) }];
+      sheets = [{ name: "Database Report", data: list.map(c => customerToFlatRow(c)) }];
   }
 
   downloadExcel(sheets, filename);

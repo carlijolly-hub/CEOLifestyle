@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Calculator, MapPin, RefreshCw, Info, Navigation, ArrowRightLeft, DollarSign, Copy, Check } from "lucide-react";
 import { SystemSettings } from "../types";
+import { DEFAULT_QUOTE_TEMPLATES, formatQuoteTemplate } from "../utils/settingsHelper";
 
 interface LocationCostCalculatorProps {
   settings?: SystemSettings;
@@ -20,8 +21,11 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
   const [tollFee, setTollFee] = useState(() => {
     return localStorage.getItem("calc_loc_toll_fee") || "2400";
   });
-  const [tripType, setTripType] = useState<"one_way" | "round_trip">(() => {
-    return (localStorage.getItem("calc_loc_trip_type") as "one_way" | "round_trip") || "round_trip";
+  const [tripType, setTripType] = useState<"one_way" | "round_trip" | "no_toll">( () => {
+    return (localStorage.getItem("calc_loc_trip_type") as any) || "round_trip";
+  });
+  const [discountPercent, setDiscountPercent] = useState(() => {
+    return localStorage.getItem("calc_loc_discount") || "0";
   });
 
   // Copy state
@@ -34,7 +38,8 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
     localStorage.setItem("calc_loc_cost_per_km", costPerKm);
     localStorage.setItem("calc_loc_toll_fee", tollFee);
     localStorage.setItem("calc_loc_trip_type", tripType);
-  }, [locationName, distance, costPerKm, tollFee, tripType]);
+    localStorage.setItem("calc_loc_discount", discountPercent);
+  }, [locationName, distance, costPerKm, tollFee, tripType, discountPercent]);
 
   // Reset to absolute standard defaults
   const handleReset = () => {
@@ -43,6 +48,7 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
     setCostPerKm("75");
     setTollFee("2400");
     setTripType("round_trip");
+    setDiscountPercent("0");
     setCopied(false);
   };
 
@@ -50,16 +56,18 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
   const parsedDistance = parseFloat(distance) || 0;
   const parsedCostPerKm = parseFloat(costPerKm) || 0;
   const parsedTollFee = parseFloat(tollFee) || 0;
+  const parsedDiscount = Math.min(100, Math.max(0, parseFloat(discountPercent) || 0));
 
   // Calculation Logic:
-  // One Way Formula: (Distance * Cost Per KM) + Toll Fee
-  // Round Trip Formula: (Distance * Cost Per KM) + (Toll Fee * 2)
-  const baseDistanceCost = parsedDistance * parsedCostPerKm;
-  const distanceCostTotal = baseDistanceCost; // Same distance cost for both One Way and Round Trip
+  // Distance Cost = Distance * Cost Per KM
+  // Toll Cost: Round Trip = Toll * 2, One Way = Toll * 1, No Toll = 0
+  const distanceCostTotal = parsedDistance * parsedCostPerKm;
+  const tollMultiplier = tripType === "round_trip" ? 2 : tripType === "one_way" ? 1 : 0;
+  const tollCostTotal = tripType === "no_toll" ? 0 : (parsedTollFee * tollMultiplier);
   
-  const tollMultiplier = tripType === "round_trip" ? 2 : 1;
-  const tollCostTotal = parsedTollFee * tollMultiplier;
-  const totalTravelCost = distanceCostTotal + tollCostTotal;
+  const subtotalCost = distanceCostTotal + tollCostTotal;
+  const discountAmount = subtotalCost * (parsedDiscount / 100);
+  const totalTravelCost = Math.max(0, subtotalCost - discountAmount);
 
   // Format helper for JMD currency
   const formatJMD = (val: number) => {
@@ -71,9 +79,45 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
     }).format(val);
   };
 
+  const getCustomerResponseMessage = () => {
+    const locTemplate = settings?.quoteTemplates?.find(t => t.active && (t.toolKey === "location" || t.id === "tpl_location_logistics_quote" || t.id === "tpl_location_logistics"))
+      || DEFAULT_QUOTE_TEMPLATES.find(t => t.id === "tpl_location_logistics_quote");
+
+    const noTollText = tripType === "no_toll" ? " (No toll charges applied)." : "";
+    const deliveryMsg = `Delivery to ${locationName || "your location"} is available for ${formatJMD(totalTravelCost)}.${noTollText}`;
+    const serviceTierStr = tripType === "round_trip" ? "Round Trip (2x Toll)" : tripType === "one_way" ? "One Way (1x Toll)" : "No Toll Direct Delivery";
+    const hasDiscount = parsedDiscount > 0 && discountAmount > 0;
+
+    if (locTemplate) {
+      return formatQuoteTemplate(locTemplate.content, {
+        ParishLocation: locationName || "Kingston",
+        ServiceTier: serviceTierStr,
+        DiscountPercent: hasDiscount ? parsedDiscount : 0,
+        DiscountAmount: hasDiscount ? formatJMD(discountAmount) : "",
+        GrandTotal: formatJMD(totalTravelCost),
+        DeliveryMethod: "Direct Dispatch",
+        DeliveryMessage: deliveryMsg,
+        BusinessName: settings?.companyName || "CEO Lifestyle"
+      });
+    }
+
+    const sections: string[] = [];
+    sections.push("Thank you so much for providing those details. Here is your personalized quote based on your request:");
+    sections.push(`Logistics Details:\n* Location / Parish: ${locationName || "Kingston"}\n* Service Tier: ${serviceTierStr}`);
+
+    if (hasDiscount) {
+      sections.push(`Discount\n* You save ${parsedDiscount}% = ${formatJMD(discountAmount)}`);
+    }
+
+    sections.push(`Total: ${formatJMD(totalTravelCost)}`);
+    sections.push(`Delivery Method: Direct Dispatch\n${deliveryMsg}`);
+    sections.push("Let me know if you would like to proceed.");
+
+    return sections.join("\n\n");
+  };
+
   const handleCopyMessage = () => {
-    const generatedMessage = `Delivery to ${locationName || "your location"} is available for ${formatJMD(totalTravelCost)}. Let me know if you would like to proceed.`;
-    navigator.clipboard.writeText(generatedMessage);
+    navigator.clipboard.writeText(getCustomerResponseMessage());
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -180,14 +224,14 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
         </div>
 
         {/* Trip Direction */}
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 col-span-2 sm:col-span-1">
           <label className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400 block">
             Trip Direction
           </label>
-          <div className="grid grid-cols-2 gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200/60">
+          <div className="grid grid-cols-3 gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200/60">
             <button
               onClick={() => setTripType("one_way")}
-              className={`py-1 text-[10px] font-extrabold rounded-lg transition-all ${
+              className={`py-1 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer ${
                 tripType === "one_way"
                   ? "bg-white text-slate-900 shadow-xs"
                   : "text-slate-400 hover:text-slate-700"
@@ -197,7 +241,7 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
             </button>
             <button
               onClick={() => setTripType("round_trip")}
-              className={`py-1 text-[10px] font-extrabold rounded-lg transition-all ${
+              className={`py-1 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer ${
                 tripType === "round_trip"
                   ? "bg-indigo-600 text-white shadow-xs"
                   : "text-slate-400 hover:text-slate-700"
@@ -205,6 +249,38 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
             >
               Round Trip
             </button>
+            <button
+              onClick={() => setTripType("no_toll")}
+              className={`py-1 text-[10px] font-extrabold rounded-lg transition-all cursor-pointer ${
+                tripType === "no_toll"
+                  ? "bg-amber-600 text-white shadow-xs"
+                  : "text-slate-400 hover:text-slate-700"
+              }`}
+            >
+              No Toll
+            </button>
+          </div>
+        </div>
+
+        {/* Discount (%) */}
+        <div className="space-y-1.5 col-span-2 sm:col-span-1">
+          <label className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400 block">
+            Discount (%)
+          </label>
+          <div className="relative">
+            <input
+              type="number"
+              step="1"
+              min="0"
+              max="100"
+              value={discountPercent}
+              onChange={(e) => setDiscountPercent(e.target.value)}
+              placeholder="0"
+              className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-hidden transition-all"
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-extrabold text-slate-400">
+              %
+            </span>
           </div>
         </div>
       </div>
@@ -214,7 +290,7 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
         <div className="flex justify-between items-center">
           <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Cost Breakdown</span>
           <span className="text-[9px] font-bold text-indigo-600 uppercase tracking-widest font-mono">
-            {tripType === "one_way" ? "One Way (1x)" : "Round Trip (2x)"}
+            {tripType === "one_way" ? "One Way (1x Toll)" : tripType === "round_trip" ? "Round Trip (2x Toll)" : "No Toll ($0 Toll)"}
           </span>
         </div>
 
@@ -236,12 +312,29 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
               {tripType === "one_way" && (
                 <span className="text-[9px] text-slate-400 block">({formatJMD(parsedTollFee)})</span>
               )}
+              {tripType === "no_toll" && (
+                <span className="text-[9px] text-amber-600 font-bold block">(No Toll Applied)</span>
+              )}
             </div>
           </div>
+
+          {parsedDiscount > 0 && (
+            <>
+              <div className="flex justify-between text-slate-600 pt-1 border-t border-dashed border-slate-200">
+                <span>Subtotal (Before Discount):</span>
+                <span className="font-mono font-semibold text-slate-800">{formatJMD(subtotalCost)}</span>
+              </div>
+              <div className="flex justify-between text-emerald-700 font-bold">
+                <span>Discount ({parsedDiscount}%):</span>
+                <span className="font-mono">-{formatJMD(discountAmount)}</span>
+              </div>
+            </>
+          )}
+
           <div className="flex justify-between text-slate-600 pb-1.5 border-b border-dashed border-slate-200">
-            <span>Trip Type Adjustment:</span>
+            <span>Trip Type Option:</span>
             <span className="font-bold text-slate-700 flex items-center gap-0.5">
-              <ArrowRightLeft className="w-3 h-3 text-indigo-500" /> {tripType === "round_trip" ? "Double Toll (Round-trip)" : "Single Toll (One-way)"}
+              <ArrowRightLeft className="w-3 h-3 text-indigo-500" /> {tripType === "round_trip" ? "Double Toll (Round-trip)" : tripType === "one_way" ? "Single Toll (One-way)" : "Zero Toll (No Toll)"}
             </span>
           </div>
         </div>
@@ -258,6 +351,11 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
         <div className="text-2xl font-black tracking-tight text-white mt-1 font-mono">
           {formatJMD(totalTravelCost)}
         </div>
+        {parsedDiscount > 0 && (
+          <div className="text-[10px] text-emerald-300 font-bold mt-1 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+            Saved {parsedDiscount}% ({formatJMD(discountAmount)})
+          </div>
+        )}
       </div>
 
       {/* Customer Response Message Card */}
@@ -282,7 +380,7 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
           </button>
         </div>
         <div className="bg-white border border-slate-100 p-3 rounded-xl text-[11px] text-slate-700 font-medium leading-relaxed font-sans select-all">
-          "Delivery to {locationName || "your location"} is available for {formatJMD(totalTravelCost)}. Let me know if you would like to proceed."
+          "{getCustomerResponseMessage()}"
         </div>
       </div>
     </div>
