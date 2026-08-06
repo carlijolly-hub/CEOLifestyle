@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { Client } from "../types";
 import { exportClientDatabase, ClientExportSummary } from "../utils/backupUtils";
 import { 
@@ -25,18 +27,27 @@ export default function ClientExportModal({
   clients,
   userFullName = "Master Administrator"
 }: ClientExportModalProps) {
+  useBodyScrollLock(isOpen);
   const [fileFormat, setFileFormat] = useState<"xlsx" | "json">("xlsx");
+  const [commFilter, setCommFilter] = useState<"all" | "active_only" | "active_and_unknown">("all");
   const [summary, setSummary] = useState<ClientExportSummary | null>(null);
 
   if (!isOpen) return null;
 
-  const totalCount = clients.length;
-  const platinumCount = clients.filter(c => c.tier === "Platinum").length;
-  const goldCount = clients.filter(c => c.tier === "Gold").length;
-  const silverCount = clients.filter(c => c.tier === "Silver").length;
+  const exportTargetClients = clients.filter(c => {
+    const status = c.communicationStatus || "Unknown";
+    if (commFilter === "active_only") return status === "Active";
+    if (commFilter === "active_and_unknown") return status !== "Not Active";
+    return true;
+  });
+
+  const totalCount = exportTargetClients.length;
+  const platinumCount = exportTargetClients.filter(c => c.tier === "Platinum").length;
+  const goldCount = exportTargetClients.filter(c => c.tier === "Gold").length;
+  const silverCount = exportTargetClients.filter(c => c.tier === "Silver").length;
 
   const handleExecuteExport = () => {
-    const result = exportClientDatabase(clients, fileFormat, userFullName);
+    const result = exportClientDatabase(exportTargetClients, fileFormat, userFullName);
     setSummary(result);
   };
 
@@ -45,9 +56,11 @@ export default function ClientExportModal({
     onClose();
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/75 backdrop-blur-sm animate-fade-in">
-      <div className="bg-white border border-slate-200 rounded-3xl shadow-2xl max-w-lg w-full p-6 sm:p-8 space-y-6 text-slate-800 text-left relative overflow-hidden">
+  if (!isOpen) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-slate-900/75 backdrop-blur-sm overflow-y-auto animate-fade-in">
+      <div className="bg-white border border-slate-200 rounded-3xl shadow-2xl max-w-lg w-full p-6 sm:p-8 space-y-6 text-slate-800 text-left relative overflow-hidden my-auto">
         
         {/* Header Bar */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-100">
@@ -109,6 +122,22 @@ export default function ClientExportModal({
                   <span className="text-sm font-black text-slate-600">{silverCount}</span>
                 </div>
               </div>
+            </div>
+
+            {/* Communication Status Filter / Marketing Protection */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-extrabold uppercase tracking-wider text-slate-700 block">
+                Communication Status Filter
+              </label>
+              <select
+                value={commFilter}
+                onChange={(e) => setCommFilter(e.target.value as any)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-800 focus:outline-none focus:border-slate-800"
+              >
+                <option value="all">Include All Clients ({clients.length})</option>
+                <option value="active_only">Include Active Contacts Only</option>
+                <option value="active_and_unknown">Include Active & Unknown Contacts</option>
+              </select>
             </div>
 
             {/* File Format Selector */}
@@ -230,6 +259,7 @@ export default function ClientExportModal({
         )}
 
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

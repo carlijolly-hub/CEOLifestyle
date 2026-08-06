@@ -1,5 +1,8 @@
-import React, { useState, useMemo } from "react";
-import { Client, FollowUpReminder, TimelineEvent, LuxeBookInventoryItem, BusinessEvent, SystemSettings, AspiringClient, AspiringClientStatus } from "../types";
+import React, { useState, useMemo, useEffect } from "react";
+import { createPortal } from "react-dom";
+import AddAspiringClientModal from "./AddAspiringClientModal";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
+import { Client, FollowUpReminder, TimelineEvent, LuxeBookInventoryItem, BusinessEvent, SystemSettings, AspiringClient, AspiringClientStatus, PromotionOpportunity, OperationsOrder } from "../types";
 import { 
   Users, 
   Printer, 
@@ -26,10 +29,28 @@ import {
   Smartphone,
   Mail,
   UserPlus,
-  UserCheck
+  UserCheck,
+  MapPin,
+  Shirt,
+  Layers,
+  Calculator,
+  SlidersHorizontal,
+  X,
+  Crown,
+  Star,
+  ClipboardList
 } from "lucide-react";
 import { SmallCalendarWidget } from "./MilestoneCalendar";
 import { getRelationshipEventTitle, getClientMilestones } from "../utils/dateHelpers";
+import { getClientTierRegister, evaluateClientPromotions, approveClientPromotion, calculateHealthScore, getTierSource } from "../utils/clientTierUtils";
+
+import BookCostCalculator from "./BookCostCalculator";
+import LocationCostCalculator from "./LocationCostCalculator";
+import ProductionLayoutCalculator from "./ProductionLayoutCalculator";
+import DTFPrintingCalculator from "./DTFPrintingCalculator";
+import TShirtStudioQuoteCalculator from "./TShirtStudioQuoteCalculator";
+import FavoriteQuotesWidget from "./FavoriteQuotesWidget";
+import { formatInstagramUsername } from "../utils/contactUtils";
 
 interface DashboardProps {
   clients: Client[];
@@ -37,8 +58,10 @@ interface DashboardProps {
   setAspiringClients?: React.Dispatch<React.SetStateAction<AspiringClient[]>>;
   onConvertToClient?: (aspiringClient: AspiringClient) => void;
   inventory?: LuxeBookInventoryItem[];
+  operationsOrders?: OperationsOrder[];
   onSelectClient: (clientId: string) => void;
   onNavigateToTab: (tab: string) => void;
+  onNavigateToAspiringAdd?: () => void;
   onOpenTask?: (clientId: string, reminderId: string) => void;
   settings?: SystemSettings;
 }
@@ -167,11 +190,37 @@ const getClientHistoryAOV = (client: any): number => {
   return 0;
 };
 
-export default function Dashboard({ clients, aspiringClients, setAspiringClients, onConvertToClient, inventory = [], onSelectClient, onNavigateToTab, onOpenTask, settings }: DashboardProps) {
-  const [focusFilter, setFocusFilter] = useState<"all" | "urgent" | "milestones" | "tasks" | "inventory">("all");
+export default function Dashboard({ clients, aspiringClients, setAspiringClients, onConvertToClient, inventory = [], operationsOrders = [], onSelectClient, onNavigateToTab, onNavigateToAspiringAdd, onOpenTask, settings }: DashboardProps) {
+  const [focusFilter, setFocusFilter] = useState<"all" | "urgent" | "milestones" | "operations" | "inventory">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [summaryTab, setSummaryTab] = useState<"today" | "this_week" | "overview">("today");
   const [expandedAttentionId, setExpandedAttentionId] = useState<string | null>(null);
+
+  // Operations Board Summary Metrics Calculation
+  const opsMetrics = useMemo(() => {
+    const list = operationsOrders || [];
+    const active = list.filter(o => o.productionStatus !== "Completed" && o.productionStatus !== "Cancelled");
+    
+    let dueTodayCount = 0;
+    let overdueCount = 0;
+    let readyPickupCount = 0;
+
+    active.forEach(o => {
+      if (o.dueDate) {
+        const diffDays = getDaysSince(o.dueDate);
+        if (diffDays === 0) dueTodayCount++;
+        else if (diffDays > 0) overdueCount++;
+      }
+      if (o.productionStatus === "Ready for Pickup") readyPickupCount++;
+    });
+
+    return {
+      activeOrders: active.length,
+      dueToday: dueTodayCount,
+      overdue: overdueCount,
+      readyPickup: readyPickupCount
+    };
+  }, [operationsOrders]);
 
   // Aspiring Clients Follow-Up Calculation
   const aspiringFollowUps = useMemo(() => {
@@ -209,16 +258,297 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
     }
   };
 
-  // Dashboard Module Carousel Navigation
-  const [currentCarouselIndex, setCurrentCarouselIndex] = useState(() => {
-    const stored = localStorage.getItem("dashboard_carousel_index");
-    if (stored !== null) return parseInt(stored, 10);
-    return settings?.dashboardCarouselDefaultIndex ?? 0;
+  // Client Tier Register & Promotion State (Independent Tier Register & No Demotion Policy)
+  const [tierRegister, setTierRegister] = useState(() => getClientTierRegister(clients));
+  const [selectedDashboardPromotion, setSelectedDashboardPromotion] = useState<PromotionOpportunity | null>(null);
+  useBodyScrollLock(!!selectedDashboardPromotion);
+
+  useEffect(() => {
+    setTierRegister(getClientTierRegister(clients));
+  }, [clients]);
+
+  const dashboardPromotions = useMemo(() => {
+    return evaluateClientPromotions(clients, tierRegister);
+  }, [clients, tierRegister]);
+
+  // Client Watchtower Executive Intelligence Engine
+  const watchtowerIntelligence = useMemo(() => {
+    const alerts: {
+      id: string;
+      type: "Platinum Inactive" | "Health Alert" | "Founders Touchpoint" | "Delinquent Review" | "Problematic Review" | "Gold Dormant" | "Promotion Recommendation";
+      client: Client;
+      severity: "urgent" | "warning" | "info";
+      title: string;
+      subtitle: string;
+      reason: string;
+      actionText: string;
+    }[] = [];
+
+    clients.forEach(c => {
+      const revenue = c.history?.lifetimeRevenue || 0;
+      const lastOrder = c.history?.lastOrderDate || c.lastContactedDate || "";
+      const health = calculateHealthScore(c);
+
+      let daysInactive = 0;
+      if (lastOrder) {
+        const d = new Date(lastOrder);
+        if (!isNaN(d.getTime())) {
+          daysInactive = Math.floor((new Date().getTime() - d.getTime()) / (1000 * 3600 * 24));
+        }
+      }
+
+      // 1. Delinquent Risk Alert
+      if (c.tier === "Delinquent" || c.managementClassification === "Delinquent") {
+        alerts.push({
+          id: `delinq_${c.id}`,
+          type: "Delinquent Review",
+          client: c,
+          severity: "urgent",
+          title: `🚨 Delinquent Account Review Required`,
+          subtitle: `${c.firstName} ${c.lastName} (${c.id})`,
+          reason: `Account flagged as Delinquent. Audit outstanding payments and communication log.`,
+          actionText: "Review Account"
+        });
+      }
+
+      // 2. Problematic Relationship Alert
+      if (c.tier === "Problematic" || c.managementClassification === "Problematic") {
+        alerts.push({
+          id: `prob_${c.id}`,
+          type: "Problematic Review",
+          client: c,
+          severity: "urgent",
+          title: `⚠️ Problematic Client Relationship`,
+          subtitle: `${c.firstName} ${c.lastName} (${c.id})`,
+          reason: `Client classified Problematic. Executive review required before accepting new orders.`,
+          actionText: "Review Relationship"
+        });
+      }
+
+      // 3. Platinum Client Inactive 180+ days
+      if (c.tier === "Platinum" && (daysInactive >= 180 || c.relationshipStatus === "Dormant")) {
+        alerts.push({
+          id: `plat_inact_${c.id}`,
+          type: "Platinum Inactive",
+          client: c,
+          severity: "warning",
+          title: `💎 Platinum Client Inactive (${daysInactive > 0 ? `${daysInactive} Days` : 'Dormant'})`,
+          subtitle: `${c.firstName} ${c.lastName} • Spend: $${revenue.toLocaleString()} JMD`,
+          reason: `High-value Platinum client has had no purchase activity in over 6 months. Relationship recovery advised.`,
+          actionText: "Initiate Outreach"
+        });
+      }
+
+      // 4. High Lifetime Spend + Low Health Score (Health <= 40)
+      if (revenue >= 50000 && health <= 40 && c.tier !== "Delinquent" && c.tier !== "Problematic") {
+        alerts.push({
+          id: `health_alert_${c.id}`,
+          type: "Health Alert",
+          client: c,
+          severity: "warning",
+          title: `📉 High Value Client Health Alert (Score: ${health}/100)`,
+          subtitle: `${c.firstName} ${c.lastName} • Spend: $${revenue.toLocaleString()} JMD`,
+          reason: `Valuable historical relationship showing declining health score (${health}/100). Executive check-in needed.`,
+          actionText: "Schedule Touchpoint"
+        });
+      }
+
+      // 5. Founders Family Executive Attention
+      if (c.tier === "Founders Family" && (daysInactive >= 90 || health < 60)) {
+        alerts.push({
+          id: `founders_${c.id}`,
+          type: "Founders Touchpoint",
+          client: c,
+          severity: "info",
+          title: `👑 Founders Family Courtesy Touchpoint`,
+          subtitle: `${c.firstName} ${c.lastName} • Priority Legacy Relationship`,
+          reason: `Permanent VIP Founders Family account requires periodic executive courtesy contact.`,
+          actionText: "Executive Check-in"
+        });
+      }
+
+      // 6. Gold Client Becoming Dormant
+      if (c.tier === "Gold" && daysInactive >= 120) {
+        alerts.push({
+          id: `gold_dorm_${c.id}`,
+          type: "Gold Dormant",
+          client: c,
+          severity: "info",
+          title: `🥇 Gold Client Inactive (${daysInactive} Days)`,
+          subtitle: `${c.firstName} ${c.lastName} • Spend: $${revenue.toLocaleString()} JMD`,
+          reason: `Gold client engagement cooling down. Send personalized luxury offer or check-in.`,
+          actionText: "Contact Client"
+        });
+      }
+    });
+
+    return alerts;
+  }, [clients]);
+
+  // Dashboard Executive Carousel Navigation State & Preferences
+  const ALL_CAROUSEL_IDS = useMemo(() => [
+    "tshirt_calc",
+    "operations_board",
+    "inventory",
+    "book_calc",
+    "location_calc",
+    "agenda",
+    "favorite_quotes",
+    "promotions",
+    "aspiring"
+  ], []);
+
+  const DEFAULT_CAROUSEL_ORDER = useMemo(() => [
+    "tshirt_calc",
+    "operations_board",
+    "inventory",
+    "book_calc",
+    "location_calc",
+    "agenda",
+    "aspiring"
+  ], []);
+
+  const [carouselOrder, setCarouselOrder] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem("dashboard_carousel_order_v2.1");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const validParsed = parsed.filter(id => ALL_CAROUSEL_IDS.includes(id));
+          const existingSet = new Set(validParsed);
+          const missing = DEFAULT_CAROUSEL_ORDER.filter(id => !existingSet.has(id));
+          const combined = [...validParsed, ...missing];
+          if (combined.length > 0) return combined;
+        }
+      }
+    } catch (e) {
+      console.error("Error reading carousel order:", e);
+    }
+    return DEFAULT_CAROUSEL_ORDER;
   });
 
+  // Add Aspiring Client Quick Modal State
+  const [showAddAspiringModal, setShowAddAspiringModal] = useState(false);
+  const [aspiringFormError, setAspiringFormError] = useState("");
+  const [newAspiringData, setNewAspiringData] = useState({
+    name: "",
+    phoneNumber: "",
+    email: "",
+    instagramUsername: "",
+    preferredContactMethod: "Instagram",
+    serviceInterestedIn: "Custom T-Shirts & Apparel",
+    sourceOfInquiry: "Instagram",
+    notes: "",
+    followUpDate: new Date().toISOString().split("T")[0]
+  });
+
+  const handleSaveNewAspiring = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAspiringFormError("");
+
+    if (!newAspiringData.name.trim()) {
+      setAspiringFormError("Customer Name is required.");
+      return;
+    }
+
+    const phone = newAspiringData.phoneNumber.trim();
+    const email = newAspiringData.email.trim();
+    const rawIg = newAspiringData.instagramUsername.trim();
+    const formattedIg = formatInstagramUsername(rawIg);
+
+    if (!phone && !email && !formattedIg) {
+      setAspiringFormError("At least ONE contact method (Phone Number, Email, or Instagram Username) is required.");
+      return;
+    }
+
+    const parts = [];
+    if (phone) parts.push(phone);
+    if (email) parts.push(email);
+    if (formattedIg) parts.push(formattedIg);
+    const summaryContact = parts.join(" | ");
+
+    const todayStr = new Date().toISOString().split("T")[0];
+
+    const newEntry: AspiringClient = {
+      id: `ASP-${Math.floor(1000 + Math.random() * 9000)}`,
+      name: newAspiringData.name.trim(),
+      phoneNumber: phone,
+      email: email,
+      instagramUsername: formattedIg,
+      preferredContactMethod: newAspiringData.preferredContactMethod || "Instagram",
+      contactInfo: summaryContact,
+      sourceOfInquiry: newAspiringData.sourceOfInquiry || "Instagram",
+      serviceInterestedIn: newAspiringData.serviceInterestedIn || "Custom T-Shirts & Apparel",
+      dateContacted: todayStr,
+      notes: newAspiringData.notes.trim(),
+      assignedUser: "Master Administrator",
+      followUpDate: newAspiringData.followUpDate || todayStr,
+      status: "New Inquiry"
+    };
+
+    if (setAspiringClients) {
+      setAspiringClients(prev => [newEntry, ...prev]);
+    }
+
+    setShowAddAspiringModal(false);
+    setNewAspiringData({
+      name: "",
+      phoneNumber: "",
+      email: "",
+      instagramUsername: "",
+      preferredContactMethod: "Instagram",
+      serviceInterestedIn: "Custom T-Shirts & Apparel",
+      sourceOfInquiry: "Instagram",
+      notes: "",
+      followUpDate: todayStr
+    });
+  };
+
+  const [activeWidgetId, setActiveWidgetId] = useState<string>(() => {
+    const storedId = localStorage.getItem("dashboard_carousel_active_id_v2.1");
+    if (storedId && DEFAULT_CAROUSEL_ORDER.includes(storedId)) return storedId;
+    const storedIdx = localStorage.getItem("dashboard_carousel_index_v2.1");
+    if (storedIdx !== null) {
+      const idx = parseInt(storedIdx, 10);
+      if (!isNaN(idx) && idx >= 0 && idx < DEFAULT_CAROUSEL_ORDER.length) {
+        return DEFAULT_CAROUSEL_ORDER[idx] || "tshirt_calc";
+      }
+    }
+    return "tshirt_calc";
+  });
+
+  const [showWidgetSelectorMenu, setShowWidgetSelectorMenu] = useState<boolean>(false);
+
   React.useEffect(() => {
-    localStorage.setItem("dashboard_carousel_index", currentCarouselIndex.toString());
-  }, [currentCarouselIndex]);
+    localStorage.setItem("dashboard_carousel_order_v2.1", JSON.stringify(carouselOrder));
+  }, [carouselOrder]);
+
+  React.useEffect(() => {
+    localStorage.setItem("dashboard_carousel_active_id_v2.1", activeWidgetId);
+    const idx = carouselOrder.indexOf(activeWidgetId);
+    if (idx !== -1) {
+      localStorage.setItem("dashboard_carousel_index_v2.1", idx.toString());
+    }
+  }, [activeWidgetId, carouselOrder]);
+
+  // Backward compatibility alias for any component referencing currentCarouselIndex
+  const currentCarouselIndex = useMemo(() => {
+    const idx = carouselOrder.indexOf(activeWidgetId);
+    return idx >= 0 ? idx : 0;
+  }, [carouselOrder, activeWidgetId]);
+
+  const setCurrentCarouselIndex = (indexOrFn: number | ((prev: number) => number)) => {
+    let newIndex = 0;
+    if (typeof indexOrFn === "function") {
+      newIndex = indexOrFn(currentCarouselIndex);
+    } else {
+      newIndex = indexOrFn;
+    }
+    const safeIdx = (newIndex + carouselOrder.length) % carouselOrder.length;
+    if (carouselOrder[safeIdx]) {
+      setActiveWidgetId(carouselOrder[safeIdx]);
+    }
+  };
 
   // Luxe Inventory Alerts
   const inventoryAlerts = useMemo(() => {
@@ -445,21 +775,19 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
       // D. Follow-up Reminders / Pending Tasks
       client.reminders.forEach(reminder => {
         if (!reminder.completed) {
-          const daysDiff = -getDaysSince(reminder.date); // Negative if overdue, positive if upcoming
-          
-          // If the date has passed (daysDiff < 0), it should never be an urgent task regardless of the year
-          if (daysDiff < 0) return;
+          const daysSince = getDaysSince(reminder.date);
+          const daysDiff = -daysSince; // Negative if overdue, 0 if today, positive if upcoming
 
-          if (daysDiff <= 15) { // Due within next 15 days, or overdue
-            // Priority Rules:
-            // 1. Gold client + task within 30 days/overdue -> Priority 1
-            // 4. Standard client follow-up -> Priority 4
-            const priority = isGold ? 1 : 4;
+          // Include overdue tasks (daysSince > 0) and upcoming tasks due within 30 days (daysDiff >= 0 && daysDiff <= 30)
+          if (daysSince > 0 || (daysDiff >= 0 && daysDiff <= 30)) {
+            const isOverdue = daysSince > 0;
+            const isDueToday = daysSince === 0;
+            const priority = (isOverdue || isDueToday || isGold) ? 1 : 4;
 
             let reason = "";
-            if (daysDiff < 0) {
-              reason = `Overdue task: "${reminder.task}" was due ${Math.abs(daysDiff)} day${Math.abs(daysDiff) > 1 ? 's' : ''} ago!`;
-            } else if (daysDiff === 0) {
+            if (isOverdue) {
+              reason = `Overdue task: "${reminder.task}" was due ${daysSince} day${daysSince > 1 ? 's' : ''} ago! (${reminder.date})`;
+            } else if (isDueToday) {
               reason = `Task due TODAY: "${reminder.task}"`;
             } else {
               reason = `Task: "${reminder.task}" is due in ${daysDiff} day${daysDiff > 1 ? 's' : ''}.`;
@@ -550,11 +878,12 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
             homeBrand: "CEO Printing Services",
             marketingPermission: "Yes",
             deactivated: false,
-            preferredCommunication: "WhatsApp",
+            preferredCommunication: (asp.preferredContactMethod || (asp.sourceOfInquiry === "Instagram" ? "Instagram" : "WhatsApp")) as any,
             lastContactedDate: asp.dateContacted,
             contact: {
-              phoneNumber: asp.contactInfo.includes("@") ? "" : asp.contactInfo,
-              email: asp.contactInfo.includes("@") ? asp.contactInfo : "",
+              phoneNumber: asp.phoneNumber || (asp.contactInfo && !asp.contactInfo.includes("@") ? asp.contactInfo : ""),
+              email: asp.email || (asp.contactInfo && asp.contactInfo.includes("@") ? asp.contactInfo : ""),
+              instagramUsername: asp.instagramUsername || "",
               city: "Kingston",
               parish: "St. Andrew",
               country: "Jamaica",
@@ -629,20 +958,89 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
       });
     }
 
-    // Main focus profiles sort order:
-    // 1. Highest Priority level (Priority 1 first, then 2, 3, 4)
-    // 2. Gold/VIP clients rank higher within same priority levels
-    // 3. Alphabetical by last name
+    // Calculate internal urgency rank for Section 5 Dashboard Priority Order
+    // Lower rank = higher urgency (appears at top of "Clients Needing Attention Today")
+    // 🔴 Highest Priority (Top, Rank < 100): Overdue follow-ups, Due Today, Client Events Today, Aspiring Follow-ups Today
+    // 🟠 Medium Priority (Rank 100-299): Approaching soon (1-7 days, 8-14 days)
+    // 🟡 Lower Priority (Bottom, Rank 300+): Future reminders, Account Inactivity / Dormant accounts
+    const getProfileUrgencyRank = (profile: FocusProfile): number => {
+      const primaryTrigger = profile.triggers[0];
+      if (!primaryTrigger) return 999;
+
+      let daysDiff = primaryTrigger.daysRemaining;
+      if (profile.isAspiring && profile.aspiringClient?.followUpDate) {
+        const daysSince = getDaysSince(profile.aspiringClient.followUpDate);
+        daysDiff = -daysSince; // negative if overdue, 0 if today, positive if upcoming
+      }
+
+      if (daysDiff === undefined) {
+        return 400; // Account Inactivity / Long-term relationship touchpoints
+      }
+
+      // 🔴 1. OVERDUE FOLLOW-UPS / TASKS (daysDiff < 0)
+      if (daysDiff < 0) {
+        const overdueDays = Math.abs(daysDiff);
+        return Math.max(1, 20 - overdueDays); // Most overdue comes first (Rank 1 to 19)
+      }
+
+      // 🔴 2. DUE TODAY / EVENT HAPPENING TODAY (daysDiff === 0)
+      if (daysDiff === 0) {
+        return 30; // Rank 30
+      }
+
+      // 🟠 3. APPROACHING SOON (1 to 7 days)
+      if (daysDiff >= 1 && daysDiff <= 7) {
+        return 100 + daysDiff; // Rank 101 to 107
+      }
+
+      // 🟠 4. APPROACHING MEDIUM (8 to 14 days)
+      if (daysDiff >= 8 && daysDiff <= 14) {
+        return 200 + daysDiff; // Rank 208 to 214
+      }
+
+      // 🟡 5. FUTURE REMINDERS (15+ days)
+      return 300 + daysDiff;
+    };
+
+    // Executive Attention System Priority Sorting:
     return profiles.sort((a, b) => {
+      const rankA = getProfileUrgencyRank(a);
+      const rankB = getProfileUrgencyRank(b);
+
+      if (rankA !== rankB) {
+        return rankA - rankB;
+      }
+
+      // Within same urgency tier:
+      // 1. Priority level 1 first
       if (a.highestPriority !== b.highestPriority) {
         return a.highestPriority - b.highestPriority;
       }
+
+      // 2. VIP / Gold / Platinum tier clients
       const aIsGold = a.client.tier === "Gold" || a.client.tier === "Platinum" ? 1 : 0;
       const bIsGold = b.client.tier === "Gold" || b.client.tier === "Platinum" ? 1 : 0;
-      if (aIsGold !== bIsGold) return bIsGold - aIsGold; // Gold first
+      if (aIsGold !== bIsGold) return bIsGold - aIsGold;
+
+      // 3. Alphabetical by name
       return `${a.client.firstName} ${a.client.lastName}`.localeCompare(`${b.client.firstName} ${b.client.lastName}`);
     });
   }, [clients, aspiringClients]);
+
+  // Count helpers for mutually exclusive categories
+  const milestonesCount = useMemo(() => {
+    return focusProfiles.filter(p => 
+      !p.isAspiring && 
+      p.triggers.some(t => ["birthday", "anniversary", "child_birthday", "order_anniversary", "no_contact", "no_order", "custom_milestone"].includes(t.type))
+    ).length;
+  }, [focusProfiles]);
+
+  const operationsCount = useMemo(() => {
+    return focusProfiles.filter(p => 
+      p.isAspiring || 
+      p.triggers.some(t => t.type === "reminder")
+    ).length;
+  }, [focusProfiles]);
 
   // 5. FILTER focus profiles by state selections & search query
   const filteredFocusProfiles = useMemo(() => {
@@ -661,10 +1059,10 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
         return profile.highestPriority === 1;
       }
       if (focusFilter === "milestones") {
-        return profile.triggers.some(t => ["birthday", "anniversary", "child_birthday", "order_anniversary"].includes(t.type));
+        return !profile.isAspiring && profile.triggers.some(t => ["birthday", "anniversary", "child_birthday", "order_anniversary", "no_contact", "no_order", "custom_milestone"].includes(t.type));
       }
-      if (focusFilter === "tasks") {
-        return profile.triggers.some(t => t.type === "reminder");
+      if (focusFilter === "operations") {
+        return profile.isAspiring || profile.triggers.some(t => t.type === "reminder");
       }
       return true;
     });
@@ -1096,26 +1494,28 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
               <p className="text-xs text-slate-300 mt-0.5">Identified automatically from personal events, purchase history, and touchpoint timelines.</p>
             </div>
             
-            {/* Search Input */}
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search clients..."
-                className="w-full bg-white border border-slate-200 hover:border-slate-300 focus:border-slate-800 rounded-xl py-2 pl-9 pr-4 text-xs font-medium focus:outline-none transition-colors"
-              />
+            <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+              {/* Search Input */}
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search clients..."
+                  className="w-full bg-white border border-slate-200 hover:border-slate-300 focus:border-slate-800 rounded-xl py-2 pl-9 pr-4 text-xs font-medium focus:outline-none transition-colors"
+                />
+              </div>
             </div>
           </div>
 
-          {/* Filter Bar Chips */}
-          <div className="flex flex-wrap gap-2 pb-1 border-b border-slate-100">
+          {/* Filter Bar Chips - Compact Single Row Command Bar */}
+          <div className="flex flex-wrap md:flex-nowrap items-center gap-1 sm:gap-1.5 pb-2 border-b border-slate-100/60 text-[10px] sm:text-[11px] md:text-xs">
             <button
               onClick={() => setFocusFilter("all")}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
+              className={`px-2 py-1 sm:px-2.5 sm:py-1 rounded-full font-bold transition-all border whitespace-nowrap cursor-pointer ${
                 focusFilter === "all" 
-                  ? "bg-slate-900 text-white border-transparent" 
+                  ? "bg-slate-900 text-white border-transparent shadow-xs" 
                   : "bg-white text-slate-500 border-slate-200/60 hover:border-slate-300"
               }`}
             >
@@ -1123,43 +1523,43 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
             </button>
             <button
               onClick={() => setFocusFilter("urgent")}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border flex items-center gap-1.5 ${
+              className={`px-2 py-1 sm:px-2.5 sm:py-1 rounded-full font-bold transition-all border flex items-center gap-1 whitespace-nowrap cursor-pointer ${
                 focusFilter === "urgent" 
                   ? "bg-red-600 text-white border-transparent shadow-[0_2px_8px_rgba(220,38,38,0.25)]" 
                   : "bg-white text-slate-500 border-slate-200/60 hover:border-slate-300 hover:text-red-600"
               }`}
             >
-              <AlertCircle className={`w-3.5 h-3.5 ${focusFilter === "urgent" ? "text-white" : "text-red-500 animate-pulse"}`} /> Urgent Only ({focusProfiles.filter(p => p.highestPriority === 1).length})
+              <AlertCircle className={`w-3 h-3 ${focusFilter === "urgent" ? "text-white" : "text-red-500 animate-pulse"}`} /> Urgent Only ({focusProfiles.filter(p => p.highestPriority === 1).length})
             </button>
             <button
               onClick={() => setFocusFilter("milestones")}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
+              className={`px-2 py-1 sm:px-2.5 sm:py-1 rounded-full font-bold transition-all border whitespace-nowrap cursor-pointer ${
                 focusFilter === "milestones" 
-                  ? "bg-slate-900 text-white border-transparent" 
+                  ? "bg-slate-900 text-white border-transparent shadow-xs" 
                   : "bg-white text-slate-500 border-slate-200/60 hover:border-slate-300"
               }`}
             >
-              Milestones ({focusProfiles.filter(p => p.triggers.some(t => ["birthday", "anniversary", "child_birthday", "order_anniversary"].includes(t.type))).length})
+              Client Milestones ({milestonesCount})
             </button>
             <button
-              onClick={() => setFocusFilter("tasks")}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
-                focusFilter === "tasks" 
-                  ? "bg-slate-900 text-white border-transparent" 
+              onClick={() => setFocusFilter("operations")}
+              className={`px-2 py-1 sm:px-2.5 sm:py-1 rounded-full font-bold transition-all border whitespace-nowrap cursor-pointer ${
+                focusFilter === "operations" 
+                  ? "bg-slate-900 text-white border-transparent shadow-xs" 
                   : "bg-white text-slate-500 border-slate-200/60 hover:border-slate-300"
               }`}
             >
-              Tasks due ({focusProfiles.filter(p => p.triggers.some(t => t.type === "reminder")).length})
+              Operations ({operationsCount})
             </button>
             <button
               onClick={() => setFocusFilter("inventory")}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all border flex items-center gap-1.5 ${
+              className={`px-2 py-1 sm:px-2.5 sm:py-1 rounded-full font-bold transition-all border flex items-center gap-1 whitespace-nowrap cursor-pointer ${
                 focusFilter === "inventory" 
                   ? "bg-amber-600 text-white border-transparent shadow-[0_2px_8px_rgba(217,119,6,0.25)]" 
                   : "bg-white text-slate-500 border-slate-200/60 hover:border-slate-300 hover:text-amber-600"
               }`}
             >
-              <Package className={`w-3.5 h-3.5 ${focusFilter === "inventory" ? "text-white" : "text-amber-500"}`} /> Inventory Alerts ({inventoryTasks.length})
+              <Package className={`w-3 h-3 ${focusFilter === "inventory" ? "text-white" : "text-amber-500"}`} /> Inventory Alerts ({inventoryTasks.length})
             </button>
           </div>
 
@@ -1388,10 +1788,12 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                         </div>
                         <div className="text-left min-w-0">
                           <span className="text-slate-400 block font-bold uppercase text-[6.5px] sm:text-[7px] tracking-tight truncate">
-                            {profile.isAspiring ? "Assigned Staff" : "Avg Order Value"}
+                            {profile.isAspiring ? "Preferred Contact" : "Avg Order Value"}
                           </span>
                           <span className="text-indigo-600 font-extrabold text-[9px] sm:text-[10px] xl:text-[11px] block mt-0.5 truncate leading-tight font-mono">
-                            {profile.isAspiring ? (profile.aspiringClient?.assignedUser || "Unassigned") : formatCurrency(getClientHistoryAOV(client))}
+                            {profile.isAspiring ? (
+                              `${profile.aspiringClient?.preferredContactMethod || (profile.aspiringClient?.sourceOfInquiry === 'Instagram' ? 'Instagram' : 'Phone')}${profile.aspiringClient?.instagramUsername ? ` • ${profile.aspiringClient.instagramUsername}` : ''}`
+                            ) : formatCurrency(getClientHistoryAOV(client))}
                           </span>
                         </div>
                         <div className="text-left min-w-0">
@@ -1512,7 +1914,22 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                               </span>
                               <p className="text-slate-500 font-semibold leading-relaxed">
                                 {profile.isAspiring && profile.aspiringClient
-                                  ? (profile.aspiringClient.contactInfo || "No phone/email provided.")
+                                  ? (
+                                    <span className="flex flex-col gap-0.5">
+                                      {profile.aspiringClient.instagramUsername && (
+                                        <span className="text-pink-700 font-extrabold font-mono">{profile.aspiringClient.instagramUsername}</span>
+                                      )}
+                                      {profile.aspiringClient.phoneNumber && (
+                                        <span>Phone: {profile.aspiringClient.phoneNumber}</span>
+                                      )}
+                                      {profile.aspiringClient.email && (
+                                        <span>Email: {profile.aspiringClient.email}</span>
+                                      )}
+                                      {!profile.aspiringClient.instagramUsername && !profile.aspiringClient.phoneNumber && !profile.aspiringClient.email && (
+                                        <span>{profile.aspiringClient.contactInfo || "No contact info provided."}</span>
+                                      )}
+                                    </span>
+                                  )
                                   : (client.history?.productsPurchased ? client.history.productsPurchased.slice(0, 3).join(", ") : "No recorded history.")}
                               </p>
                             </div>
@@ -1685,11 +2102,60 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
         <div className="lg:col-span-4 space-y-8 text-left">
           
           {(() => {
-            const carouselModules = [
-              {
+            const carouselModulesMap: Record<string, { id: string; title: string; icon: React.ReactNode; render: () => React.ReactNode }> = {
+              operations_board: {
+                id: "operations_board",
+                title: "Operations Board",
+                icon: <ClipboardList className="w-4 h-4 text-emerald-400" />,
+                render: () => (
+                  <div 
+                    onClick={() => onNavigateToTab("operations")}
+                    className="bg-slate-900 text-white rounded-3xl p-6 shadow-md border border-slate-800 space-y-4 hover:border-slate-700 transition-all cursor-pointer group animate-fade-in"
+                    id="dashboard-operations-board-carousel-widget"
+                  >
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="p-2 bg-slate-800 text-emerald-400 rounded-xl shadow-inner">
+                          <ClipboardList className="w-4 h-4" />
+                        </span>
+                        <div>
+                          <h3 className="text-sm font-extrabold tracking-tight">Operations Board</h3>
+                          <p className="text-[10px] text-slate-400">Production Workflow Manager</p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold text-emerald-400 group-hover:translate-x-1 transition-transform flex items-center gap-1">
+                        Open Board <ChevronRight className="w-4 h-4" />
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700/50">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Active Orders</span>
+                        <span className="text-lg sm:text-xl font-black text-white mt-1 block">{opsMetrics.activeOrders} Active Orders</span>
+                      </div>
+
+                      <div className="bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700/50">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400 block">Due Today</span>
+                        <span className="text-lg sm:text-xl font-black text-amber-300 mt-1 block">{opsMetrics.dueToday} Due Today</span>
+                      </div>
+
+                      <div className="bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700/50">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400 block">Overdue</span>
+                        <span className="text-lg sm:text-xl font-black text-rose-300 mt-1 block">{opsMetrics.overdue} Overdue</span>
+                      </div>
+
+                      <div className="bg-slate-800/80 p-3.5 rounded-2xl border border-slate-700/50">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 block">Ready for Pickup</span>
+                        <span className="text-lg sm:text-xl font-black text-emerald-300 mt-1 block">{opsMetrics.readyPickup} Ready for Pickup</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              },
+              inventory: {
                 id: "inventory",
                 title: "Librarium Luxe Inventory",
-                icon: <Package className="w-4 h-4" />,
+                icon: <Package className="w-4 h-4 text-amber-400" />,
                 render: () => (
                   <div className="bg-white border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-4 text-left animate-fade-in" id="dashboard-luxe-quick-glance-carousel">
                     <div className="flex items-center justify-between border-b pb-3 border-slate-100">
@@ -1762,7 +2228,19 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                   </div>
                 )
               },
-              {
+              book_calc: {
+                id: "book_calc",
+                title: "Book Cost Calculator",
+                icon: <BookOpen className="w-4 h-4 text-emerald-400" />,
+                render: () => <BookCostCalculator settings={settings} inventory={inventory} />
+              },
+              location_calc: {
+                id: "location_calc",
+                title: "Location Cost Calculator",
+                icon: <MapPin className="w-4 h-4 text-sky-400" />,
+                render: () => <LocationCostCalculator settings={settings} />
+              },
+              agenda: {
                 id: "agenda",
                 title: "Interactive Agenda",
                 icon: <Calendar className="w-4 h-4 text-emerald-400" />,
@@ -1773,62 +2251,478 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                     onOpenTask={onOpenTask}
                   />
                 )
-              }
-            ];
+              },
+              tshirt_calc: {
+                id: "tshirt_calc",
+                title: "T-Shirt Studio Quote",
+                icon: <Shirt className="w-4 h-4 text-rose-400" />,
+                render: () => <TShirtStudioQuoteCalculator settings={settings} />
+              },
+              favorite_quotes: {
+                id: "favorite_quotes",
+                title: "Favorite Quotes",
+                icon: <Star className="w-4 h-4 text-amber-400 fill-amber-400" />,
+                render: () => (
+                  <FavoriteQuotesWidget 
+                    onNavigateToTab={onNavigateToTab}
+                  />
+                )
+              },
+              promotions: {
+                id: "promotions",
+                title: "Client Tier Promotions",
+                icon: <Crown className="w-4 h-4 text-amber-400" />,
+                render: () => (
+                  <div className="bg-white border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-4 text-left animate-fade-in" id="dashboard-promotions-carousel">
+                    <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+                      <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+                        <Crown className="w-4 h-4 text-amber-500" />
+                        Client Tier Promotions
+                      </span>
+                      <span className="text-[9px] font-extrabold uppercase tracking-wider bg-amber-50 text-amber-900 border border-amber-200 px-2 py-0.5 rounded">
+                        {dashboardPromotions.length} Eligible
+                      </span>
+                    </div>
 
-            const currentIdx = currentCarouselIndex >= carouselModules.length ? 0 : currentCarouselIndex;
+                    {dashboardPromotions.length === 0 ? (
+                      <div className="text-center py-6 text-slate-400 text-xs italic">
+                        No client tier promotions pending review today. All client tiers are up to date!
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-[200px] overflow-y-auto pr-1">
+                        {dashboardPromotions.slice(0, 5).map(promo => (
+                          <div key={promo.client.id} className="p-3 bg-gradient-to-br from-slate-50 to-amber-50/30 rounded-2xl border border-slate-200/70 flex items-center justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-extrabold text-xs text-slate-900 truncate">
+                                  {promo.client.firstName} {promo.client.lastName}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-amber-400 text-amber-950">
+                                  Upgrade to {(promo as any).eligibleTier || (promo as any).targetTier}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 mt-0.5 font-medium line-clamp-1">
+                                {promo.reason}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const targetTier = (promo as any).eligibleTier || (promo as any).targetTier;
+                                const updated = (approveClientPromotion as any)(promo.client, targetTier, tierRegister as any);
+                                if (Array.isArray(updated)) {
+                                  setTierRegister(updated);
+                                } else if (updated && (updated as any).updatedRegister) {
+                                  setTierRegister((updated as any).updatedRegister);
+                                }
+                              }}
+                              className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-amber-300 font-extrabold text-[10px] rounded-xl transition-all shrink-0 cursor-pointer"
+                            >
+                              Approve {(promo as any).eligibleTier || (promo as any).targetTier}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => onNavigateToTab("clients")}
+                      className="w-full text-center bg-slate-100 hover:bg-slate-200 text-slate-800 font-extrabold text-xs py-2 rounded-xl transition-all block cursor-pointer"
+                    >
+                      View All Clients & Tier Register
+                    </button>
+                  </div>
+                )
+              },
+              aspiring: {
+                id: "aspiring",
+                title: "Aspiring Client Management",
+                icon: <Sparkles className="w-4 h-4 text-pink-400" />,
+                render: () => {
+                  const simYear = CURRENT_SIM_DATE.getFullYear();
+                  const simMonth = String(CURRENT_SIM_DATE.getMonth() + 1).padStart(2, "0");
+                  const simDay = String(CURRENT_SIM_DATE.getDate()).padStart(2, "0");
+                  const todayStr = `${simYear}-${simMonth}-${simDay}`;
+
+                  const activeLeads = aspiringClients?.filter(c => c.status !== "Converted to Client" && c.status !== "Archived" && c.status !== "Not Interested") || [];
+                  const followUpsDue = activeLeads.filter(c => c.followUpDate && c.followUpDate <= todayStr).length;
+                  const awaitingResponse = activeLeads.filter(c => c.status === "Awaiting Response" || c.status === "New Inquiry" || c.status === "Quote Sent").length;
+
+                  return (
+                    <div className="bg-white border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-4 text-left animate-fade-in" id="dashboard-aspiring-carousel">
+                      <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+                        <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
+                          <Sparkles className="w-4 h-4 text-pink-500" />
+                          Aspiring Client Management
+                        </span>
+                        <span className="text-[9px] font-extrabold uppercase tracking-wider bg-pink-50 text-pink-900 border border-pink-200 px-2 py-0.5 rounded">
+                          {activeLeads.length} Active Leads
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-2xl border border-slate-100 text-center">
+                        <div>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">Active Leads</span>
+                          <span className="text-sm font-extrabold text-slate-900 font-mono block mt-0.5">{activeLeads.length}</span>
+                        </div>
+                        <div className="border-x border-slate-200">
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">Follow Ups Due</span>
+                          <span className="text-sm font-extrabold text-amber-600 font-mono block mt-0.5">{followUpsDue}</span>
+                        </div>
+                        <div>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">Awaiting Response</span>
+                          <span className="text-sm font-extrabold text-purple-600 font-mono block mt-0.5">{awaitingResponse}</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 max-h-[150px] overflow-y-auto pr-1">
+                        {activeLeads.length === 0 ? (
+                          <p className="text-xs text-slate-400 italic py-2">No active aspiring prospects pending.</p>
+                        ) : (
+                          activeLeads.slice(0, 3).map(c => (
+                            <div key={c.id} className="flex justify-between items-center py-1.5 border-b border-slate-50 last:border-0 text-xs">
+                              <div className="min-w-0 flex-1 pr-2">
+                                <span className="font-bold text-slate-900 truncate block">🌱 {c.name}</span>
+                                <span className="text-[10px] text-slate-500 font-medium block truncate">
+                                  Preferred: {c.preferredContactMethod || "Instagram"} {c.instagramUsername ? `(${c.instagramUsername})` : ''}
+                                </span>
+                              </div>
+                              <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded shrink-0 ${
+                                c.followUpDate === todayStr 
+                                  ? "bg-amber-100 text-amber-900 border border-amber-200" 
+                                  : c.followUpDate && c.followUpDate < todayStr 
+                                    ? "bg-rose-100 text-rose-900 border border-rose-200" 
+                                    : "bg-slate-100 text-slate-700"
+                              }`}>
+                                {c.followUpDate === todayStr ? "Due Today" : (c.followUpDate && c.followUpDate < todayStr ? "Overdue" : c.followUpDate || "Pending")}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onNavigateToAspiringAdd) {
+                              onNavigateToAspiringAdd();
+                            } else {
+                              onNavigateToTab("aspiring");
+                            }
+                          }}
+                          className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs"
+                        >
+                          <span>➕</span>
+                          <span>Add Aspiring Client</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onNavigateToTab("aspiring")}
+                          className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs py-2 rounded-xl transition-all flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <span>Manage Clients</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+              }
+            };
+
+            const orderedModules = carouselOrder
+              .map(id => carouselModulesMap[id])
+              .filter(Boolean);
+
+            const activeIdx = orderedModules.findIndex(m => m.id === activeWidgetId);
+            const currentIdx = activeIdx === -1 ? 0 : activeIdx;
+            const currentModule = orderedModules[currentIdx] || orderedModules[0];
 
             return (
-              <div className="space-y-6 animate-fade-in">
+              <div className="space-y-6 animate-fade-in relative">
                 {/* Minimal Apple-Inspired Carousel Navigation Bar */}
-                <div className="flex items-center justify-center py-1">
+                <div className="relative flex flex-col items-center justify-center py-1">
                   <div className="flex items-center gap-4 bg-slate-900/90 border border-slate-800/85 rounded-full px-4 py-2 shadow-md">
                     {/* Left Navigation Arrow */}
                     <button 
-                      onClick={() => setCurrentCarouselIndex(prev => (prev - 1 + carouselModules.length) % carouselModules.length)}
-                      className="p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
-                      title="Previous Module"
+                      onClick={() => setCurrentCarouselIndex(prev => (prev - 1 + orderedModules.length) % orderedModules.length)}
+                      onDoubleClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setShowWidgetSelectorMenu(prev => !prev);
+                      }}
+                      className="p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center justify-center rounded-full hover:bg-slate-800/60"
+                      title="Previous Module (Double-click to open Widget Selector)"
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
 
                     {/* Dot Indicators */}
                     <div className="flex justify-center items-center gap-2">
-                      {carouselModules.map((mod, idx) => (
-                        <button
-                          key={mod.id}
-                          onClick={() => setCurrentCarouselIndex(idx)}
-                          className={`w-2 h-2 rounded-full transition-all duration-300 cursor-pointer ${
-                            currentIdx === idx ? "bg-indigo-500 scale-110" : "bg-slate-700 hover:bg-slate-600"
-                          }`}
-                          title={mod.title}
-                        />
-                      ))}
+                      {orderedModules.map((mod, idx) => {
+                        const isActive = currentIdx === idx;
+                        return (
+                          <button
+                            key={mod.id}
+                            onClick={() => setActiveWidgetId(mod.id)}
+                            className={`w-2.5 h-2.5 rounded-full transition-all duration-300 cursor-pointer ${
+                              isActive ? "bg-indigo-500 scale-110 shadow-xs shadow-indigo-500/50" : "bg-slate-700 hover:bg-slate-600"
+                            }`}
+                            title={mod.title}
+                          />
+                        );
+                      })}
                     </div>
 
                     {/* Right Navigation Arrow */}
                     <button 
-                      onClick={() => setCurrentCarouselIndex(prev => (prev + 1) % carouselModules.length)}
-                      className="p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
-                      title="Next Module"
+                      onClick={() => setCurrentCarouselIndex(prev => (prev + 1) % orderedModules.length)}
+                      onDoubleClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setShowWidgetSelectorMenu(prev => !prev);
+                      }}
+                      className="p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center justify-center rounded-full hover:bg-slate-800/60"
+                      title="Next Module (Double-click to open Widget Selector)"
                     >
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
+
+                  {/* Compact Double-Click Quick Widget Selector Menu */}
+                  {showWidgetSelectorMenu && (
+                    <>
+                      <div 
+                        className="fixed inset-0 z-30 bg-black/20 backdrop-blur-[1px]" 
+                        onClick={() => setShowWidgetSelectorMenu(false)} 
+                      />
+                      <div className="absolute top-12 z-40 w-72 bg-slate-900/95 backdrop-blur-md border border-slate-700/90 rounded-2xl p-3.5 shadow-2xl space-y-3 text-left animate-in fade-in zoom-in-95 duration-150">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                          <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-300 flex items-center gap-1.5">
+                            <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
+                            Dashboard Widgets
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setShowWidgetSelectorMenu(false)}
+                            className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                          {orderedModules.map((mod, idx) => {
+                            const isActive = mod.id === activeWidgetId;
+                            return (
+                              <div
+                                key={mod.id}
+                                onClick={() => {
+                                  setActiveWidgetId(mod.id);
+                                  setShowWidgetSelectorMenu(false);
+                                }}
+                                className={`group flex items-center justify-between p-2.5 rounded-xl transition-all cursor-pointer border ${
+                                  isActive
+                                    ? "bg-amber-500/20 border-amber-500/50 text-amber-300 font-extrabold shadow-xs"
+                                    : "bg-slate-800/40 hover:bg-slate-800 border-slate-800 hover:border-slate-700 text-slate-300"
+                                }`}
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <span className={`text-xs font-black shrink-0 ${isActive ? "text-amber-400" : "text-slate-500"}`}>
+                                    {isActive ? "●" : "○"}
+                                  </span>
+                                  <span className="shrink-0">{mod.icon}</span>
+                                  <span className="text-xs truncate">{mod.title}</span>
+                                </div>
+
+                                <div 
+                                  className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {idx > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const newOrder = [...carouselOrder];
+                                        const [moved] = newOrder.splice(idx, 1);
+                                        newOrder.splice(idx - 1, 0, moved);
+                                        setCarouselOrder(newOrder);
+                                      }}
+                                      className="p-1 text-slate-400 hover:text-amber-300 bg-slate-800 hover:bg-slate-700 rounded transition-colors"
+                                      title="Move Up"
+                                    >
+                                      <ChevronUp className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                  {idx < orderedModules.length - 1 && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const newOrder = [...carouselOrder];
+                                        const [moved] = newOrder.splice(idx, 1);
+                                        newOrder.splice(idx + 1, 0, moved);
+                                        setCarouselOrder(newOrder);
+                                      }}
+                                      className="p-1 text-slate-400 hover:text-amber-300 bg-slate-800 hover:bg-slate-700 rounded transition-colors"
+                                      title="Move Down"
+                                    >
+                                      <ChevronDown className="w-3 h-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-800/80 text-[10px] text-slate-400 text-center font-medium">
+                          Double-click arrows anytime to toggle menu
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Animated content slot */}
                 <div className="relative min-h-[300px]">
                   <div
-                    key={currentIdx}
+                    key={currentModule?.id || currentIdx}
                     className="w-full animate-fade-in"
                   >
-                    {carouselModules[currentIdx].render()}
+                    {currentModule?.render()}
                   </div>
                 </div>
               </div>
             );
           })()}
+
+          {/* Client Tier Promotions Dashboard Widget */}
+          <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-lg border border-amber-500/30 space-y-4 text-left">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+              <div>
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-amber-400 flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-400" /> Client Intelligence
+                </span>
+                <h3 className="text-base font-black text-white mt-0.5">🏅 Client Tier Promotions</h3>
+              </div>
+              <span className="text-xs font-bold px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full">
+                {dashboardPromotions.length} Ready
+              </span>
+            </div>
+
+            {/* Micro Tier Summary */}
+            <div className="flex items-center justify-between text-[11px] bg-slate-800/60 p-2.5 rounded-2xl border border-slate-800">
+              <span className="text-slate-400 font-medium">{clients.length} Clients Monitored</span>
+              <div className="flex items-center gap-2 font-bold">
+                <span className="text-amber-300">💎 {clients.filter(c => c.tier === "Platinum").length} Plat</span>
+                <span className="text-yellow-300">🥇 {clients.filter(c => c.tier === "Gold").length} Gold</span>
+                <span className="text-slate-300">🛡️ {clients.filter(c => c.tier === "Silver").length} Silv</span>
+              </div>
+            </div>
+
+            {dashboardPromotions.length === 0 ? (
+              <p className="text-xs text-slate-400 italic py-1">
+                All client tiers are protected and aligned with activity levels. No demotions occur.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {dashboardPromotions.slice(0, 3).map((promo) => (
+                  <div 
+                    key={promo.ceoId}
+                    onClick={() => setSelectedDashboardPromotion(promo)}
+                    className="bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 hover:border-amber-500/50 rounded-2xl p-3 flex items-center justify-between gap-2 cursor-pointer transition-all group"
+                  >
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-white truncate">{promo.customerFullName}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">{promo.ceoId}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-300 truncate">
+                        {promo.reason}
+                      </p>
+                    </div>
+
+                    <div className="shrink-0 flex items-center gap-1.5">
+                      <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                        promo.calculatedTier === "Platinum"
+                          ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                          : "bg-yellow-500/20 text-yellow-300 border-yellow-500/40"
+                      }`}>
+                        {promo.calculatedTier === "Platinum" ? "💎 Platinum" : "🥇 Gold"}
+                      </span>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-amber-300 transition-colors" />
+                    </div>
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={() => onNavigateToTab("branding")}
+                  className="w-full py-2 bg-slate-800/50 hover:bg-slate-800 text-amber-300 text-xs font-bold rounded-xl text-center transition-colors cursor-pointer border border-slate-800"
+                >
+                  Manage Client Tier Register →
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Client Watchtower Intelligence Stream */}
+          <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-lg border border-slate-800 space-y-4 text-left">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+              <div>
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-400 flex items-center gap-1.5">
+                  <Activity className="w-4 h-4 text-indigo-400" /> Executive Relationship Watchtower
+                </span>
+                <h3 className="text-base font-black text-white mt-0.5">🔭 Client Watchtower Alerts</h3>
+              </div>
+              <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${
+                watchtowerIntelligence.length > 0
+                  ? "bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse"
+                  : "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+              }`}>
+                {watchtowerIntelligence.length} Action Items
+              </span>
+            </div>
+
+            {watchtowerIntelligence.length === 0 ? (
+              <div className="bg-slate-800/40 border border-slate-800 rounded-2xl p-4 text-center space-y-1">
+                <CheckCircle2 className="w-6 h-6 text-emerald-400 mx-auto" />
+                <p className="text-xs font-bold text-slate-200">Watchtower Clear</p>
+                <p className="text-[11px] text-slate-400">All Platinum, Gold, and Founders Family relationships are active and healthy.</p>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+                {watchtowerIntelligence.map((alert, idx) => (
+                  <div
+                    key={`watchtower-alert-${alert.id}-${idx}`}
+                    onClick={() => onSelectClient(alert.client.id)}
+                    className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                      alert.severity === "urgent"
+                        ? "bg-rose-950/40 border-rose-800/80 hover:bg-rose-900/50 text-rose-100"
+                        : alert.severity === "warning"
+                          ? "bg-amber-950/40 border-amber-800/80 hover:bg-amber-900/50 text-amber-100"
+                          : "bg-indigo-950/40 border-indigo-800/80 hover:bg-indigo-900/50 text-indigo-100"
+                    }`}
+                  >
+                    <div className="space-y-0.5 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-extrabold truncate">{alert.title}</span>
+                      </div>
+                      <p className="text-[10px] opacity-80 truncate font-medium">{alert.subtitle}</p>
+                      <p className="text-[10.5px] opacity-90 line-clamp-1">{alert.reason}</p>
+                    </div>
+
+                    <div className="shrink-0 flex items-center gap-1.5">
+                      <span className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/40 border border-white/10 hover:bg-black/60 transition-colors whitespace-nowrap">
+                        {alert.actionText} →
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Gold Client Watch Box */}
           <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-lg border border-slate-800 space-y-6">
@@ -1993,9 +2887,9 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                 {summaries.today.contact.length === 0 ? (
                   <p className="text-xs text-slate-400 italic">No urgent contacts due today.</p>
                 ) : (
-                  summaries.today.contact.map(p => (
+                  summaries.today.contact.map((p, idx) => (
                     <div 
-                      key={p.client.id}
+                      key={`today-contact-${p.client.id}-${idx}`}
                       onClick={() => onSelectClient(p.client.id)}
                       className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 ${getBrandCardClasses(p.client.homeBrand)}`}
                     >
@@ -2026,9 +2920,9 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                 {summaries.today.events.length === 0 ? (
                   <p className="text-xs text-slate-400 italic">No major personal events today.</p>
                 ) : (
-                  summaries.today.events.map(item => (
+                  summaries.today.events.map((item, idx) => (
                     <div 
-                      key={`${item.client.id}-${item.trigger.reason}`}
+                      key={`today-evt-${item.client.id}-${item.trigger.type || 'trig'}-${idx}`}
                       onClick={() => onSelectClient(item.client.id)}
                       className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 flex items-center justify-between gap-2 ${getBrandCardClasses(item.client.homeBrand)}`}
                     >
@@ -2066,13 +2960,13 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                     <CheckCircle2 className="w-4 h-4 text-emerald-500" /> All daily tasks completed!
                   </p>
                 ) : (
-                  summaries.today.reminders.map(item => {
+                  summaries.today.reminders.map((item, idx) => {
                     const isAspiringTask = (item as any).isAspiringTask;
                     if (isAspiringTask) {
                       const asp: AspiringClient = (item as any).aspiringClient;
                       return (
                         <div 
-                          key={item.reminder.id}
+                          key={`today-asp-${item.reminder.id}-${idx}`}
                           onClick={() => onNavigateToTab("aspiring")}
                           className="p-3 border border-amber-200/80 bg-amber-50/40 hover:bg-amber-50/90 rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 text-left shadow-xs border-l-4 border-l-amber-500"
                         >
@@ -2114,7 +3008,7 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                       const inv = item as any;
                       return (
                         <div 
-                          key={inv.id}
+                          key={`today-inv-${inv.id}-${idx}`}
                           onClick={() => onNavigateToTab("inventory")}
                           className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 text-left ${
                             inv.severity === "urgent"
@@ -2161,7 +3055,7 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                       if (isCorp) {
                         return (
                           <div 
-                            key={item.reminder.id}
+                            key={`today-bus-corp-${item.reminder.id}-${idx}`}
                             className="p-3 border rounded-xl transition-all hover:-translate-y-0.5 space-y-1.5 bg-purple-50/50 border-purple-200/50 text-left"
                           >
                             <div className="flex justify-between items-start gap-2">
@@ -2185,7 +3079,7 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                       } else {
                         return (
                           <div 
-                            key={item.reminder.id}
+                            key={`today-bus-${item.reminder.id}-${idx}`}
                             onClick={() => onSelectClient(item.client.id)}
                             className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 text-left ${getBrandCardClasses(item.client.homeBrand)}`}
                           >
@@ -2221,7 +3115,7 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
 
                     return (
                       <div 
-                        key={item.reminder.id}
+                        key={`today-rem-${item.reminder.id}-${idx}`}
                         onClick={() => onOpenTask ? onOpenTask(item.client.id, item.reminder.id) : onSelectClient(item.client.id)}
                         className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 text-left ${getBrandCardClasses(item.client.homeBrand)}`}
                       >
@@ -2262,9 +3156,9 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                 {summaries.today.activeOrders.length === 0 ? (
                   <p className="text-xs text-slate-400 italic">No recent purchase transactions.</p>
                 ) : (
-                  summaries.today.activeOrders.map(item => (
+                  summaries.today.activeOrders.map((item, idx) => (
                     <div 
-                      key={item.event.id}
+                      key={`today-ord-${item.event.id}-${idx}`}
                       onClick={() => onSelectClient(item.client.id)}
                       className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 ${getBrandCardClasses(item.client.homeBrand)}`}
                     >
@@ -2305,9 +3199,9 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                 {summaries.thisWeek.birthdays.length === 0 ? (
                   <p className="text-xs text-slate-400 italic">No client birthdays this week.</p>
                 ) : (
-                  summaries.thisWeek.birthdays.map(item => (
+                  summaries.thisWeek.birthdays.map((item, idx) => (
                     <div 
-                      key={item.client.id}
+                      key={`week-bday-${item.client.id}-${idx}`}
                       onClick={() => onSelectClient(item.client.id)}
                       className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 flex items-center justify-between gap-2 ${getBrandCardClasses(item.client.homeBrand)}`}
                     >
@@ -2342,9 +3236,9 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                 {summaries.thisWeek.anniversaries.length === 0 ? (
                   <p className="text-xs text-slate-400 italic">No major wedding/personal anniversaries.</p>
                 ) : (
-                  summaries.thisWeek.anniversaries.map(item => (
+                  summaries.thisWeek.anniversaries.map((item, idx) => (
                     <div 
-                      key={item.client.id}
+                      key={`week-anniv-${item.client.id}-${idx}`}
                       onClick={() => onSelectClient(item.client.id)}
                       className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 flex items-center justify-between gap-2 ${getBrandCardClasses(item.client.homeBrand)}`}
                     >
@@ -2379,9 +3273,9 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                 {summaries.thisWeek.vip.length === 0 ? (
                   <p className="text-xs text-slate-400 italic">No Gold or Plat attention triggers this week.</p>
                 ) : (
-                  summaries.thisWeek.vip.map(p => (
+                  summaries.thisWeek.vip.map((p, idx) => (
                     <div 
-                      key={p.client.id}
+                      key={`week-vip-${p.client.id}-${idx}`}
                       onClick={() => onSelectClient(p.client.id)}
                       className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 ${getBrandCardClasses(p.client.homeBrand)}`}
                     >
@@ -2409,9 +3303,9 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                 {summaries.thisWeek.deliveries.length === 0 ? (
                   <p className="text-xs text-slate-400 italic">No packaging or delivery tasks scheduled.</p>
                 ) : (
-                  summaries.thisWeek.deliveries.map(item => (
+                  summaries.thisWeek.deliveries.map((item, idx) => (
                     <div 
-                      key={item.reminder.id}
+                      key={`week-deliv-${item.reminder.id}-${idx}`}
                       onClick={() => onOpenTask ? onOpenTask(item.client.id, item.reminder.id) : onSelectClient(item.client.id)}
                       className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 ${getBrandCardClasses(item.client.homeBrand)}`}
                     >
@@ -2581,6 +3475,125 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
         </div>
 
       </div>
+
+      {/* Promotion Detail View Modal */}
+      {selectedDashboardPromotion && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto text-left">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full p-6 text-white space-y-5 shadow-2xl relative my-auto animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-amber-400 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4" />
+                🏅 Client Promotion Recommendation
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedDashboardPromotion(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="bg-slate-800/60 rounded-2xl p-4 border border-slate-800 space-y-2">
+                <div className="flex justify-between items-center text-xs text-slate-400">
+                  <span>Client:</span>
+                  <span className="font-extrabold text-white text-sm">{selectedDashboardPromotion.customerFullName}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs text-slate-400">
+                  <span>CEO ID:</span>
+                  <span className="font-mono text-slate-300">{selectedDashboardPromotion.ceoId}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs text-slate-400 pt-2 border-t border-slate-700/60">
+                  <span>Current Approved Tier:</span>
+                  <span className="font-bold text-slate-300 px-2.5 py-0.5 bg-slate-700/80 rounded-md">
+                    {selectedDashboardPromotion.currentTier}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-xs text-slate-400">
+                  <span>Calculated Target Tier:</span>
+                  <span className="font-black text-amber-300 px-2.5 py-0.5 bg-amber-500/20 border border-amber-500/40 rounded-md">
+                    {selectedDashboardPromotion.calculatedTier}
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-slate-800/30 rounded-2xl p-4 border border-slate-800 space-y-2 text-xs">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400 block">
+                  Reason & Metrics Summary
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-slate-800 p-2.5 rounded-xl border border-slate-700/50">
+                    <span className="text-[10px] text-slate-400 block">Lifetime Spend</span>
+                    <span className="font-bold text-amber-300">${selectedDashboardPromotion.lifetimeSpend.toLocaleString()} JMD</span>
+                  </div>
+                  <div className="bg-slate-800 p-2.5 rounded-xl border border-slate-700/50">
+                    <span className="text-[10px] text-slate-400 block">Total Orders</span>
+                    <span className="font-bold text-white">{selectedDashboardPromotion.totalOrders}</span>
+                  </div>
+                  <div className="bg-slate-800 p-2.5 rounded-xl border border-slate-700/50">
+                    <span className="text-[10px] text-slate-400 block">Average Order Value</span>
+                    <span className="font-bold text-slate-200">${selectedDashboardPromotion.averageOrderValue.toLocaleString()} JMD</span>
+                  </div>
+                  <div className="bg-slate-800 p-2.5 rounded-xl border border-slate-700/50">
+                    <span className="text-[10px] text-slate-400 block">Client Engagement Score</span>
+                    <span className="font-bold text-emerald-400">{selectedDashboardPromotion.clientScore} / 100</span>
+                  </div>
+                </div>
+                <div className="pt-2">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">Recommendation:</span>
+                  <p className="text-slate-200 mt-0.5 font-medium">{selectedDashboardPromotion.recommendation}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedDashboardPromotion(null);
+                  onNavigateToTab("branding");
+                }}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Open Tier Register
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const result = approveClientPromotion(selectedDashboardPromotion.client, selectedDashboardPromotion.calculatedTier, "Approved via Dashboard Widget", clients);
+                  setTierRegister(result.updatedRegister);
+                  setSelectedDashboardPromotion(null);
+                  alert(`Successfully promoted ${selectedDashboardPromotion.customerFullName} to ${selectedDashboardPromotion.calculatedTier}!`);
+                }}
+                className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black transition-colors cursor-pointer shadow-md"
+              >
+                Upgrade to {selectedDashboardPromotion.calculatedTier}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Quick Add Aspiring Client Modal */}
+      <AddAspiringClientModal
+        isOpen={showAddAspiringModal}
+        onClose={() => setShowAddAspiringModal(false)}
+        onSave={(newClientData) => {
+          let summaryContact = newClientData.contactInfo || "";
+          if (newClientData.phoneNumber || newClientData.email) {
+            summaryContact = [newClientData.phoneNumber, newClientData.email].filter(Boolean).join(" | ");
+          }
+          const newEntry: AspiringClient = {
+            id: `ASP${String(Date.now()).slice(-4)}`,
+            ...newClientData,
+            contactInfo: summaryContact
+          };
+          setAspiringClients(prev => [newEntry, ...prev]);
+          setShowAddAspiringModal(false);
+        }}
+      />
 
     </div>
   );

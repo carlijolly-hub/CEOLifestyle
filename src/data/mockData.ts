@@ -1,4 +1,4 @@
-import { Client, LuxeBookInventoryItem, AspiringClient, BusinessEvent, AppUser, UserRole, UserStatus, BackupRecord, SavedQuotation } from "../types";
+import { Client, LuxeBookInventoryItem, AspiringClient, BusinessEvent, AppUser, UserRole, UserStatus, BackupRecord, SavedQuotation, OperationsOrder } from "../types";
 
 // ============================================================================
 // CEO LIFESTYLE MANAGEMENT - V2.1 HIGH DENSITY STRESS TEST DATASET
@@ -19,6 +19,7 @@ export const INITIAL_CLIENTS: Client[] = [
     drive: "Yes",
     tier: "Platinum",
     homeBrand: "CEO Printing Services",
+    communicationStatus: "Active",
     contact: {
       phoneNumber: "+1 (876) 555-0101",
       email: "sthompson@corpbrand.com",
@@ -70,7 +71,15 @@ export const INITIAL_CLIENTS: Client[] = [
       { id: "r2_ceo1", date: "2026-08-04", task: "Prepare David's Birthday Executive Wine Box (Birthday Aug 5)", completed: false }
     ],
     preferredCommunication: "WhatsApp",
-    lastContactedDate: "2026-08-01"
+    lastContactedDate: "2026-08-01",
+    remembrances: [
+      { id: "rem_ceo1_1", relationship: "Mother", status: "Passed Away", dateAdded: "2026-05-10", notes: "Prefers thoughtful communication around Mother's Day." }
+    ],
+    apparelInfo: {
+      tShirtSize: "M",
+      poloSize: "M",
+      hoodieSize: "S"
+    }
   },
 
   {
@@ -133,7 +142,16 @@ export const INITIAL_CLIENTS: Client[] = [
       { id: "r2_ceo2", date: "2026-08-06", task: "Dispatch Vanessa's Birthday Gift Package (Birthday Aug 7)", completed: false }
     ],
     preferredCommunication: "Phone",
-    lastContactedDate: "2026-08-02"
+    lastContactedDate: "2026-08-02",
+    remembrances: [
+      { id: "rem_ceo2_1", relationship: "Father", status: "Passed Away", dateAdded: "2026-06-12", notes: "Honored on Father's Day." }
+    ],
+    apparelInfo: {
+      tShirtSize: "XL",
+      poloSize: "L",
+      hoodieSize: "XL",
+      jerseySize: "XL"
+    }
   },
 
   {
@@ -1316,6 +1334,10 @@ export const INITIAL_ASPIRING_CLIENTS: AspiringClient[] = [
   {
     id: "ASP001",
     name: "Samantha Wright",
+    phoneNumber: "+1 (876) 555-0192",
+    email: "samantha.w@example.com",
+    instagramUsername: "@samanthaw_luxe",
+    preferredContactMethod: "Instagram",
     contactInfo: "+1 (876) 555-0192 | samantha.w@example.com",
     sourceOfInquiry: "Instagram",
     serviceInterestedIn: "Magic Heart Cube Custom Anniversary Package",
@@ -1328,6 +1350,10 @@ export const INITIAL_ASPIRING_CLIENTS: AspiringClient[] = [
   {
     id: "ASP002",
     name: "Dr. Aris Thorne",
+    phoneNumber: "+1 (876) 555-9201",
+    email: "dr.thorne@medtech.jm",
+    instagramUsername: "@draristhorne",
+    preferredContactMethod: "Email",
     contactInfo: "+1 (876) 555-9201 | dr.thorne@medtech.jm",
     sourceOfInquiry: "Website",
     serviceInterestedIn: "Corporate Branding & Large Format Medical Banners",
@@ -1340,6 +1366,10 @@ export const INITIAL_ASPIRING_CLIENTS: AspiringClient[] = [
   {
     id: "ASP003",
     name: "Kevin Jackson",
+    phoneNumber: "+1 (876) 555-0891",
+    email: "k.jackson@techjm.com",
+    instagramUsername: "@kjackson_tech",
+    preferredContactMethod: "WhatsApp",
     contactInfo: "+1 (876) 555-0891 | k.jackson@techjm.com",
     sourceOfInquiry: "Walk-in",
     serviceInterestedIn: "50 Custom DTF Printed Corporate Polos",
@@ -1354,6 +1384,10 @@ export const INITIAL_ASPIRING_CLIENTS: AspiringClient[] = [
   {
     id: "ASP004",
     name: "Natalie Myers",
+    phoneNumber: "+1 (876) 555-0482",
+    email: "natalie@myersdecor.com",
+    instagramUsername: "@natalie_myers_decor",
+    preferredContactMethod: "Instagram",
     contactInfo: "+1 (876) 555-0482 | natalie@myersdecor.com",
     sourceOfInquiry: "Instagram",
     serviceInterestedIn: "Librarium Luxe Rare Leather Collector Set (10 Books)",
@@ -1366,6 +1400,10 @@ export const INITIAL_ASPIRING_CLIENTS: AspiringClient[] = [
   {
     id: "ASP005",
     name: "Garrett Cole",
+    phoneNumber: "+1 (876) 555-0371",
+    email: "gcole@islandtours.jm",
+    instagramUsername: "@garrett_tours_jm",
+    preferredContactMethod: "Phone Call",
     contactInfo: "+1 (876) 555-0371 | gcole@islandtours.jm",
     sourceOfInquiry: "Phone Call",
     serviceInterestedIn: "Tour Vehicle Stickers & Floral Welcome Packages",
@@ -1380,6 +1418,10 @@ export const INITIAL_ASPIRING_CLIENTS: AspiringClient[] = [
   {
     id: "ASP006",
     name: "Tanya Redwood",
+    phoneNumber: "+1 (876) 555-0219",
+    email: "tanya@redwoodevents.com",
+    instagramUsername: "@tanyaredwood_events",
+    preferredContactMethod: "WhatsApp",
     contactInfo: "+1 (876) 555-0219 | tanya@redwoodevents.com",
     sourceOfInquiry: "Referral",
     serviceInterestedIn: "80 Corporate Branding Welcome Gift Boxes",
@@ -1392,6 +1434,10 @@ export const INITIAL_ASPIRING_CLIENTS: AspiringClient[] = [
   {
     id: "ASP007",
     name: "Oshane Palmer",
+    phoneNumber: "+1 (876) 555-0633",
+    email: "oshane@fitnesshub.jm",
+    instagramUsername: "@oshanefit",
+    preferredContactMethod: "Instagram",
     contactInfo: "+1 (876) 555-0633 | oshane@fitnesshub.jm",
     sourceOfInquiry: "Instagram",
     serviceInterestedIn: "100 Custom Gym Dri-Fit T-Shirts",
@@ -1404,6 +1450,10 @@ export const INITIAL_ASPIRING_CLIENTS: AspiringClient[] = [
   {
     id: "ASP008",
     name: "Fiona Bennett",
+    phoneNumber: "+1 (876) 555-0144",
+    email: "f.bennett@lawfirm.jm",
+    instagramUsername: "@fionabennett_law",
+    preferredContactMethod: "Email",
     contactInfo: "+1 (876) 555-0144 | f.bennett@lawfirm.jm",
     sourceOfInquiry: "Website",
     serviceInterestedIn: "Gold Foil Business Cards & T-Shirt Package",
@@ -1418,6 +1468,10 @@ export const INITIAL_ASPIRING_CLIENTS: AspiringClient[] = [
   {
     id: "ASP009",
     name: "Dominic Vance",
+    phoneNumber: "+1 (876) 555-0988",
+    email: "dvance@vancemotors.com",
+    instagramUsername: "@vancemotors_jm",
+    preferredContactMethod: "Phone Call",
     contactInfo: "+1 (876) 555-0988 | dvance@vancemotors.com",
     sourceOfInquiry: "Phone Call",
     serviceInterestedIn: "Magic Heart Cubes & Dealership Vehicle Stickers",
@@ -1430,6 +1484,10 @@ export const INITIAL_ASPIRING_CLIENTS: AspiringClient[] = [
   {
     id: "ASP010",
     name: "Janice Lawson",
+    phoneNumber: "+1 (876) 555-0722",
+    email: "janicelawson@email.com",
+    instagramUsername: "@janicelawson_home",
+    preferredContactMethod: "WhatsApp",
     contactInfo: "+1 (876) 555-0722 | janicelawson@email.com",
     sourceOfInquiry: "Walk-in",
     serviceInterestedIn: "Librarium Luxe Bespoke Hardcover Bundle (15 Books)",
@@ -1839,7 +1897,10 @@ export const INITIAL_QUOTATIONS: SavedQuotation[] = [
     date: "2026-08-01",
     totalCost: 75000,
     quotedPrice: 125000,
-    details: "100 units on 1/4 inch clear acrylic sheet layout. Includes flame polished edges & stainless standoffs."
+    details: "100 units on 1/4 inch clear acrylic sheet layout. Includes flame polished edges & stainless standoffs.",
+    isFavorite: true,
+    favoritedAt: "2026-08-01T10:00:00.000Z",
+    clientType: "Platinum"
   },
   {
     id: "QUOTE-LAY-002",
@@ -1871,7 +1932,10 @@ export const INITIAL_QUOTATIONS: SavedQuotation[] = [
     date: "2026-08-01",
     totalCost: 88000,
     quotedPrice: 145000,
-    details: "Navy blue high-thread count cotton polos with gold metallic left-chest logo embroidery."
+    details: "Navy blue high-thread count cotton polos with gold metallic left-chest logo embroidery.",
+    isFavorite: true,
+    favoritedAt: "2026-08-01T11:30:00.000Z",
+    clientType: "Gold"
   },
   {
     id: "QUOTE-APP-002",
@@ -1881,7 +1945,10 @@ export const INITIAL_QUOTATIONS: SavedQuotation[] = [
     date: "2026-08-02",
     totalCost: 70000,
     quotedPrice: 120000,
-    details: "High-visibility neon yellow vests with double-sided reflective back & front logo screen print."
+    details: "High-visibility neon yellow vests with double-sided reflective back & front logo screen print.",
+    isFavorite: true,
+    favoritedAt: "2026-08-02T09:15:00.000Z",
+    clientType: "Silver"
   },
   {
     id: "QUOTE-APP-003",
@@ -1988,6 +2055,196 @@ export const INITIAL_QUOTATIONS: SavedQuotation[] = [
     totalCost: 52000,
     quotedPrice: 92500,
     details: "Custom photo cubes and gold foil metallic transfers for anniversary gifts."
+  }
+];
+
+// ============================================================================
+// CEO LIFESTYLE MANAGEMENT - INITIAL OPERATIONS ORDERS (PRODUCTION WORKFLOW)
+// ============================================================================
+export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
+  {
+    id: "ORD-000421",
+    orderNumber: "#000421",
+    clientId: "CEO0001",
+    clientName: "Sir Stewart",
+    clientTier: "Platinum",
+    clientPhone: "+1 (876) 555-0101",
+    items: [
+      { id: "i1", productName: "Magic Heart Cube (Custom Acrylic)", quantity: 5, unitPrice: 12500, details: "Full color UV print with gold foil rim" }
+    ],
+    quantityTotal: 5,
+    orderDate: "2026-07-28",
+    dueDate: "2026-08-01", // Due Today
+    productionStatus: "In Production",
+    deliveryMethod: "Knutsford Express",
+    deliveryLocation: "Montego Bay Branch",
+    assignedStaff: "Marcus Brown",
+    internalNotes: "Client requested express dispatch before 2 PM. Verify acrylic seal clarity.",
+    priority: "High",
+    depositPaid: true,
+    totalAmount: 62500,
+    createdDate: "2026-07-28"
+  },
+  {
+    id: "ORD-000422",
+    orderNumber: "#000422",
+    clientId: "CEO0002",
+    clientName: "Lady Amanda",
+    clientTier: "Gold",
+    clientPhone: "+1 (876) 555-0102",
+    items: [
+      { id: "i2", productName: "Custom Hardcover Luxe Book (Gold Embossed)", quantity: 20, unitPrice: 8500, details: "Deep burgundy leatherette finish" }
+    ],
+    quantityTotal: 20,
+    orderDate: "2026-07-29",
+    dueDate: "2026-08-02",
+    productionStatus: "Awaiting Artwork",
+    deliveryMethod: "Store Pickup",
+    deliveryLocation: "Baywest Office",
+    assignedStaff: "Tanya Reid",
+    internalNotes: "Pending high-resolution logo vector file from client graphic designer.",
+    priority: "Normal",
+    depositPaid: true,
+    totalAmount: 170000,
+    createdDate: "2026-07-29"
+  },
+  {
+    id: "ORD-000423",
+    orderNumber: "#000423",
+    clientId: "CEO0003",
+    clientName: "Dr. Marcus Vance",
+    clientTier: "Platinum",
+    clientPhone: "+1 (876) 555-0103",
+    items: [
+      { id: "i3", productName: "Gold Foil Business Cards + Presentation Box", quantity: 500, unitPrice: 180, details: "600gsm Cotton Cotton stock with edge foil" }
+    ],
+    quantityTotal: 500,
+    orderDate: "2026-07-25",
+    dueDate: "2026-08-01", // Due Today
+    productionStatus: "Ready for Pickup",
+    deliveryMethod: "Store Pickup",
+    deliveryLocation: "Baywest Office",
+    assignedStaff: "Shanice Miller",
+    internalNotes: "Packaged in luxury magnetic velvet box. Client notified via WhatsApp.",
+    priority: "Urgent",
+    depositPaid: true,
+    totalAmount: 90000,
+    createdDate: "2026-07-25"
+  },
+  {
+    id: "ORD-000424",
+    orderNumber: "#000424",
+    clientId: "CEO0004",
+    clientName: "Kevon Wright",
+    clientTier: "Silver",
+    clientPhone: "+1 (876) 555-0104",
+    items: [
+      { id: "i4", productName: "DTF Printed Staff Polo Shirts", quantity: 50, unitPrice: 3200, details: "Black cotton polo with chest logo & sleeve text" }
+    ],
+    quantityTotal: 50,
+    orderDate: "2026-07-20",
+    dueDate: "2026-07-30", // Overdue!
+    productionStatus: "In Production",
+    deliveryMethod: "Personal Delivery",
+    deliveryLocation: "Kingston HQ Office",
+    assignedStaff: "Marcus Brown",
+    internalNotes: "Pressing 20 remaining shirts today. Need driver assignment for afternoon route.",
+    priority: "High",
+    depositPaid: true,
+    totalAmount: 160000,
+    createdDate: "2026-07-20"
+  },
+  {
+    id: "ORD-000425",
+    orderNumber: "#000425",
+    clientId: "CEO0005",
+    clientName: "Patricia Myers",
+    clientTier: "Gold",
+    clientPhone: "+1 (876) 555-0105",
+    items: [
+      { id: "i5", productName: "Custom Embossed Executive Notebooks", quantity: 15, unitPrice: 6500, details: "Navy blue with silver foil stamping" }
+    ],
+    quantityTotal: 15,
+    orderDate: "2026-07-31",
+    dueDate: "2026-08-05",
+    productionStatus: "Awaiting Deposit",
+    deliveryMethod: "Tara Courier",
+    deliveryLocation: "Ocho Rios Branch",
+    assignedStaff: "Unassigned",
+    internalNotes: "Sent proforma invoice. Production will commence immediately upon 50% deposit receipt.",
+    priority: "Low",
+    depositPaid: false,
+    totalAmount: 97500,
+    createdDate: "2026-07-31"
+  },
+  {
+    id: "ORD-000426",
+    orderNumber: "#000426",
+    clientId: "CEO0006",
+    clientName: "Robert Sterling",
+    clientTier: "Platinum",
+    clientPhone: "+1 (876) 555-0106",
+    items: [
+      { id: "i6", productName: "Luxe Hardcover Photo Album & Gift Box", quantity: 2, unitPrice: 28000, details: "Custom flush mount layflat wedding album" }
+    ],
+    quantityTotal: 2,
+    orderDate: "2026-07-24",
+    dueDate: "2026-08-03",
+    productionStatus: "Ready for Delivery",
+    deliveryMethod: "Personal Delivery",
+    deliveryLocation: "Spanish Town Estate",
+    assignedStaff: "David Ellis",
+    internalNotes: "Scheduled for VIP personal driver delivery on Monday morning.",
+    priority: "High",
+    depositPaid: true,
+    totalAmount: 56000,
+    createdDate: "2026-07-24"
+  },
+  {
+    id: "ORD-000427",
+    orderNumber: "#000427",
+    clientId: "CEO0007",
+    clientName: "Michelle Campbell",
+    clientTier: "Gold",
+    clientPhone: "+1 (876) 555-0107",
+    items: [
+      { id: "i7", productName: "Acrylic Milestone Plaque", quantity: 1, unitPrice: 18500, details: "Frosted acrylic with gold standoff hardware" }
+    ],
+    quantityTotal: 1,
+    orderDate: "2026-07-26",
+    dueDate: "2026-07-31", // Overdue!
+    productionStatus: "Quality Check",
+    deliveryMethod: "Store Pickup",
+    deliveryLocation: "Baywest Office",
+    assignedStaff: "Shanice Miller",
+    internalNotes: "Checking surface finish under magnifying light for micro-scratches.",
+    priority: "Normal",
+    depositPaid: true,
+    totalAmount: 18500,
+    createdDate: "2026-07-26"
+  },
+  {
+    id: "ORD-000428",
+    orderNumber: "#000428",
+    clientId: "CEO0008",
+    clientName: "Gregory Palmer",
+    clientTier: "Silver",
+    clientPhone: "+1 (876) 555-0108",
+    items: [
+      { id: "i8", productName: "Custom Die-Cut Stickers", quantity: 1000, unitPrice: 45, details: "Waterproof vinyl glossy sticker pack" }
+    ],
+    quantityTotal: 1000,
+    orderDate: "2026-07-15",
+    dueDate: "2026-07-22",
+    productionStatus: "Completed",
+    deliveryMethod: "Knutsford Express",
+    deliveryLocation: "Mandeville Station",
+    assignedStaff: "Marcus Brown",
+    internalNotes: "Waybill #KNU-994182. Client confirmed receipt and positive feedback.",
+    priority: "Normal",
+    depositPaid: true,
+    totalAmount: 45000,
+    createdDate: "2026-07-15"
   }
 ];
 

@@ -545,3 +545,29 @@ export function syncFamilyBirthdayReminders(client: any, settings?: SystemSettin
     reminders: [...manualReminders, ...syncedReminders]
   };
 }
+
+export function getDaysSince(dateStr: string): number {
+  if (!dateStr) return 9999;
+  const s = dateStr.trim();
+  let dateObj: Date | null = null;
+
+  const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    dateObj = new Date(parseInt(isoMatch[1], 10), parseInt(isoMatch[2], 10) - 1, parseInt(isoMatch[3], 10));
+  } else {
+    const parsed = Date.parse(s);
+    if (!isNaN(parsed)) {
+      dateObj = new Date(parsed);
+    }
+  }
+
+  if (!dateObj) return 9999;
+
+  const today = new Date();
+  const simToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const target = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+  
+  const diffTime = simToday.getTime() - target.getTime();
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays;
+}

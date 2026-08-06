@@ -1,4 +1,6 @@
 import React, { useState, useMemo } from "react";
+import { createPortal } from "react-dom";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { 
   Printer, 
   Building, 
@@ -18,8 +20,10 @@ import {
   FileText,
   AlertCircle
 } from "lucide-react";
-import { SystemSettings, DTFSupplier, DTFPricingPreset } from "../types";
+import { SystemSettings, DTFSupplier, DTFPricingPreset, SavedQuotation } from "../types";
 import { DEFAULT_DTF_SUPPLIERS, DEFAULT_DTF_PRICING, DEFAULT_QUOTE_TEMPLATES, formatQuoteTemplate } from "../utils/settingsHelper";
+import { normalizeQuotation } from "../utils/quotationUtils";
+import { loadEnvironmentQuotations, saveEnvironmentQuotations } from "../utils/environmentUtils";
 
 interface DTFPrintingCalculatorProps {
   settings?: SystemSettings;
@@ -74,6 +78,7 @@ export default function DTFPrintingCalculator({ settings }: DTFPrintingCalculato
 
   // Supplier Comparison Modal
   const [showCompareModal, setShowCompareModal] = useState<boolean>(false);
+  useBodyScrollLock(showCompareModal);
 
   // Active Selected Supplier
   const activeSupplier = useMemo(() => {
@@ -252,6 +257,10 @@ export default function DTFPrintingCalculator({ settings }: DTFPrintingCalculato
     const dtfTemplate = settings?.quoteTemplates?.find(t => t.active && (t.toolKey === "dtf" || t.id === "tpl_dtf_quote"))
       || DEFAULT_QUOTE_TEMPLATES.find(t => t.id === "tpl_dtf_quote");
 
+    const customerRespTpl = settings?.quoteTemplates?.find(t => t.active && (t.id === "tpl_customer_response" || t.name === "Customer Response"))
+      || DEFAULT_QUOTE_TEMPLATES.find(t => t.id === "tpl_customer_response");
+    const customerResponseStr = customerRespTpl?.content.trim() || "Thank you so much for providing those details.\n\nHere is your personalized quotation based on your request.";
+
     const isItemValid = (quantity || 0) > 0 && (effectiveDimensions.sellingPrice || 0) > 0;
 
     // Additional Fees
@@ -269,6 +278,7 @@ export default function DTFPrintingCalculator({ settings }: DTFPrintingCalculato
 
     if (dtfTemplate) {
       return formatQuoteTemplate(dtfTemplate.content, {
+        CustomerResponse: customerResponseStr,
         PrintSize: effectiveDimensions.sizeLabel,
         Quantity: isItemValid ? quantity : "",
         UnitPrice: isItemValid ? `JMD $${effectiveDimensions.sellingPrice.toLocaleString()}` : "",
@@ -309,6 +319,36 @@ export default function DTFPrintingCalculator({ settings }: DTFPrintingCalculato
     navigator.clipboard.writeText(quoteText);
     setCopiedQuote(true);
     setTimeout(() => setCopiedQuote(false), 3000);
+  };
+
+  const [savedSuccess, setSavedSuccess] = useState(false);
+
+  const handleSaveQuotation = () => {
+    const newQuote: SavedQuotation = normalizeQuotation({
+      id: "quote_" + Date.now(),
+      quoteNumber: `DTF-QT-${Math.floor(1000 + Math.random() * 9000)}`,
+      clientName: "DTF Print Client",
+      toolType: "dtf",
+      title: `DTF Printing (${quantity} Units / ${calculationResult.sheetsNeeded} Gang Sheets)`,
+      date: new Date().toISOString().split("T")[0],
+      totalCost: calculationResult.totalProductionCost,
+      quotedPrice: totalCustomerPrice,
+      details: `DTF Transfers - Qty: ${quantity}, Size: ${effectiveDimensions.sizeLabel}, Gang Sheets: ${calculationResult.sheetsNeeded}. Total: $${totalCustomerPrice.toLocaleString()} JMD.`,
+      summaryText: `DTF Printing (${quantity} units - ${effectiveDimensions.sizeLabel})`,
+      subtotalJMD: baseCustomerRevenue,
+      totalJMD: totalCustomerPrice,
+      formattedResponseText: generateQuoteText(),
+      createdAt: new Date().toISOString(),
+      createdBy: "Master Administrator",
+      status: "Active"
+    });
+
+    const existing = loadEnvironmentQuotations();
+    const updated = [newQuote, ...existing];
+    saveEnvironmentQuotations(updated);
+
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 2500);
   };
 
   return (
@@ -791,13 +831,36 @@ export default function DTFPrintingCalculator({ settings }: DTFPrintingCalculato
                 <FileText className="w-5 h-5 text-indigo-600" />
                 <h3 className="text-sm font-bold text-slate-900">Generated Customer Quote</h3>
               </div>
-              <button
-                onClick={handleCopyQuote}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-              >
-                {copiedQuote ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedQuote ? "Copied" : "Copy Quote"}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSaveQuotation}
+                  className={`px-3 py-1.5 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-xs border ${
+                    savedSuccess
+                      ? "bg-emerald-500/20 text-emerald-700 border-emerald-400"
+                      : "bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-400"
+                  }`}
+                >
+                  {savedSuccess ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="text-emerald-700 font-extrabold">Saved to Log!</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="w-3.5 h-3.5 text-slate-950" />
+                      <span>Save Quotation</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={handleCopyQuote}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                >
+                  {copiedQuote ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedQuote ? "Copied" : "Copy Quote"}</span>
+                </button>
+              </div>
             </div>
 
             <div className="bg-slate-900 text-slate-100 rounded-2xl p-4 text-xs font-mono whitespace-pre-wrap leading-relaxed shadow-inner border border-slate-800">
@@ -810,9 +873,9 @@ export default function DTFPrintingCalculator({ settings }: DTFPrintingCalculato
       </div>
 
       {/* SUPPLIER COMPARISON MODAL */}
-      {showCompareModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-3xl w-full shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in duration-200 text-left">
+      {showCompareModal && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-3xl w-full shadow-2xl border border-slate-200 overflow-hidden relative my-auto animate-in fade-in zoom-in duration-200 text-left">
             
             {/* Modal Header */}
             <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-5 flex items-center justify-between">
@@ -937,7 +1000,8 @@ export default function DTFPrintingCalculator({ settings }: DTFPrintingCalculato
             </div>
 
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
     </div>

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Calculator, MapPin, RefreshCw, Info, Navigation, ArrowRightLeft, DollarSign, Copy, Check } from "lucide-react";
-import { SystemSettings } from "../types";
+import { Calculator, MapPin, RefreshCw, Info, Navigation, ArrowRightLeft, DollarSign, Copy, Check, FileText } from "lucide-react";
+import { SystemSettings, SavedQuotation } from "../types";
 import { DEFAULT_QUOTE_TEMPLATES, formatQuoteTemplate } from "../utils/settingsHelper";
+import { normalizeQuotation } from "../utils/quotationUtils";
+import { loadEnvironmentQuotations, saveEnvironmentQuotations } from "../utils/environmentUtils";
 
 interface LocationCostCalculatorProps {
   settings?: SystemSettings;
@@ -30,6 +32,38 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
 
   // Copy state
   const [copied, setCopied] = useState(false);
+  const [savedSuccess, setSavedSuccess] = useState(false);
+
+  const handleSaveQuotation = () => {
+    const tripStr = tripType === "round_trip" ? "Round Trip" : tripType === "one_way" ? "One Way" : "Direct Delivery (No Toll)";
+    const newQuote: SavedQuotation = normalizeQuotation({
+      id: "quote_" + Date.now(),
+      quoteNumber: `LOC-QT-${Math.floor(1000 + Math.random() * 9000)}`,
+      clientName: `Delivery: ${locationName || 'Kingston'}`,
+      toolType: "location",
+      title: `Logistics Transport to ${locationName || 'Kingston'} (${parsedDistance} km)`,
+      date: new Date().toISOString().split("T")[0],
+      totalCost: subtotalCost * 0.7,
+      quotedPrice: totalTravelCost,
+      details: `Destination: ${locationName}, Distance: ${parsedDistance} km, Trip: ${tripStr}. Total: $${totalTravelCost.toLocaleString()} JMD.`,
+      summaryText: `Logistics to ${locationName || 'Kingston'} (${tripStr})`,
+      subtotalJMD: subtotalCost,
+      discountPercent: parsedDiscount,
+      discountAmountJMD: discountAmount,
+      totalJMD: totalTravelCost,
+      formattedResponseText: getCustomerResponseMessage(),
+      createdAt: new Date().toISOString(),
+      createdBy: "Master Administrator",
+      status: "Active"
+    });
+
+    const existing = loadEnvironmentQuotations();
+    const updated = [newQuote, ...existing];
+    saveEnvironmentQuotations(updated);
+
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 2500);
+  };
 
   // Persist values in localStorage whenever they change
   useEffect(() => {
@@ -83,6 +117,10 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
     const locTemplate = settings?.quoteTemplates?.find(t => t.active && (t.toolKey === "location" || t.id === "tpl_location_logistics_quote" || t.id === "tpl_location_logistics"))
       || DEFAULT_QUOTE_TEMPLATES.find(t => t.id === "tpl_location_logistics_quote");
 
+    const customerRespTpl = settings?.quoteTemplates?.find(t => t.active && (t.id === "tpl_customer_response" || t.name === "Customer Response"))
+      || DEFAULT_QUOTE_TEMPLATES.find(t => t.id === "tpl_customer_response");
+    const customerResponseStr = customerRespTpl?.content.trim() || "Thank you so much for providing those details.\n\nHere is your personalized quotation based on your request.";
+
     const noTollText = tripType === "no_toll" ? " (No toll charges applied)." : "";
     const deliveryMsg = `Delivery to ${locationName || "your location"} is available for ${formatJMD(totalTravelCost)}.${noTollText}`;
     const serviceTierStr = tripType === "round_trip" ? "Round Trip (2x Toll)" : tripType === "one_way" ? "One Way (1x Toll)" : "No Toll Direct Delivery";
@@ -90,6 +128,7 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
 
     if (locTemplate) {
       return formatQuoteTemplate(locTemplate.content, {
+        CustomerResponse: customerResponseStr,
         ParishLocation: locationName || "Kingston",
         ServiceTier: serviceTierStr,
         DiscountPercent: hasDiscount ? parsedDiscount : 0,
@@ -362,22 +401,45 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
       <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 space-y-2.5">
         <div className="flex justify-between items-center">
           <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Customer Response</span>
-          <button
-            onClick={handleCopyMessage}
-            className="text-[9px] font-bold text-indigo-650 hover:text-indigo-850 uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
-          >
-            {copied ? (
-              <>
-                <Check className="w-3 h-3 text-emerald-600" />
-                <span className="text-emerald-600 font-extrabold">Copied!</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-3 h-3 text-indigo-500" />
-                <span>Copy Message</span>
-              </>
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSaveQuotation}
+              className={`text-[9px] font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors px-2 py-1 rounded-md border ${
+                savedSuccess
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                  : "bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-400"
+              }`}
+            >
+              {savedSuccess ? (
+                <>
+                  <Check className="w-3 h-3 text-emerald-600" />
+                  <span className="text-emerald-700 font-extrabold">Saved to Log!</span>
+                </>
+              ) : (
+                <>
+                  <FileText className="w-3 h-3 text-slate-950" />
+                  <span>Save Quotation</span>
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={handleCopyMessage}
+              className="text-[9px] font-bold text-indigo-650 hover:text-indigo-850 uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3 h-3 text-emerald-600" />
+                  <span className="text-emerald-600 font-extrabold">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3 text-indigo-500" />
+                  <span>Copy Message</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
         <div className="bg-white border border-slate-100 p-3 rounded-xl text-[11px] text-slate-700 font-medium leading-relaxed font-sans select-all">
           "{getCustomerResponseMessage()}"

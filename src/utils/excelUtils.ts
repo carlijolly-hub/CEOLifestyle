@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { Client, ImportantDate } from "../types";
+import { getCurrentEnvironment } from "./environmentUtils";
 
 // Flatten customer object to a simple flat row for spreadsheets
 export function customerToFlatRow(customer: Client) {
@@ -18,18 +19,36 @@ export function customerToFlatRow(customer: Client) {
   const favoriteColors = customer.interests?.favoriteColors || [];
   const giftPreferences = customer.interests?.giftPreferences || [];
 
+  const rel = customer.businessRelationship || (customer.homeBrand === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle");
+
   return {
-    "Client ID": customer.id || "",
-    "Status": customer.deactivated ? "Deactivated" : "Active",
+    "CL ID": customer.id || "",
+    "Client Full Name": `${customer.firstName || ""} ${customer.lastName || ""}`.trim(),
+    "Client Home": rel,
+    "Business Relationship": rel,
     "First Name": customer.firstName || "",
     "Last Name": customer.lastName || "",
+    "Final Tier": customer.tier || "Silver",
+    "Client Tier": customer.tier || "Silver",
+    "Tier Source": customer.tierSource || (["Founders Family", "Delinquent", "Problematic"].includes(customer.tier) ? "Manual" : "Calculated"),
+    "Management Status": customer.managementClassification || "Standard",
+    "Account Status": customer.accountStatus || (customer.deactivated ? "Inactive" : "Active"),
+    "Relationship Status": customer.relationshipStatus || (customer.communicationStatus === "Active" ? "Active" : "Warm"),
+    "Health Score": typeof customer.healthScore === "number" ? customer.healthScore : 75,
+    "First Order Date": customer.history?.firstOrderDate || "",
+    "Last Order Date": customer.history?.lastOrderDate || "",
+    "Total Orders": customer.history?.totalOrders || 0,
+    "Lifetime Spend": customer.history?.lifetimeRevenue || 0,
+    "Lifetime Revenue (JMD)": customer.history?.lifetimeRevenue || 0,
+    "AOV": customer.history?.averageOrderValue || 0,
+    "Average Order Value (JMD)": customer.history?.averageOrderValue || 0,
     "Gender": customer.gender || "",
     "Occupation": customer.occupation || "",
     "Drive (Yes/No)": customer.drive || "",
-    "Client Tier": customer.tier || "Silver",
-    "Home Brand": customer.homeBrand || "",
     "Phone Number": customer.contact?.phoneNumber || "",
+    "Communication Status": customer.communicationStatus || "Unknown",
     "Email Address": customer.contact?.email || "",
+    "Instagram Username": customer.contact?.instagramUsername || "",
     "City": customer.contact?.city || "",
     "Parish (Jamaica)": customer.contact?.parish || "",
     "Country": customer.contact?.country || "",
@@ -47,14 +66,9 @@ export function customerToFlatRow(customer: Client) {
     "Wedding Date": importantDates.find(d => d.label === "Wedding Date")?.date || "",
     "Proposal Date": importantDates.find(d => d.label === "Proposal Date")?.date || "",
     "Other Important Dates": otherDates,
-    "First Order Date": customer.history?.firstOrderDate || "",
-    "Last Order Date": customer.history?.lastOrderDate || "",
-    "Total Orders": customer.history?.totalOrders || 0,
     "Products Purchased": (customer.history?.productsPurchased || []).join(", "),
     "Preferred Products / Categories": (customer.history?.preferredCategories || []).join(", "),
     "Client Preferences": (customer.history?.clientPreferences || []).join(", "),
-    "Lifetime Revenue (JMD)": customer.history?.lifetimeRevenue || 0,
-    "Average Order Value (JMD)": customer.history?.averageOrderValue || 0,
     "Hobbies": hobbies.join(", "),
     "Favorite Colors": favoriteColors.join(", "),
     "Gift Preferences": giftPreferences.join(", "),
@@ -125,38 +139,89 @@ export function flatRowToCustomer(row: any): Client {
 
   // Fallback IDs if they are not in the spreadsheet
   const randomId = String(Math.floor(100000 + Math.random() * 900000));
-  const rawCid = row["Client ID"] ? String(row["Client ID"]).trim().replace(/\D/g, "") : "";
-  const cid = rawCid || randomId;
+  const rawClId = row["CL ID"] || row["Client ID"] || row["CEO ID"] || row["id"];
+  const cid = rawClId ? String(rawClId).trim() : randomId;
 
-  const totalOrders = Number(row["Total Orders"]) || 0;
-  const lifetimeRevenue = Number(row["Lifetime Revenue (JMD)"]) || 0;
-  const averageOrderValue = totalOrders > 0 ? Math.round(lifetimeRevenue / totalOrders) : 0;
+  // Name parsing from "Client Full Name" or "First Name" + "Last Name"
+  let firstName = row["First Name"] ? String(row["First Name"]).trim() : "";
+  let lastName = row["Last Name"] ? String(row["Last Name"]).trim() : "";
+  if (!firstName && row["Client Full Name"]) {
+    const nameParts = String(row["Client Full Name"]).trim().split(/\s+/);
+    firstName = nameParts[0] || "New";
+    lastName = nameParts.slice(1).join(" ") || "Client";
+  }
+  if (!firstName) firstName = "New";
+  if (!lastName) lastName = "Client";
 
-  const isDeactivatedVal = row["Status"] ? (String(row["Status"]).trim().toLowerCase() === "deactivated" || String(row["Status"]).trim().toLowerCase() === "inactive") : false;
+  const parseCleanNumber = (val: any): number => {
+    if (typeof val === "number") return val;
+    if (!val) return 0;
+    const cleaned = String(val).replace(/[^0-9.-]+/g, "");
+    const parsed = parseFloat(cleaned);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
+  const totalOrders = parseCleanNumber(row["Total Orders"] ?? row["Orders"]);
+  const lifetimeRevenue = parseCleanNumber(row["Lifetime Spend"] ?? row["Lifetime Revenue (JMD)"] ?? row["lifetimeRevenue"] ?? row["Lifetime Revenue"]);
+  const averageOrderValue = parseCleanNumber(row["AOV"] ?? row["Average Order Value (JMD)"] ?? row["averageOrderValue"] ?? row["Average Order Value"]) || (totalOrders > 0 ? Math.round(lifetimeRevenue / totalOrders) : 0);
+
+  const statusRaw = String(row["Account Status"] || row["Status"] || "").trim().toLowerCase();
+  const isDeactivatedVal = statusRaw === "deactivated" || statusRaw === "inactive" || statusRaw === "archived";
+
+  const relationshipHomeRaw = String(row["Client Home"] || row["Business Relationship"] || row["Home Brand"] || "CEO Lifestyle").trim();
+  let businessRelationship: "CEO Lifestyle" | "Librarium Luxe" | "CEO Lifestyle + Librarium Luxe" = "CEO Lifestyle";
+  if (relationshipHomeRaw.includes("|") || relationshipHomeRaw.includes("+") || relationshipHomeRaw.toLowerCase().includes("both")) {
+    businessRelationship = "CEO Lifestyle + Librarium Luxe";
+  } else if (relationshipHomeRaw.toLowerCase().includes("librarium")) {
+    businessRelationship = "Librarium Luxe";
+  } else {
+    businessRelationship = "CEO Lifestyle";
+  }
+
+  const profileTheme = businessRelationship === "Librarium Luxe" ? "Librarium Crimson" : businessRelationship === "CEO Lifestyle + Librarium Luxe" ? "Dual Burgundy Blend" : "CEO Blue";
+
+  const tierRaw = String(row["Final Tier"] || row["Client Tier"] || row["Customer Tier"] || "Silver").trim();
+  let finalTier: any = "Silver";
+  if (tierRaw.toLowerCase().includes("founders")) finalTier = "Founders Family";
+  else if (tierRaw.toLowerCase().includes("delinquent")) finalTier = "Delinquent";
+  else if (tierRaw.toLowerCase().includes("problematic")) finalTier = "Problematic";
+  else if (tierRaw.toLowerCase().includes("platinum") || tierRaw === "VIP") finalTier = "Platinum";
+  else if (tierRaw.toLowerCase().includes("gold")) finalTier = "Gold";
+  else finalTier = "Silver";
+
+  const relStatusRaw = String(row["Relationship Status"] || row["Communication Status"] || "Active").trim();
+  const relationshipStatus: "Active" | "Warm" | "Dormant" = (relStatusRaw === "Dormant" || relStatusRaw === "Warm") ? relStatusRaw : "Active";
+
+  const healthScoreRaw = Number(row["Health Score"]);
+  const healthScore = !isNaN(healthScoreRaw) && healthScoreRaw >= 0 ? healthScoreRaw : 75;
+
+  const mgmtRaw = String(row["Management Status"] || row["Management Classification"] || "").trim();
+  let managementClassification: any = "Standard";
+  if (mgmtRaw === "Problematic" || finalTier === "Problematic") managementClassification = "Problematic";
+  else if (mgmtRaw === "Delinquent" || finalTier === "Delinquent") managementClassification = "Delinquent";
+  else if (mgmtRaw === "VIP Priority" || finalTier === "Founders Family" || finalTier === "Platinum") managementClassification = "VIP Priority";
 
   return {
     id: cid,
     deactivated: isDeactivatedVal,
-    firstName: row["First Name"] ? String(row["First Name"]).trim() : "New",
-    lastName: row["Last Name"] ? String(row["Last Name"]).trim() : "Client",
+    firstName,
+    lastName,
     gender: (row["Gender"] || "N/A") as any,
     occupation: row["Occupation"] ? String(row["Occupation"]).trim() : "Business Owner",
     drive: (row["Drive (Yes/No)"] === "Yes" || row["Drive (Yes/No)"] === "No") ? row["Drive (Yes/No)"] : "No",
-    tier: (() => {
-      let t = String(row["Client Tier"] || row["Customer Tier"] || "Silver").trim();
-      if (t === "VIP") return "Gold";
-      if (t === "Corporate" || t === "Standard Account" || t === "Platinum Tier") return "Platinum";
-      if (t === "Standard" || t === "Silver Tier") return "Silver";
-      return t as any;
-    })(),
-    homeBrand: (() => {
-      const b = String(row["Home Brand"] || "CEO Lifestyle").trim();
-      if (b === "Both" || b === "Ceo Lifestyle" || b === "CEO Lifestyle") return "CEO Lifestyle";
-      return b as any;
-    })(),
+    tier: finalTier,
+    homeBrand: businessRelationship === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle",
+    businessRelationship,
+    profileTheme,
+    managementClassification,
+    healthScore,
+    relationshipStatus,
+    accountStatus: isDeactivatedVal ? "Inactive" : "Active",
+    tierSource: (row["Tier Source"] || (["Founders Family", "Delinquent", "Problematic"].includes(finalTier) ? "Manual" : "Calculated")) as any,
     contact: {
       phoneNumber: row["Phone Number"] ? String(row["Phone Number"]).trim() : "",
       email: row["Email Address"] ? String(row["Email Address"]).trim() : "",
+      instagramUsername: row["Instagram Username"] ? String(row["Instagram Username"]).trim() : "",
       city: row["City"] ? String(row["City"]).trim() : "",
       parish: row["Parish (Jamaica)"] ? String(row["Parish (Jamaica)"]).trim() : "N/A",
       country: row["Country"] ? String(row["Country"]).trim() : "Jamaica",
@@ -181,7 +246,7 @@ export function flatRowToCustomer(row: any): Client {
       preferredCategories: parseList(row["Preferred Products / Categories"]),
       clientPreferences: parseList(row["Client Preferences"] || row["Customer Preferences"]),
       lifetimeRevenue,
-      averageOrderValue: row["Average Order Value (JMD)"] ? Number(row["Average Order Value (JMD)"]) : averageOrderValue
+      averageOrderValue
     },
     interests: {
       sports: {
@@ -201,23 +266,51 @@ export function flatRowToCustomer(row: any): Client {
         id: `t_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         type: "Note",
         date: new Date().toISOString().split("T")[0],
-        content: "Record imported/updated via Excel Database sync."
+        content: "Record imported/updated via Master Database sync."
       }
     ],
     reminders: [],
     preferredCommunication: (row["Preferred Communication Method"] || "Email") as any,
-    lastContactedDate: row["Last Contacted Date"] ? String(row["Last Contacted Date"]).trim() : ""
+    lastContactedDate: row["Last Contacted Date"] ? String(row["Last Contacted Date"]).trim() : "",
+    communicationStatus: (row["Communication Status"] === "Active" || row["Communication Status"] === "Not Active" || row["Communication Status"] === "Unknown") ? row["Communication Status"] : "Unknown"
   };
 }
 
-// Download Excel File helper
-export function downloadExcel(sheets: { name: string; data: any[] }[], filename: string) {
+// Download Excel File helper with Environment Export Protection
+export function downloadExcel(sheets: { name: string; data: any[] }[], filename: string, createdBy: string = "Master Administrator") {
+  const env = getCurrentEnvironment();
+  const prefix = env === "LIVE" ? "" : "STRESS_MODE_";
+
+  let baseName = filename;
+  if (baseName.startsWith("LIVE_MODE_")) baseName = baseName.replace("LIVE_MODE_", "");
+  if (baseName.startsWith("STRESS_MODE_")) baseName = baseName.replace("STRESS_MODE_", "");
+
+  const cleanName = baseName.endsWith(".xlsx") ? baseName.slice(0, -5) : baseName;
+  const finalFilename = `${prefix}${cleanName}.xlsx`;
+
   const wb = XLSX.utils.book_new();
   sheets.forEach(sheet => {
     const ws = XLSX.utils.json_to_sheet(sheet.data);
     XLSX.utils.book_append_sheet(wb, ws, sheet.name);
   });
-  XLSX.writeFile(wb, `${filename}.xlsx`);
+
+  // Always append SYSTEM_REFERENCE metadata worksheet
+  if (!sheets.some(s => s.name === "SYSTEM_REFERENCE")) {
+    const now = new Date();
+    const dateFormatted = now.toLocaleDateString("en-GB"); // 24/07/2026
+    const timeFormatted = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }); // 01:40 PM
+    const sysRefData = [
+      { "Field": "Environment", "Value": env === "LIVE" ? "LIVE MODE" : "STRESS TEST MODE" },
+      { "Field": "Export Date", "Value": dateFormatted },
+      { "Field": "Export Time", "Value": timeFormatted },
+      { "Field": "Application Version", "Value": "V2.1" },
+      { "Field": "Exported By", "Value": createdBy }
+    ];
+    const wsRef = XLSX.utils.json_to_sheet(sysRefData);
+    XLSX.utils.book_append_sheet(wb, wsRef, "SYSTEM_REFERENCE");
+  }
+
+  XLSX.writeFile(wb, finalFilename);
 }
 
 // 1. Download Master Customer Database

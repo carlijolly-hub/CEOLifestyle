@@ -1,4 +1,6 @@
 import React, { useState, useMemo } from "react";
+import { createPortal } from "react-dom";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { Client, ImportantDate, FollowUpReminder, BusinessEvent, AspiringClient } from "../types";
 import { INITIAL_BUSINESS_EVENTS } from "../data/mockData";
 import { getRelationshipEventTitle, getClientMilestones, parseDateString } from "../utils/dateHelpers";
@@ -22,8 +24,10 @@ import {
   Trash2,
   X,
   Plus,
-  AlertCircle
+  AlertCircle,
+  Clipboard
 } from "lucide-react";
+import UniversalPasteModal from "./UniversalPasteModal";
 
 interface MilestoneCalendarProps {
   clients: Client[];
@@ -37,6 +41,15 @@ const realToday = new Date();
 const SYSTEM_REFERENCE_YEAR = realToday.getFullYear();
 const SYSTEM_REFERENCE_MONTH = realToday.getMonth(); // 0-indexed
 const SYSTEM_REFERENCE_DAY = realToday.getDate();
+
+export const getFormattedEventLabel = (text?: string): string => {
+  if (!text) return "";
+  const lower = text.toLowerCase();
+  if (lower.includes("platinum")) return "💎 Platinum Client Event";
+  if (lower.includes("gold")) return "🥇 Gold Client Event";
+  if (lower.includes("silver")) return "Silver Client Event";
+  return text;
+};
 
 export default function MilestoneCalendar({ clients, aspiringClients, onSelectClient, onOpenTask }: MilestoneCalendarProps) {
   // Navigation State
@@ -69,6 +82,12 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
 
   // Create event states
   const [showAddEventForm, setShowAddEventForm] = useState(false);
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+
+  const handleConfirmPasteMilestones = (pastedEvents: BusinessEvent[]) => {
+    if (pastedEvents.length === 0) return;
+    setBusinessEvents(prev => [...prev, ...pastedEvents]);
+  };
   const [eventCategory, setEventCategory] = useState<BusinessEvent["type"]>("CEO Business Day");
   const [eventImportance, setEventImportance] = useState<"Standard" | "Important" | "Critical">("Important");
   const [eventAlertTiming, setEventAlertTiming] = useState<"Same Day" | "1 Day Before" | "3 Days Before" | "7 Days Before" | "14 Days Before" | "Custom Date">("14 Days Before");
@@ -147,6 +166,9 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
 
   // Edit Event state
   const [editingEvent, setEditingEvent] = useState<BusinessEvent | null>(null);
+
+  const isAnyModalOpen = !!(isPasteModalOpen || editingEvent);
+  useBodyScrollLock(isAnyModalOpen);
   const [editTitle, setEditTitle] = useState("");
   const [editCategory, setEditCategory] = useState<BusinessEvent["type"]>("CEO Business Day");
   const [editDate, setEditDate] = useState("");
@@ -348,13 +370,13 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
           id: `milestone-${client.id}-${idx}-${m.type}`,
           client,
           type: m.type,
-          businessType: client.tier === "Gold" ? "Gold Client Events" : client.tier === "Platinum" ? "Platinum Client Events" : "Silver Client Events",
+          businessType: client.tier === "Founders Family" ? "Founders Family Events" : client.tier === "Gold" ? "Gold Client Events" : client.tier === "Platinum" ? "Platinum Client Events" : "Silver Client Events",
           label: m.label,
           dateStr: m.date,
           parsedMonth: parsed.month,
           parsedDay: parsed.day,
           parsedYear: parsed.year,
-          isVip: client.tier === "Gold" || client.tier === "Platinum"
+          isVip: client.tier === "Founders Family" || client.tier === "Gold" || client.tier === "Platinum"
         });
       });
 
@@ -367,13 +389,13 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
           id: `rem-${client.id}-${reminder.id}`,
           client,
           type: "reminder",
-          businessType: client.tier === "Gold" ? "Gold Client Events" : client.tier === "Platinum" ? "Platinum Client Events" : "Silver Client Events",
+          businessType: client.tier === "Founders Family" ? "Founders Family Events" : client.tier === "Gold" ? "Gold Client Events" : client.tier === "Platinum" ? "Platinum Client Events" : "Silver Client Events",
           label: reminder.task,
           dateStr: reminder.date,
           parsedMonth: parsed.month,
           parsedDay: parsed.day,
           parsedYear: parsed.year,
-          isVip: client.tier === "Gold" || client.tier === "Platinum"
+          isVip: client.tier === "Founders Family" || client.tier === "Gold" || client.tier === "Platinum"
         });
       });
     });
@@ -396,7 +418,7 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
           } as any,
           type: "reminder",
           businessType: "General Business Day",
-          label: `Follow Up: ${asp.name} (${asp.serviceInterestedIn})`,
+          label: `Follow Up: ${asp.name} (${asp.serviceInterestedIn})${asp.instagramUsername ? ` • ${asp.instagramUsername}` : ''} • Preferred: ${asp.preferredContactMethod || (asp.sourceOfInquiry === 'Instagram' ? 'Instagram' : 'Phone Call')}`,
           dateStr: asp.followUpDate,
           parsedMonth: parsed.month,
           parsedDay: parsed.day,
@@ -744,6 +766,7 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
               const hasEvents = cell.events.length > 0;
 
               // Color dot categorizations based on separate categories
+              const hasFoundersFamily = cell.events.some(e => e.businessType === "Founders Family Events" || e.client?.tier === "Founders Family");
               const hasGold = cell.events.some(e => e.businessType === "Gold Client Events" || e.businessType === "Gold / Platinum Client Events");
               const hasPlatinum = cell.events.some(e => e.businessType === "Platinum Client Events");
               const hasSilver = cell.events.some(e => e.businessType === "Silver Client Events");
@@ -754,7 +777,9 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
               // Determine non-selected, non-today cell colors based on business events
               let cellBgClass = "bg-white border-slate-200/70 text-slate-900 hover:bg-slate-50 hover:border-slate-300";
               if (!cell.isToday && !isSelected && cell.events.length > 0) {
-                if (hasPlatinum) {
+                if (hasFoundersFamily) {
+                  cellBgClass = "bg-purple-50 border-purple-300 text-purple-950 hover:bg-purple-100 hover:border-purple-400";
+                } else if (hasPlatinum) {
                   cellBgClass = "bg-slate-900/10 border-slate-950 text-slate-950 hover:bg-slate-900/20 hover:border-slate-950/80";
                 } else if (hasGold) {
                   cellBgClass = "bg-amber-50/60 border-amber-200 text-amber-950 hover:bg-amber-100/40 hover:border-amber-300";
@@ -798,6 +823,9 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
                      {/* Miniature Dots */}
                     {hasEvents && (
                       <div className="flex flex-wrap gap-1 items-center min-h-[10px] mt-1 pb-0.5">
+                        {hasFoundersFamily && (
+                          <span className="w-2.5 h-2.5 rounded-full bg-purple-600 ring-2 ring-white animate-pulse shadow-xs shrink-0" title="Founders Family Events" />
+                        )}
                         {hasPlatinum && (
                           <span className="w-2.5 h-2.5 rounded-full bg-slate-950 ring-2 ring-white animate-pulse shadow-xs shrink-0" title="Platinum Client Events" />
                         )}
@@ -831,6 +859,10 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
 
           {/* Quick Calendar Legend */}
           <div className="pt-4 border-t border-slate-100 flex flex-wrap gap-x-6 gap-y-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-left">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-purple-600 ring-1 ring-purple-600/30" />
+              <span>Founders Family</span>
+            </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-slate-950 ring-1 ring-slate-950/30" />
               <span>Platinum Client</span>
@@ -931,16 +963,6 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
                               className="font-extrabold text-xs text-slate-900 hover:text-indigo-600 hover:underline cursor-pointer flex items-center gap-1.5"
                             >
                               {ev.client.firstName} {ev.client.lastName}
-                              {ev.client.tier === "Gold" && (
-                                <span className="px-1.5 py-0.5 rounded text-[8px] bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-500 text-amber-950 font-black uppercase tracking-wider">
-                                  Gold
-                                </span>
-                              )}
-                              {ev.client.tier === "Platinum" && (
-                                <span className="px-1.5 py-0.5 rounded text-[8px] bg-slate-900 text-slate-100 border border-slate-950 font-black uppercase tracking-wider">
-                                  Platinum
-                                </span>
-                              )}
                             </p>
                           ) : (
                             <p className="font-extrabold text-xs text-purple-950 flex items-center gap-1.5">
@@ -956,7 +978,7 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
 
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className={`px-2 py-0.5 rounded text-[8px] font-extrabold uppercase tracking-wider border ${tagText}`}>
-                            {ev.businessType}
+                            {getFormattedEventLabel(ev.businessType)}
                           </span>
                           <button
                             type="button"
@@ -1141,12 +1163,22 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
                 <span className="text-[9px] font-extrabold text-indigo-600 uppercase tracking-widest block">Schedule Creator</span>
                 <h3 className="text-xs font-bold text-slate-950 mt-0.5">Add Calendar Event</h3>
               </div>
-              <button
-                onClick={() => setShowAddEventForm(!showAddEventForm)}
-                className="text-[10px] bg-slate-900 text-white hover:bg-slate-800 px-2.5 py-1 rounded-xl font-bold transition-all cursor-pointer"
-              >
-                {showAddEventForm ? "Close Creator" : "Create Custom Event"}
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setIsPasteModalOpen(true)}
+                  className="text-[10px] bg-emerald-700 text-white hover:bg-emerald-800 px-2.5 py-1 rounded-xl font-bold transition-all cursor-pointer flex items-center gap-1"
+                >
+                  <Clipboard className="w-3 h-3 text-emerald-200" />
+                  Paste Events
+                </button>
+                <button
+                  onClick={() => setShowAddEventForm(!showAddEventForm)}
+                  className="text-[10px] bg-slate-900 text-white hover:bg-slate-800 px-2.5 py-1 rounded-xl font-bold transition-all cursor-pointer"
+                >
+                  {showAddEventForm ? "Close Creator" : "Create Custom Event"}
+                </button>
+              </div>
             </div>
 
             {showAddEventForm && (
@@ -1351,9 +1383,9 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
       </div>
 
       {/* Edit Business Event Modal */}
-      {editingEvent && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-8 animate-in fade-in zoom-in duration-200 text-left">
+      {editingEvent && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-slate-950/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden relative my-auto animate-in fade-in zoom-in duration-200 text-left">
             
             {/* Modal Header */}
             <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-5 flex items-center justify-between">
@@ -1666,8 +1698,19 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
 
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
+
+      {/* UNIVERSAL PASTE MODAL */}
+      <UniversalPasteModal
+        isOpen={isPasteModalOpen}
+        onClose={() => setIsPasteModalOpen(false)}
+        title="Paste Strategic Milestones & Calendar Events"
+        subtitle="Copy rows directly from Microsoft Excel or Google Sheets (Ctrl+C) and paste them directly into the master calendar"
+        templateType="milestones"
+        onConfirmImport={(pastedEvents) => handleConfirmPasteMilestones(pastedEvents)}
+      />
 
     </div>
   );
@@ -1954,7 +1997,7 @@ export function SmallCalendarWidget({ clients, aspiringClients, onSelectClient, 
                         {isCorp ? ev.label : ev.type === "birthday" ? `🎁 ${ev.label}` : ev.type === "anniversary" ? `💍 ${ev.label}` : `📌 ${ev.label}`}
                       </p>
                       {isBusiness && !isCorp && (
-                        <p className="text-[8px] font-bold text-indigo-600 uppercase tracking-wider mt-0.5">{businessType}</p>
+                        <p className="text-[8px] font-bold text-indigo-600 uppercase tracking-wider mt-0.5">{getFormattedEventLabel(businessType)}</p>
                       )}
                     </div>
                     {isCorp && (
@@ -1964,12 +2007,12 @@ export function SmallCalendarWidget({ clients, aspiringClients, onSelectClient, 
                     )}
                     {!isCorp && tier === "Gold" && (
                       <span className="text-[7px] font-black uppercase bg-amber-100 text-amber-800 px-1 py-0.5 rounded leading-none">
-                        Gold
+                        🥇 Gold
                       </span>
                     )}
                     {!isCorp && tier === "Platinum" && (
                       <span className="text-[7px] font-black uppercase bg-slate-900 text-slate-100 px-1 py-0.5 rounded leading-none">
-                        Plat
+                        💎 Plat
                       </span>
                     )}
                   </div>

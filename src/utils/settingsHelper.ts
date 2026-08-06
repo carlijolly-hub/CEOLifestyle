@@ -1,16 +1,29 @@
-import { SystemSettings, ProductionMaterialPreset, DTFSupplier, DTFPricingPreset, DeliveryMethod, SystemQuoteTemplate } from "../types";
+import { SystemSettings, ProductionMaterialPreset, DTFSupplier, DTFPricingPreset, DeliveryMethod, SystemQuoteTemplate, ProductionChecklistTemplate } from "../types";
 
 export const DEFAULT_QUOTE_TEMPLATES: SystemQuoteTemplate[] = [
   {
-    id: "tpl_apparel_quote",
-    name: "T-Shirt Studio Quotation Template",
-    category: "Quotations",
-    toolKey: "apparel",
-    description: "Standardized customer quotation layout for T-Shirts, Polos, Oxfords & Apparel orders.",
-    placeholders: ["{GarmentItems}", "{AdditionalCharges}", "{DiscountPercent}", "{DiscountAmount}", "{GrandTotal}", "{DeliveryMethod}", "{DeliveryMessage}"],
+    id: "tpl_customer_response",
+    name: "Customer Response",
+    category: "Customer Communication",
+    toolKey: "general",
+    description: "Standard opening greeting and introduction used before customer quotation breakdowns.",
+    placeholders: ["{CustomerName}", "{BusinessName}"],
     active: true,
     isDefault: true,
-    content: `Thank you so much for providing those details. Here is your personalized quote based on your request:
+    content: `Thank you so much for providing those details.
+
+Here is your personalized quotation based on your request.`
+  },
+  {
+    id: "tpl_apparel_quote",
+    name: "T-Shirt Studio Quote",
+    category: "Sales Quotes",
+    toolKey: "apparel",
+    description: "Standardized customer quotation layout for T-Shirts, Polos, Oxfords & Apparel orders.",
+    placeholders: ["{CustomerResponse}", "{GarmentItems}", "{AdditionalCharges}", "{DiscountPercent}", "{DiscountAmount}", "{GrandTotal}", "{DeliveryMethod}", "{DeliveryMessage}"],
+    active: true,
+    isDefault: true,
+    content: `{CustomerResponse}
 
 {GarmentItems}
 
@@ -36,14 +49,14 @@ Let me know if you would like to proceed.`
   },
   {
     id: "tpl_book_quote",
-    name: "Book Cost Calculator Quotation Template",
-    category: "Quotations",
+    name: "Librarium Book Quote",
+    category: "Sales Quotes",
     toolKey: "book",
     description: "Standardized quotation for imported book orders, quantity tiers, and delivery charges.",
-    placeholders: ["{BookTitle}", "{Quantity}", "{QuantityUnit}", "{UnitPrice}", "{BooksSubtotal}", "{DeliveryMethod}", "{DeliveryCharge}", "{DiscountPercent}", "{DiscountAmount}", "{GrandTotal}", "{DeliveryMessage}"],
+    placeholders: ["{CustomerResponse}", "{BookTitle}", "{Quantity}", "{QuantityUnit}", "{UnitPrice}", "{BooksSubtotal}", "{TargetDestination}", "{DeliveryMethod}", "{DeliveryCharge}", "{DiscountPercent}", "{DiscountAmount}", "{GrandTotal}", "{DeliveryMessage}"],
     active: true,
     isDefault: true,
-    content: `Thank you so much for providing those details. Here is your personalized quote based on your request:
+    content: `{CustomerResponse}
 
 Book:
 {BookTitle}
@@ -54,6 +67,10 @@ Quantity
 {IF:AdditionalCharges}
 Additional Charges
 {AdditionalCharges}
+{/IF}
+
+{IF:TargetDestination}
+Target Destination: {TargetDestination}
 {/IF}
 
 {IF:DiscountAmount}
@@ -72,15 +89,54 @@ Delivery Method: {DeliveryMethod}
 Let me know if you would like to proceed.`
   },
   {
-    id: "tpl_dtf_quote",
-    name: "DTF Printing Quotation Template",
-    category: "Quotations",
-    toolKey: "dtf",
-    description: "Standardized quotation for direct-to-film transfer prints, sizing presets, and delivery.",
-    placeholders: ["{PrintSize}", "{Quantity}", "{UnitPrice}", "{Subtotal}", "{DeliveryMethod}", "{DeliveryCharge}", "{DiscountPercent}", "{DiscountAmount}", "{GrandTotal}", "{DeliveryMessage}"],
+    id: "tpl_multi_book_quote",
+    name: "Multi-Book Quote",
+    category: "Sales Quotes",
+    toolKey: "book",
+    description: "Standardized quotation for multi-book orders, book bundles, and custom quantities.",
+    placeholders: ["{CustomerResponse}", "{BooksList}", "{Quantity}", "{BooksSubtotal}", "{TargetDestination}", "{AdditionalCharges}", "{DeliveryMethod}", "{DeliveryCharge}", "{DiscountPercent}", "{DiscountAmount}", "{GrandTotal}", "{DeliveryMessage}"],
     active: true,
     isDefault: true,
-    content: `Thank you so much for providing those details. Here is your personalized quote based on your request:
+    content: `{CustomerResponse}
+
+Books Selected:
+{BooksList}
+
+{IF:AdditionalCharges}
+Additional Charges
+{AdditionalCharges}
+{/IF}
+
+Subtotal: {BooksSubtotal}
+
+{IF:TargetDestination}
+Target Destination: {TargetDestination}
+{/IF}
+
+{IF:DiscountAmount}
+Discount
+* You save {DiscountPercent}% = {DiscountAmount}
+{/IF}
+
+Total: {GrandTotal}
+
+{IF:DeliveryMessage}
+Delivery Method: {DeliveryMethod}
+{DeliveryMessage}
+{/IF}
+
+Let me know if you would like to proceed.`
+  },
+  {
+    id: "tpl_dtf_quote",
+    name: "DTF Printing Quote",
+    category: "Sales Quotes",
+    toolKey: "dtf",
+    description: "Standardized quotation for direct-to-film transfer prints, sizing presets, and delivery.",
+    placeholders: ["{CustomerResponse}", "{PrintSize}", "{Quantity}", "{UnitPrice}", "{Subtotal}", "{TargetDestination}", "{DeliveryMethod}", "{DeliveryCharge}", "{DiscountPercent}", "{DiscountAmount}", "{GrandTotal}", "{DeliveryMessage}"],
+    active: true,
+    isDefault: true,
+    content: `{CustomerResponse}
 
 Print Details:
 * Size: {PrintSize}
@@ -89,6 +145,10 @@ Print Details:
 {IF:AdditionalCharges}
 Additional Charges
 {AdditionalCharges}
+{/IF}
+
+{IF:TargetDestination}
+Target Destination: {TargetDestination}
 {/IF}
 
 {IF:DiscountAmount}
@@ -108,14 +168,14 @@ Let me know if you would like to proceed.`
   },
   {
     id: "tpl_production_layout_quote",
-    name: "Production Layout Quotation Template",
-    category: "Quotations",
+    name: "Production Layout Quotation",
+    category: "Sales Quotes",
     toolKey: "production_layout",
     description: "Quotation for custom sheet & material production layouts.",
-    placeholders: ["{MaterialName}", "{SheetSpecs}", "{Quantity}", "{UnitPrice}", "{Subtotal}", "{DeliveryMethod}", "{DeliveryCharge}", "{DiscountPercent}", "{DiscountAmount}", "{GrandTotal}", "{DeliveryMessage}"],
+    placeholders: ["{CustomerResponse}", "{MaterialName}", "{SheetSpecs}", "{Quantity}", "{UnitPrice}", "{Subtotal}", "{DeliveryMethod}", "{DeliveryCharge}", "{DiscountPercent}", "{DiscountAmount}", "{GrandTotal}", "{DeliveryMessage}"],
     active: true,
     isDefault: true,
-    content: `Thank you so much for providing those details. Here is your personalized quote based on your request:
+    content: `{CustomerResponse}
 
 Production Details:
 * Material: {MaterialName}
@@ -144,14 +204,14 @@ Let me know if you would like to proceed.`
   },
   {
     id: "tpl_location_logistics_quote",
-    name: "Location Logistics Quotation Template",
-    category: "Quotations",
+    name: "Location Logistics Quotation",
+    category: "Sales Quotes",
     toolKey: "location",
     description: "Quotation template for event venue setup and location logistics.",
-    placeholders: ["{ParishLocation}", "{ServiceTier}", "{DiscountPercent}", "{DiscountAmount}", "{GrandTotal}", "{DeliveryMessage}"],
+    placeholders: ["{CustomerResponse}", "{ParishLocation}", "{ServiceTier}", "{DiscountPercent}", "{DiscountAmount}", "{GrandTotal}", "{DeliveryMessage}"],
     active: true,
     isDefault: true,
-    content: `Thank you so much for providing those details. Here is your personalized quote based on your request:
+    content: `{CustomerResponse}
 
 Logistics Details:
 * Location / Parish: {ParishLocation}
@@ -172,85 +232,142 @@ Delivery Method: {DeliveryMethod}
 Let me know if you would like to proceed.`
   },
   {
-    id: "tpl_delivery_knutsford",
-    name: "Knutsford Express Delivery Notice",
-    category: "Delivery & Collection",
-    description: "Standard dispatch text appended when Knutsford Express is selected.",
-    placeholders: ["{DeliveryMethod}"],
+    id: "tpl_ops_board_message",
+    name: "Operations Board Messages",
+    category: "Operations",
+    toolKey: "general",
+    description: "Copy-and-paste format for operations board task updates and fulfillment cards.",
+    placeholders: ["{OrderNumber}", "{CustomerName}", "{ProductionStatus}", "{DueDate}", "{DeliveryMethod}", "{TargetDestination}", "{InternalNotes}"],
     active: true,
     isDefault: true,
-    content: `Your order will be dispatched via Knutsford Express once production has been completed.
-
-Collection details and tracking information will be provided once your order is ready for shipment.`
+    content: `ORDER OPERATIONAL DETAILS:
+Order #{OrderNumber} — {CustomerName}
+Status: {ProductionStatus}
+Due Date: {DueDate}
+Delivery Method: {DeliveryMethod}
+Target Destination: {TargetDestination}
+Internal Notes: {InternalNotes}`
   },
   {
-    id: "tpl_delivery_tara",
-    name: "Tara Courier Doorstep Notice",
-    category: "Delivery & Collection",
-    description: "Doorstep courier message template for islandwide deliveries.",
-    placeholders: ["{DeliveryMethod}"],
+    id: "tpl_delivery_messages",
+    name: "Delivery Messages",
+    category: "Operations",
+    toolKey: "general",
+    description: "Logistics dispatch instructions and collection notifications sent to recipients.",
+    placeholders: ["{CustomerName}", "{DeliveryMethod}", "{TargetDestination}", "{DeliveryMessage}"],
     active: true,
     isDefault: true,
-    content: `Your order will be delivered directly to your specified address via Tara Courier.
+    content: `DELIVERY LOGISTICS NOTICE:
+Recipient: {CustomerName}
+Method: {DeliveryMethod}
+Destination: {TargetDestination}
 
-Tracking details and delivery schedule will be communicated upon dispatch.`
+{DeliveryMessage}`
   },
   {
-    id: "tpl_delivery_pickup",
-    name: "Office Collection & Pickup Notice",
-    category: "Delivery & Collection",
-    description: "Message template for in-person pickups at corporate headquarters.",
-    placeholders: ["{PickupLocation}"],
-    active: true,
-    isDefault: true,
-    content: `Your order will be available for pickup at our Kingston Head Office once processing has been completed.
-
-Please present your order reference upon arrival.`
-  },
-  {
-    id: "tpl_comm_deposit",
-    name: "Order Confirmation & Payment Deposit Request",
-    category: "Customer Communications",
-    description: "Customer payment request notice with NCB banking details.",
-    placeholders: ["{CustomerName}", "{DepositAmount}", "{GrandTotal}", "{BusinessName}"],
+    id: "tpl_payment_instructions",
+    name: "Payment Instructions",
+    category: "Operations",
+    toolKey: "general",
+    description: "Editable banking information and deposit payment guidelines.",
+    placeholders: ["{CustomerName}", "{OrderNumber}", "{GrandTotal}", "{DepositAmount}", "{BusinessName}"],
     active: true,
     isDefault: true,
     content: `Dear {CustomerName},
 
-Thank you for confirming your order with {BusinessName}!
-
-To initiate production, a 50% deposit of {DepositAmount} is required.
-Total Order Value: {GrandTotal}
-
-Payment Details:
+Payment Details for Order #{OrderNumber}:
 Bank: National Commercial Bank (NCB)
 Account Name: {BusinessName}
 Account Number: 123456789
+Branch: Montego Bay
 
-Please send a copy of your transfer confirmation to begin processing.
+Total Order Amount: {GrandTotal}
+Required 50% Deposit: {DepositAmount}
+
+Please email your transfer proof to confirm your order and initiate production.`
+  },
+  {
+    id: "tpl_followup_message",
+    name: "Follow-up Messages",
+    category: "Customer Communication",
+    toolKey: "general",
+    description: "Polite follow-up check-in sent to clients following quotation delivery.",
+    placeholders: ["{CustomerName}", "{ItemTitle}", "{BusinessName}"],
+    active: true,
+    isDefault: true,
+    content: `Hi {CustomerName},
+
+I hope you're having a wonderful week! Following up regarding your personalized quotation for {ItemTitle}.
+
+Please let us know if you have any questions or if you'd like us to confirm this order for production.
 
 Warm regards,
 {BusinessName}`
   },
   {
-    id: "tpl_comm_completion",
-    name: "Order Completion & Dispatch Notice",
-    category: "Customer Communications",
-    description: "Customer notification when an order finishes production and is ready.",
-    placeholders: ["{CustomerName}", "{DeliveryMethod}", "{DeliveryMessage}", "{BusinessName}"],
+    id: "tpl_thank_you_message",
+    name: "Thank You Messages",
+    category: "Customer Communication",
+    toolKey: "general",
+    description: "Appreciation message sent to clients after successful fulfillment.",
+    placeholders: ["{CustomerName}", "{BusinessName}"],
     active: true,
     isDefault: true,
-    content: `Dear {CustomerName},
+    content: `Thank you so much for choosing {BusinessName}, {CustomerName}!
 
-Your order is ready!
-
-Delivery Method: {DeliveryMethod}
-{DeliveryMessage}
-
-Thank you for choosing {BusinessName}.
+We truly appreciate your business and hope you love your completed order. If you need anything else, please feel free to reach out anytime.
 
 Warm regards,
 {BusinessName}`
+  },
+  {
+    id: "tpl_reminder_message",
+    name: "Reminder Messages",
+    category: "Customer Communication",
+    toolKey: "general",
+    description: "Reminder notice for upcoming order deadlines, payments, or pickups.",
+    placeholders: ["{CustomerName}", "{OrderNumber}", "{DueDate}", "{BusinessName}"],
+    active: true,
+    isDefault: true,
+    content: `Hello {CustomerName},
+
+This is a friendly reminder regarding your order #{OrderNumber} scheduled for {DueDate}.
+
+Please reach out to us if you need any adjustments or updates.
+
+Warm regards,
+{BusinessName}`
+  },
+  {
+    id: "tpl_inventory_notification",
+    name: "Inventory Notifications",
+    category: "Customer Communication",
+    toolKey: "general",
+    description: "Catalog stock update or restock notification sent to VIP clients.",
+    placeholders: ["{BookTitle}", "{StockStatus}", "{Quantity}", "{Location}", "{BusinessName}"],
+    active: true,
+    isDefault: true,
+    content: `Luxe Inventory Update:
+Title: {BookTitle}
+Status: {StockStatus}
+Available Stock: {Quantity} copies at {Location}
+
+Contact {BusinessName} today to reserve your copy!`
+  },
+  {
+    id: "tpl_internal_ops_notes",
+    name: "Internal Operations Notes",
+    category: "Operations",
+    toolKey: "general",
+    description: "Standardized internal formatting for staff assignments and task notes.",
+    placeholders: ["{CustomerName}", "{ClientTier}", "{Priority}", "{AssignedStaff}", "{InternalNotes}"],
+    active: true,
+    isDefault: true,
+    content: `INTERNAL OPERATIONAL LOG
+Client: {CustomerName} ({ClientTier} Tier)
+Priority Level: {Priority}
+Assigned Staff: {AssignedStaff}
+Special Instructions: {InternalNotes}`
   }
 ];
 
@@ -318,9 +435,20 @@ export function formatQuoteTemplate(
   // Standard placeholder replacement
   Object.entries(dataMap).forEach(([key, val]) => {
     const stringVal = val !== undefined && val !== null ? String(val) : "";
-    const placeholder = `{${key}}`;
-    result = result.split(placeholder).join(stringVal);
+    result = result.split(`{{${key}}}`).join(stringVal);
+    result = result.split(`{${key}}`).join(stringVal);
   });
+
+  // Alias support for Destination <-> TargetDestination
+  if (dataMap.Destination !== undefined && dataMap.TargetDestination === undefined) {
+    const stringVal = String(dataMap.Destination);
+    result = result.split(`{{TargetDestination}}`).join(stringVal);
+    result = result.split(`{TargetDestination}`).join(stringVal);
+  } else if (dataMap.TargetDestination !== undefined && dataMap.Destination === undefined) {
+    const stringVal = String(dataMap.TargetDestination);
+    result = result.split(`{{Destination}}`).join(stringVal);
+    result = result.split(`{Destination}`).join(stringVal);
+  }
 
   // Cleanup unfulfilled {Placeholder} tags if any remain
   result = result.replace(/\{[a-zA-Z0-9_]+\}/g, "");
@@ -585,6 +713,136 @@ export const DEFAULT_PRODUCTION_MATERIALS: ProductionMaterialPreset[] = [
   }
 ];
 
+export const DEFAULT_CHECKLIST_TEMPLATES: ProductionChecklistTemplate[] = [
+  {
+    id: "template_magic_heart_cube",
+    name: "Magic Heart Cube Checklist",
+    category: "Gift Sets",
+    description: "Assembly checklist for Magic Heart Cubes",
+    items: [
+      { id: "item_1", label: "Flowers", completed: false },
+      { id: "item_2", label: "Chocolates", completed: false },
+      { id: "item_3", label: "Photos", completed: false },
+      { id: "item_4", label: "Money", completed: false },
+      { id: "item_5", label: "Balloons", completed: false }
+    ],
+    isDefault: true
+  },
+  {
+    id: "template_flower_arrangements",
+    name: "Flower Arrangements Checklist",
+    category: "Floral & Decor",
+    description: "Quality assembly checklist for fresh flower arrangements",
+    items: [
+      { id: "item_1", label: "Fresh Flowers Inspection", completed: false },
+      { id: "item_2", label: "Vase & Floral Foam Setup", completed: false },
+      { id: "item_3", label: "Ribbon & Custom Tag", completed: false },
+      { id: "item_4", label: "Personalized Card Insert", completed: false },
+      { id: "item_5", label: "Flower Preservative Packet", completed: false },
+      { id: "item_6", label: "Hydration & Packaging", completed: false }
+    ],
+    isDefault: true
+  },
+  {
+    id: "template_tshirt_order",
+    name: "T-Shirts Checklist",
+    category: "Apparel",
+    description: "Standard checklist for custom t-shirt printing and apparel orders",
+    items: [
+      { id: "item_1", label: "Garment Inspection", completed: false },
+      { id: "item_2", label: "Printing Process", completed: false },
+      { id: "item_3", label: "Quality Control Trim", completed: false },
+      { id: "item_4", label: "Folding & Polybag", completed: false }
+    ],
+    isDefault: true
+  },
+  {
+    id: "template_dtf_printing",
+    name: "DTF Printing Checklist",
+    category: "Printing",
+    description: "Direct-to-Film transfer print and curing quality workflow",
+    items: [
+      { id: "item_1", label: "Vector Artwork File Check", completed: false },
+      { id: "item_2", label: "Film Print Run", completed: false },
+      { id: "item_3", label: "Hot Melt Powdering & Curing", completed: false },
+      { id: "item_4", label: "Adhesion & Color Inspection", completed: false },
+      { id: "item_5", label: "Protective Packaging", completed: false }
+    ],
+    isDefault: true
+  },
+  {
+    id: "template_luxe_book_binding",
+    name: "Books Checklist",
+    category: "Librarium Books",
+    description: "Craftsmanship checklist for luxury bound book editions",
+    items: [
+      { id: "item_1", label: "Leather Grain Inspection", completed: false },
+      { id: "item_2", label: "Paper Stock Cut", completed: false },
+      { id: "item_3", label: "Foil Stamping", completed: false },
+      { id: "item_4", label: "Binding & Ribbon", completed: false },
+      { id: "item_5", label: "Dust Jacket", completed: false },
+      { id: "item_6", label: "Slipcase Box", completed: false }
+    ],
+    isDefault: true
+  },
+  {
+    id: "template_engraving",
+    name: "Engraving Checklist",
+    category: "Engraving & Marking",
+    description: "Precision laser engraving and surface finish inspection steps",
+    items: [
+      { id: "item_1", label: "Material Inspection", completed: false },
+      { id: "item_2", label: "Vector File Alignment", completed: false },
+      { id: "item_3", label: "Laser Power Calibration", completed: false },
+      { id: "item_4", label: "Test Pass Verification", completed: false },
+      { id: "item_5", label: "Final Engraving Pass", completed: false },
+      { id: "item_6", label: "Surface Polish & Cleaning", completed: false }
+    ],
+    isDefault: true
+  },
+  {
+    id: "template_custom_gifts",
+    name: "Custom Gifts Checklist",
+    category: "Bespoke Gifts",
+    description: "Bespoke gift assembly, personalization, and luxury packaging checklist",
+    items: [
+      { id: "item_1", label: "Gift Box Selection", completed: false },
+      { id: "item_2", label: "Custom Item Verification", completed: false },
+      { id: "item_3", label: "Personalized Engraving / Print", completed: false },
+      { id: "item_4", label: "Satin Ribbon & Bow", completed: false },
+      { id: "item_5", label: "Handwritten Note Card", completed: false },
+      { id: "item_6", label: "Outer Protection & Labeling", completed: false }
+    ],
+    isDefault: true
+  }
+];
+
+export const DEFAULT_TARGET_DESTINATIONS: string[] = [
+  "Kingston",
+  "St. Andrew",
+  "St. Thomas",
+  "Portland",
+  "St. Mary",
+  "St. Ann",
+  "Trelawny",
+  "St. James",
+  "Hanover",
+  "Westmoreland",
+  "St. Elizabeth",
+  "Manchester",
+  "Clarendon",
+  "St. Catherine",
+  "Montego Bay",
+  "Ocho Rios",
+  "Mandeville",
+  "May Pen",
+  "Portmore",
+  "Savanna-la-Mar",
+  "Fresh Drip Outlet",
+  "Customer Pickup",
+  "Other"
+];
+
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   exchangeRate: 160,
   shippingSingleBook: 1350,
@@ -622,7 +880,9 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   dtfSuppliers: DEFAULT_DTF_SUPPLIERS,
   dtfPricingPresets: DEFAULT_DTF_PRICING,
   deliveryMethods: DEFAULT_DELIVERY_METHODS,
-  quoteTemplates: DEFAULT_QUOTE_TEMPLATES
+  quoteTemplates: DEFAULT_QUOTE_TEMPLATES,
+  checklistTemplates: DEFAULT_CHECKLIST_TEMPLATES,
+  targetDestinations: DEFAULT_TARGET_DESTINATIONS
 };
 
 export function getSystemSettings(): SystemSettings {
@@ -656,6 +916,18 @@ export function getSystemSettings(): SystemSettings {
     }
     if (!parsed.quoteTemplates || !Array.isArray(parsed.quoteTemplates) || parsed.quoteTemplates.length === 0) {
       parsed.quoteTemplates = DEFAULT_QUOTE_TEMPLATES;
+    } else {
+      const existingIds = new Set(parsed.quoteTemplates.map((t: SystemQuoteTemplate) => t.id));
+      const missingDefaults = DEFAULT_QUOTE_TEMPLATES.filter(dt => !existingIds.has(dt.id));
+      if (missingDefaults.length > 0) {
+        parsed.quoteTemplates = [...parsed.quoteTemplates, ...missingDefaults];
+      }
+    }
+    if (!parsed.checklistTemplates || !Array.isArray(parsed.checklistTemplates) || parsed.checklistTemplates.length === 0) {
+      parsed.checklistTemplates = DEFAULT_CHECKLIST_TEMPLATES;
+    }
+    if (!parsed.targetDestinations || !Array.isArray(parsed.targetDestinations) || parsed.targetDestinations.length === 0) {
+      parsed.targetDestinations = DEFAULT_TARGET_DESTINATIONS;
     }
     return { ...DEFAULT_SYSTEM_SETTINGS, ...parsed };
   } catch (e) {

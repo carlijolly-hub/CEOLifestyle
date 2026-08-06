@@ -52,6 +52,8 @@ export default function ClientList({
 
   // Filters state
   const [filterBrand, setFilterBrand] = useState<string>("All");
+  const [filterBusinessRelationship, setFilterBusinessRelationship] = useState<string>("All");
+  const [filterManagement, setFilterManagement] = useState<string>("All");
   const [filterTier, setFilterTier] = useState<string>("All");
   const [filterCountry, setFilterCountry] = useState<string>("All");
   const [filterParish, setFilterParish] = useState<string>("All");
@@ -60,6 +62,8 @@ export default function ClientList({
   const [filterValue, setFilterValue] = useState<string>("All");
   const [filterUpcoming, setFilterUpcoming] = useState<string>("All");
   const [filterMarketing, setFilterMarketing] = useState<string>("All");
+  const [filterCommStatus, setFilterCommStatus] = useState<string>("All");
+  const [filterRemembrance, setFilterRemembrance] = useState<string>("All");
 
   // Get unique lists for filter select dropdowns
   const countries = useMemo(() => {
@@ -83,6 +87,8 @@ export default function ClientList({
   // Handle clearing all filters
   const resetFilters = () => {
     setFilterBrand("All");
+    setFilterBusinessRelationship("All");
+    setFilterManagement("All");
     setFilterTier("All");
     setFilterCountry("All");
     setFilterParish("All");
@@ -91,6 +97,8 @@ export default function ClientList({
     setFilterValue("All");
     setFilterUpcoming("All");
     setFilterMarketing("All");
+    setFilterCommStatus("All");
+    setFilterRemembrance("All");
     setSearchTerm("");
   };
 
@@ -111,11 +119,19 @@ export default function ClientList({
         client.contact.phoneNumber.includes(searchLower) ||
         client.contact.city.toLowerCase().includes(searchLower) ||
         client.occupation.toLowerCase().includes(searchLower) ||
-        client.profile.personalNotes.toLowerCase().includes(searchLower);
+        (client.communicationStatus || "Unknown").toLowerCase().includes(searchLower) ||
+        client.profile.personalNotes.toLowerCase().includes(searchLower) ||
+        (client.favouriteAuthors && client.favouriteAuthors.some(a => a.toLowerCase().includes(searchLower)));
 
       if (!matchesSearch) return false;
 
-      // 2. Brand Filter
+      // 2. Business Relationship Filter
+      if (filterBusinessRelationship !== "All") {
+        const rel = client.businessRelationship || (client.homeBrand === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle");
+        if (rel !== filterBusinessRelationship) return false;
+      }
+
+      // 2b. Brand Filter
       if (filterBrand !== "All") {
         if (filterBrand === "CEO Printing Services") {
           if (client.homeBrand !== "CEO Printing Services" && client.homeBrand !== "CEO Lifestyle") return false;
@@ -124,6 +140,12 @@ export default function ClientList({
         } else if (filterBrand === "CEO Lifestyle") {
           if (client.homeBrand !== "CEO Lifestyle") return false;
         }
+      }
+
+      // 2c. Management Classification Filter
+      if (filterManagement !== "All") {
+        const mgmt = client.managementClassification || (client.tier === "Delinquent" ? "Delinquent" : client.tier === "Problematic" ? "Problematic" : client.tier === "Founders Family" ? "VIP Priority" : "Standard");
+        if (mgmt !== filterManagement) return false;
       }
 
       // 3. Tier Filter
@@ -190,12 +212,34 @@ export default function ClientList({
         if (filterMarketing === "No" && hasOptedIn) return false;
       }
 
+      // 11. Communication Status Filter
+      if (filterCommStatus !== "All") {
+        const status = client.communicationStatus || "Unknown";
+        if (status !== filterCommStatus) return false;
+      }
+
+      // 12. Personal Remembrance Filter
+      if (filterRemembrance !== "All") {
+        const rems = client.remembrances || [];
+        if (filterRemembrance === "Mother Remembered") {
+          const hasMother = rems.some(r => (r.relationship || "").toLowerCase() === "mother");
+          if (!hasMother) return false;
+        } else if (filterRemembrance === "Father Remembered") {
+          const hasFather = rems.some(r => (r.relationship || "").toLowerCase() === "father");
+          if (!hasFather) return false;
+        } else if (filterRemembrance === "Any Personal Remembrance") {
+          if (rems.length === 0) return false;
+        }
+      }
+
       return true;
     });
   }, [
     clients,
     searchTerm,
     filterBrand,
+    filterBusinessRelationship,
+    filterManagement,
     filterTier,
     filterCountry,
     filterParish,
@@ -204,6 +248,8 @@ export default function ClientList({
     filterValue,
     filterUpcoming,
     filterMarketing,
+    filterCommStatus,
+    filterRemembrance,
     showDeactivated
   ]);
 
@@ -213,30 +259,11 @@ export default function ClientList({
   };
 
   return (
-    <div className="space-y-6 text-slate-800">
-      {/* Client Accounts Synchronization Status Banner */}
-      <div className="bg-slate-50 border border-slate-200/50 rounded-2xl p-4 flex items-center justify-between gap-4 text-left shadow-3xs">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-          </div>
-          <div>
-            <h4 className="text-xs font-bold text-slate-900">
-              {clients.length} Client Accounts Synchronized
-            </h4>
-            <p className="text-[10px] text-slate-400 mt-0.5 font-medium">
-              Offline Database active. Last Synchronized: <span className="font-semibold text-slate-500">{new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-            </p>
-          </div>
-        </div>
-        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest hidden sm:block">
-          CRM Watchtower Secured
-        </div>
-      </div>
-
-      {/* Search Bar & Action Buttons */}
-      <div className="flex flex-col md:flex-row gap-4 justify-between items-stretch md:items-center">
-        <div className="relative flex-1">
+    <div className="space-y-4 text-slate-800">
+      {/* Search & Management Area */}
+      <div className="space-y-3">
+        {/* Search Bar */}
+        <div className="relative w-full">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
@@ -255,11 +282,12 @@ export default function ClientList({
           )}
         </div>
 
-        <div className="flex gap-2.5 items-stretch flex-wrap md:flex-nowrap">
+        {/* Action Controls */}
+        <div className="flex gap-2.5 items-center flex-wrap">
           {/* DEACTIVATED ARCHIVE TOGGLE */}
           <button
             onClick={() => setShowDeactivated(!showDeactivated)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-bold rounded-xl border transition-all ${
+            className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl border transition-all ${
               showDeactivated 
                 ? "bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100/50" 
                 : "bg-white hover:bg-slate-50 border-slate-200 text-slate-600"
@@ -272,7 +300,7 @@ export default function ClientList({
 
           <button
             onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-xl border transition-all ${
+            className={`flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl border transition-all ${
               showFilters || [filterBrand, filterTier, filterCountry, filterParish, filterCategory, filterFrequency, filterValue, filterUpcoming, filterMarketing].some(v => v !== "All")
                 ? "bg-slate-100 border-slate-900 text-slate-900"
                 : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
@@ -290,7 +318,7 @@ export default function ClientList({
 
           <button
             onClick={() => setIsExportModalOpen(true)}
-            className="flex items-center gap-1.5 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 text-xs font-bold rounded-xl transition-all shadow-xs"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 text-xs font-bold rounded-xl transition-all shadow-xs"
             title="Export current client database (V2.1)"
           >
             <Download className="w-4 h-4 text-indigo-600" />
@@ -299,7 +327,7 @@ export default function ClientList({
 
           <button
             onClick={onAddNewClient}
-            className="flex items-center gap-1.5 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-md"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all shadow-md"
           >
             <UserPlus className="w-4 h-4" />
             Add Client
@@ -321,33 +349,52 @@ export default function ClientList({
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {/* Brand */}
+            {/* Business Relationship */}
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Home Brand</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Business Relationship</label>
               <select
-                value={filterBrand}
-                onChange={(e) => setFilterBrand(e.target.value)}
+                value={filterBusinessRelationship}
+                onChange={(e) => setFilterBusinessRelationship(e.target.value)}
                 className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs text-slate-700 focus:outline-none focus:border-slate-800"
               >
-                <option value="All">All Brands</option>
-                <option value="CEO Printing Services">CEO Printing Services</option>
-                <option value="Librarium Luxe">Librarium Luxe</option>
-                <option value="CEO Lifestyle">CEO Lifestyle</option>
+                <option value="All">All Business Relationships</option>
+                <option value="CEO Lifestyle">CEO Lifestyle (Blue)</option>
+                <option value="Librarium Luxe">Librarium Luxe (Crimson)</option>
+                <option value="CEO Lifestyle + Librarium Luxe">Dual Relationship (Blend)</option>
               </select>
             </div>
 
             {/* Client Tier */}
             <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Tier</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Client Tier</label>
               <select
                 value={filterTier}
                 onChange={(e) => setFilterTier(e.target.value)}
                 className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs text-slate-700 focus:outline-none focus:border-slate-800"
               >
                 <option value="All">All Tiers</option>
-                <option value="Gold">Gold Clients</option>
-                <option value="Platinum">Platinum Clients</option>
-                <option value="Silver">Silver Clients</option>
+                <option value="Silver">Silver Tier</option>
+                <option value="Gold">Gold Tier</option>
+                <option value="Platinum">Platinum Tier</option>
+                <option value="Founders Family">Founders Family (Permanent)</option>
+                <option value="Delinquent">Delinquent Risk</option>
+                <option value="Problematic">Problematic Risk</option>
+              </select>
+            </div>
+
+            {/* Management Classification */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Management Status</label>
+              <select
+                value={filterManagement}
+                onChange={(e) => setFilterManagement(e.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs text-slate-700 focus:outline-none focus:border-slate-800"
+              >
+                <option value="All">All Statuses</option>
+                <option value="Standard">Standard Account</option>
+                <option value="VIP Priority">VIP Priority</option>
+                <option value="Problematic">Problematic Review</option>
+                <option value="Delinquent">Delinquent Payment</option>
               </select>
             </div>
 
@@ -452,6 +499,36 @@ export default function ClientList({
                 <option value="No">Opted Out (No)</option>
               </select>
             </div>
+
+            {/* Communication Status */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Communication Status</label>
+              <select
+                value={filterCommStatus}
+                onChange={(e) => setFilterCommStatus(e.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs text-slate-700 focus:outline-none focus:border-slate-800"
+              >
+                <option value="All">All Statuses</option>
+                <option value="Active">Active</option>
+                <option value="Not Active">Not Active</option>
+                <option value="Unknown">Unknown</option>
+              </select>
+            </div>
+
+            {/* Personal Remembrance */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Personal Remembrance</label>
+              <select
+                value={filterRemembrance}
+                onChange={(e) => setFilterRemembrance(e.target.value)}
+                className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs text-slate-700 focus:outline-none focus:border-slate-800"
+              >
+                <option value="All">All Clients</option>
+                <option value="Mother Remembered">Mother Remembered</option>
+                <option value="Father Remembered">Father Remembered</option>
+                <option value="Any Personal Remembrance">Any Personal Remembrance</option>
+              </select>
+            </div>
           </div>
         </div>
       )}
@@ -515,11 +592,17 @@ export default function ClientList({
                               {client.firstName} {client.lastName}
                             </h3>
                             <span className={`px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider border ${
-                              client.tier === "Gold" 
-                                ? "bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-500 text-amber-950 border-amber-600/30" 
-                                : client.tier === "Platinum" 
-                                  ? "bg-slate-900 text-slate-100 border-slate-950" 
-                                  : "bg-slate-100 text-slate-700 border-slate-200"
+                              client.tier === "Founders Family"
+                                ? "bg-gradient-to-r from-purple-700 via-indigo-700 to-purple-800 text-white border-purple-400"
+                                : client.tier === "Gold" 
+                                  ? "bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-500 text-amber-950 border-amber-600/30" 
+                                  : client.tier === "Platinum" 
+                                    ? "bg-slate-900 text-slate-100 border-slate-950" 
+                                    : client.tier === "Delinquent"
+                                      ? "bg-rose-600 text-white border-rose-700 animate-pulse"
+                                      : client.tier === "Problematic"
+                                        ? "bg-black text-rose-400 border-rose-900"
+                                        : "bg-slate-100 text-slate-700 border-slate-200"
                             }`}>
                               {client.tier}
                             </span>
@@ -538,7 +621,7 @@ export default function ClientList({
                           <div className="flex items-center gap-1.5 mt-0.5 text-[9px] text-slate-400 font-semibold truncate">
                             <span className="font-bold">ID: {client.id}</span>
                             <span>•</span>
-                            <span className="truncate">{client.homeBrand === "Both" ? "CEO Lifestyle" : client.homeBrand}</span>
+                            <span className="truncate">{(client.homeBrand as string) === "Both" ? "CEO Lifestyle" : client.homeBrand}</span>
                             <span>•</span>
                             <span className="truncate">{client.contact.city}</span>
                           </div>
@@ -597,9 +680,13 @@ export default function ClientList({
                         {/* Contact details */}
                         <div className="space-y-2 text-left bg-white p-3 rounded-xl border border-slate-100 shadow-3xs">
                           <span className="text-[8.5px] font-extrabold text-slate-400 uppercase tracking-widest block">Contact Channels:</span>
-                          <div className="flex items-center gap-2 text-slate-700 font-medium text-[11px]">
+                          <div className="flex items-center gap-2 text-slate-700 font-medium text-[11px] flex-wrap">
                             <Smartphone className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                             <span>{client.contact.phoneNumber}</span>
+                            <span className="text-slate-300">|</span>
+                            <span className="text-[10px] text-slate-600 font-bold">
+                              Communication Status: {client.communicationStatus || "Unknown"}
+                            </span>
                             <span className="text-slate-300">|</span>
                             <span className="text-[8.5px] text-indigo-600 font-extrabold uppercase tracking-wider bg-indigo-50 border border-indigo-100 px-1 py-0.2 rounded">
                               {client.preferredCommunication || "WhatsApp"}
@@ -623,7 +710,7 @@ export default function ClientList({
                           <div className="flex items-start gap-2 text-slate-600 leading-normal text-[11px]">
                             <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
                             <span>
-                              {client.contact.addressLine1 ? `${client.contact.addressLine1}, ` : ""}
+                              {(client.contact as any).addressLine1 ? `${(client.contact as any).addressLine1}, ` : ""}
                               {client.contact.city}, {client.contact.parish || client.contact.country}
                             </span>
                           </div>

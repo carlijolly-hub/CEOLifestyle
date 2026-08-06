@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { ShieldCheck, Download, LogOut, X, FileSpreadsheet, CheckCircle2 } from "lucide-react";
 import { exportExcelBackup } from "../utils/backupUtils";
 
@@ -15,6 +17,7 @@ export default function EndSessionBackupModal({
   onConfirmLogout,
   userFullName = "Master Administrator"
 }: EndSessionBackupModalProps) {
+  useBodyScrollLock(isOpen);
   const [backupNotes, setBackupNotes] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
@@ -39,9 +42,9 @@ export default function EndSessionBackupModal({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden text-left transform transition-all">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto animate-fade-in">
+      <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden text-left transform transition-all my-auto">
         {/* Header */}
         <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-6 text-white relative">
           <button
@@ -138,6 +141,7 @@ export default function EndSessionBackupModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

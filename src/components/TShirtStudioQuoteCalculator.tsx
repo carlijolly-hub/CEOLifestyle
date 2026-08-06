@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { SystemSettings, DeliveryMethod, SavedQuotation } from "../types";
 import { DEFAULT_DELIVERY_METHODS, DEFAULT_QUOTE_TEMPLATES, formatQuoteTemplate } from "../utils/settingsHelper";
+import { normalizeQuotation } from "../utils/quotationUtils";
+import { loadEnvironmentQuotations, saveEnvironmentQuotations } from "../utils/environmentUtils";
 
 interface AdditionalCharge {
   id: string;
@@ -154,7 +156,15 @@ export default function TShirtStudioQuoteCalculator({ settings }: TShirtStudioQu
     return sum + amt;
   }, 0);
 
-  const parsedDeliveryCharge = isPickup ? 0 : Math.max(0, parseFloat(deliveryCharge) || 0);
+  const parsedDeliveryCharge = isPickup 
+    ? 0 
+    : (() => {
+        if (!deliveryCharge) return 0;
+        if (deliveryCharge.trim().toLowerCase() === "free") return 0;
+        const cleaned = deliveryCharge.replace(/[^0-9.]/g, "");
+        const num = parseFloat(cleaned);
+        return isNaN(num) ? 0 : num;
+      })();
 
   const subtotalBeforeDiscount = garmentsSubtotal + totalAdditionalCharges + parsedDeliveryCharge;
   const discountAmount = subtotalBeforeDiscount * (parsedDiscount / 100);
@@ -224,6 +234,10 @@ export default function TShirtStudioQuoteCalculator({ settings }: TShirtStudioQu
     const apparelTemplate = settings?.quoteTemplates?.find(t => t.active && (t.toolKey === "apparel" || t.id === "tpl_apparel_quote" || t.id === "tpl_apparel_studio"))
       || DEFAULT_QUOTE_TEMPLATES.find(t => t.id === "tpl_apparel_quote");
 
+    const customerRespTpl = settings?.quoteTemplates?.find(t => t.active && (t.id === "tpl_customer_response" || t.name === "Customer Response"))
+      || DEFAULT_QUOTE_TEMPLATES.find(t => t.id === "tpl_customer_response");
+    const customerResponseStr = customerRespTpl?.content.trim() || "Thank you so much for providing those details.\n\nHere is your personalized quotation based on your request.";
+
     // Itemized Garment List (Zero Quantity / Zero Cost Rule: omit if Qty <= 0 or Price <= 0)
     const itemLines: string[] = [];
     if (parsedAdultQty > 0 && parsedAdultPrice > 0) {
@@ -260,6 +274,7 @@ export default function TShirtStudioQuoteCalculator({ settings }: TShirtStudioQu
 
     if (apparelTemplate) {
       return formatQuoteTemplate(apparelTemplate.content, {
+        CustomerResponse: customerResponseStr,
         GarmentType: garmentType,
         GarmentItems: garmentItemsStr,
         AdditionalCharges: addChargesStr,
@@ -308,12 +323,18 @@ export default function TShirtStudioQuoteCalculator({ settings }: TShirtStudioQu
   };
 
   const handleSaveQuotation = () => {
-    const newQuote: SavedQuotation = {
+    const totalQty = parsedAdultQty + parsedAdultPlusQty + parsedChildQty;
+    const newQuote: SavedQuotation = normalizeQuotation({
       id: "quote_" + Date.now(),
       quoteNumber: `TS-QT-${Math.floor(1000 + Math.random() * 9000)}`,
       clientName: "T-Shirt Studio Quote",
       toolType: "apparel",
-      summaryText: `${parsedAdultQty + parsedAdultPlusQty + parsedChildQty} ${garmentType} via ${selectedDeliveryMethod?.name || 'Delivery'}`,
+      title: `${totalQty} Custom ${garmentType}`,
+      date: new Date().toISOString().split("T")[0],
+      totalCost: grandTotal * 0.6,
+      quotedPrice: grandTotal,
+      details: `Garment: ${garmentType}. Total Qty: ${totalQty}. Delivery: ${selectedDeliveryMethod?.name || 'Delivery'}. Total: $${grandTotal.toLocaleString()} JMD.`,
+      summaryText: `${totalQty} ${garmentType} via ${selectedDeliveryMethod?.name || 'Delivery'}`,
       itemDetails: [
         { name: `Adult ${garmentType}`, quantity: parsedAdultQty, unitPriceJMD: parsedAdultPrice, subtotalJMD: adultSubtotal },
         { name: `Adult +Size ${garmentType}`, quantity: parsedAdultPlusQty, unitPriceJMD: parsedAdultPlusPrice, subtotalJMD: adultPlusSubtotal },
@@ -327,15 +348,11 @@ export default function TShirtStudioQuoteCalculator({ settings }: TShirtStudioQu
       createdAt: new Date().toISOString(),
       createdBy: "Master Administrator",
       status: "Active"
-    };
+    });
 
-    const stored = localStorage.getItem("ceo_saved_quotations");
-    let existing: SavedQuotation[] = [];
-    if (stored) {
-      try { existing = JSON.parse(stored); } catch (e) { existing = []; }
-    }
+    const existing = loadEnvironmentQuotations();
     const updated = [newQuote, ...existing];
-    localStorage.setItem("ceo_saved_quotations", JSON.stringify(updated));
+    saveEnvironmentQuotations(updated);
 
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2500);
@@ -545,10 +562,10 @@ export default function TShirtStudioQuoteCalculator({ settings }: TShirtStudioQu
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* Delivery / Collection Method Dropdown */}
+            {/* Delivery Method Dropdown */}
             <div className="space-y-1.5">
               <label className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 block">
-                Delivery / Collection Method
+                Delivery Method
               </label>
               <select
                 value={deliveryMethodId}
@@ -557,7 +574,7 @@ export default function TShirtStudioQuoteCalculator({ settings }: TShirtStudioQu
               >
                 {activeDeliveryMethods.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.type === "collection" ? "🏢" : "🚚"} {m.name} {m.type === "collection" ? "(Free)" : `($${m.defaultCost.toLocaleString()} JMD)`}
+                    {m.name}
                   </option>
                 ))}
               </select>
@@ -567,19 +584,17 @@ export default function TShirtStudioQuoteCalculator({ settings }: TShirtStudioQu
             {!isPickup ? (
               <div className="space-y-1.5 animate-fade-in">
                 <label className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 block">
-                  Delivery Charge (JMD)
+                  Delivery Charge
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
                     J$
                   </span>
                   <input
-                    type="number"
-                    step="50"
-                    min="0"
+                    type="text"
                     value={deliveryCharge}
                     onChange={(e) => setDeliveryCharge(e.target.value)}
-                    placeholder="950"
+                    placeholder="Free or e.g. 2,450"
                     className="w-full bg-slate-50 border border-slate-200/60 rounded-xl pl-8 pr-3 py-2 text-xs font-mono font-bold text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-none transition-all"
                   />
                 </div>

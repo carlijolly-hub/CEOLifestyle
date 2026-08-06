@@ -1,11 +1,119 @@
-export type ClientTier = "Silver" | "Gold" | "Platinum";
+export type ClientTier = "Silver" | "Gold" | "Platinum" | "Founders Family" | "Delinquent" | "Problematic";
+export type BusinessRelationship = "CEO Lifestyle" | "Librarium Luxe" | "CEO Lifestyle + Librarium Luxe";
+export type ProfileTheme = "CEO Blue" | "Librarium Crimson" | "Dual Burgundy Blend";
+export type ManagementClassification = "Standard" | "VIP Priority" | "Problematic" | "Delinquent";
+
+export interface ClassificationHistoryRecord {
+  id: string;
+  tier: ClientTier;
+  managementClassification?: ManagementClassification;
+  businessRelationship?: BusinessRelationship;
+  dateChanged: string;
+  changedBy?: string;
+  reason?: string;
+}
 export type HomeBrand = "CEO Printing Services" | "Librarium Luxe" | "CEO Lifestyle";
 export type Gender = "Male" | "Female" | "Other" | "N/A";
 export type YesNo = "Yes" | "No";
+export type CommunicationStatus = "Active" | "Not Active" | "Unknown";
+
+export type ProductionStatus = 
+  | "Awaiting Deposit"
+  | "Awaiting Artwork"
+  | "Ready for Production"
+  | "In Production"
+  | "Quality Check"
+  | "Ready for Pickup"
+  | "Ready for Delivery"
+  | "Completed"
+  | "Cancelled";
+
+export type OperationsDeliveryMethod = 
+  | "Store Pickup"
+  | "Knutsford Express"
+  | "Personal Delivery"
+  | "Tara Courier"
+  | "Other";
+
+export type OrderPriority = "Low" | "Normal" | "High" | "Urgent";
+
+export interface OperationsOrderItem {
+  id: string;
+  productName: string;
+  quantity: number;
+  unitPrice?: number;
+  details?: string;
+}
+
+export interface ChecklistItem {
+  id: string;
+  label: string;
+  completed: boolean;
+  customText?: string;
+}
+
+export interface ProductionChecklistTemplate {
+  id: string;
+  name: string;
+  category?: string;
+  description?: string;
+  items: ChecklistItem[];
+  isDefault?: boolean;
+}
+
+export interface OperationsOrder {
+  id: string;
+  orderNumber: string;
+  clientId: string;
+  clientName: string;
+  clientTier?: ClientTier;
+  clientPhone?: string;
+  items: OperationsOrderItem[] | string;
+  quantityTotal: number;
+  orderDate: string;
+  dueDate: string;
+  productionStatus: ProductionStatus;
+  deliveryMethod: OperationsDeliveryMethod;
+  deliveryLocation: string;
+  assignedStaff?: string;
+  internalNotes?: string;
+  priority: OrderPriority;
+  depositPaid?: boolean;
+  totalAmount?: number;
+  createdDate?: string;
+  updatedDate?: string;
+  checklist?: ChecklistItem[];
+  checklistTemplateName?: string;
+  clientHome?: "CEO Lifestyle" | "Librarium Luxe" | string;
+}
+
+export interface ClientTierRecord {
+  ceoId: string;
+  customerFullName: string;
+  manualTier: ClientTier | "";
+  datePromoted: string;
+  previousTier: string;
+  promotionNotes: string;
+}
+
+export interface PromotionOpportunity {
+  client: Client;
+  ceoId: string;
+  customerFullName: string;
+  currentTier: ClientTier;
+  calculatedTier: ClientTier;
+  lifetimeSpend: number;
+  totalOrders: number;
+  averageOrderValue: number;
+  clientScore: number;
+  reason: string;
+  recommendation: string;
+}
 
 export interface ContactInfo {
   phoneNumber: string;
   email: string;
+  instagramUsername?: string;
   city: string;
   parish: string; // E.g., "St. James", "St. Andrew", "St. Ann", "N/A"
   country: string;
@@ -88,6 +196,49 @@ export interface FollowUpReminder {
   };
 }
 
+export type RelationshipStatus = "Active" | "Warm" | "Dormant";
+export type AccountStatus = "Active" | "Inactive" | "Archived";
+export type TierSource = "Calculated" | "Manual";
+
+export type RemembranceRelationship = 
+  | "Mother"
+  | "Father"
+  | "Husband"
+  | "Wife"
+  | "Son"
+  | "Daughter"
+  | "Brother"
+  | "Sister"
+  | "Grandmother"
+  | "Grandfather"
+  | "Other";
+
+export interface PersonalRemembrance {
+  id: string;
+  relationship: RemembranceRelationship | string;
+  status: "Passed Away" | string;
+  dateAdded?: string;
+  remembranceDate?: string;
+  notes?: string;
+}
+
+export type AdultTShirtSize = "XS" | "S" | "M" | "L" | "XL" | "2XL" | "3XL" | "4XL" | "5XL";
+
+export interface ApparelInformation {
+  tShirtSize?: AdultTShirtSize | string;
+  poloSize?: string;
+  hoodieSize?: string;
+  jerseySize?: string;
+  hatSize?: string;
+  shoeSize?: string;
+  jacketSize?: string;
+  ringSize?: string;
+  braceletSize?: string;
+  necklaceLength?: string;
+  dressSize?: string;
+  [key: string]: string | undefined;
+}
+
 export interface Client {
   id: string; // Client ID (CID), e.g., CEO0001
   firstName: string;
@@ -108,6 +259,22 @@ export interface Client {
   lastContactedDate: string;
   marketingPermission?: YesNo;
   deactivated?: boolean;
+  communicationStatus?: CommunicationStatus;
+  businessRelationship?: BusinessRelationship;
+  profileTheme?: ProfileTheme;
+  managementClassification?: ManagementClassification;
+  tierHistory?: ClassificationHistoryRecord[];
+  healthScore?: number;
+  relationshipStatus?: RelationshipStatus;
+  accountStatus?: AccountStatus;
+  tierSource?: TierSource;
+  manualTierReason?: string;
+  strategicAssociations?: string[];
+  calculatedTier?: ClientTier;
+  clientHome?: "CEO Lifestyle" | "Librarium Luxe" | "CEO Lifestyle | Librarium Luxe" | string;
+  favouriteAuthors?: string[];
+  remembrances?: PersonalRemembrance[];
+  apparelInfo?: ApparelInformation;
 }
 
 export interface InventorySalesMovement {
@@ -165,6 +332,7 @@ export type BusinessEventCategory =
   | "Gold Client Events"
   | "Platinum Client Events"
   | "Silver Client Events"
+  | "Founders Family Events"
   | "CEO Day"
   | "Librarium Luxe Day";
 
@@ -277,8 +445,8 @@ export interface DeliveryMethod {
 export interface SystemQuoteTemplate {
   id: string;
   name: string;
-  category: "Quotations" | "Delivery & Collection" | "Customer Communications";
-  toolKey?: "apparel" | "book" | "dtf" | "production_layout" | "location" | "general";
+  category: "Customer Communication" | "Sales Quotes" | "Operations" | "Quotations" | "Delivery & Collection" | string;
+  toolKey?: "apparel" | "book" | "dtf" | "production_layout" | "location" | "general" | string;
   content: string;
   description?: string;
   placeholders?: string[];
@@ -324,6 +492,21 @@ export interface SystemSettings {
   dtfPricingPresets?: DTFPricingPreset[];
   deliveryMethods?: DeliveryMethod[];
   quoteTemplates?: SystemQuoteTemplate[];
+  checklistTemplates?: ProductionChecklistTemplate[];
+  targetDestinations?: string[];
+}
+
+export interface FollowUpRecord {
+  id: string;
+  attemptNumber: number;
+  date: string;
+  timestamp?: string;
+  method?: string;
+  channel?: string;
+  notes: string;
+  recordedBy?: string;
+  loggedBy?: string;
+  nextFollowUpDate?: string;
 }
 
 export interface BackupRecord {
@@ -368,6 +551,10 @@ export interface SavedQuotation {
   createdAt?: string;
   createdBy?: string;
   status?: string;
+  isFavorite?: boolean;
+  favoritedAt?: string;
+  displayOrder?: number;
+  clientType?: string;
 }
 
 export type AspiringClientStatus = 
@@ -383,13 +570,24 @@ export type AspiringClientStatus =
 export interface AspiringClient {
   id: string;
   name: string;
+  phoneNumber?: string;
+  email?: string;
+  instagramUsername?: string;
+  preferredContactMethod?: "Instagram" | "Phone Call" | "WhatsApp" | "SMS" | "Email" | "In Person" | "Other" | string;
   contactInfo: string;
   sourceOfInquiry: "Instagram" | "Referral" | "Website" | "Walk-in" | "Phone Call" | "Other" | string;
   serviceInterestedIn: string;
   dateContacted: string; // YYYY-MM-DD
+  lastContactDate?: string;
   notes: string;
   assignedUser: string;
   status: AspiringClientStatus;
   followUpDate: string; // YYYY-MM-DD
+  followUpCount?: number; // 0 to 3+
+  followUpHistory?: FollowUpRecord[];
+  archiveReason?: "Not Interested" | "No Response" | "Converted to Client" | "Keep Active" | "Other" | string;
+  archivedDate?: string;
+  clientHome?: "CEO Lifestyle" | "Librarium Luxe" | "CEO Lifestyle | Librarium Luxe" | string;
+  favouriteAuthors?: string[];
 }
 

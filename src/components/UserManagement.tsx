@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { AppUser, UserRole, UserStatus } from "../types";
 import { INITIAL_USERS } from "../data/mockData";
 import { 
@@ -38,6 +40,8 @@ export default function UserManagement({ onUpdateMasterCredentials, masterUserna
   // Edit / Add Modal or form state
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AppUser | null>(null);
+
+  useBodyScrollLock(isFormOpen);
 
   // Form Fields
   const [fullName, setFullName] = useState("");
@@ -545,9 +549,9 @@ export default function UserManagement({ onUpdateMasterCredentials, masterUserna
       </div>
 
       {/* MODAL FORM FOR ADDING / EDITING USERS */}
-      {isFormOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl border border-slate-100 shadow-2xl max-w-md w-full p-6 space-y-5 text-left relative">
+      {isFormOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-slate-950/50 backdrop-blur-sm overflow-y-auto animate-fade-in">
+          <div className="bg-white rounded-3xl border border-slate-100 shadow-2xl max-w-md w-full p-6 space-y-5 text-left relative my-auto">
             
             <button 
               onClick={resetUserForm}
@@ -654,7 +658,8 @@ export default function UserManagement({ onUpdateMasterCredentials, masterUserna
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
     </div>

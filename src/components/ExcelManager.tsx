@@ -1,6 +1,7 @@
 import React, { useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import { Client, ClientTier, LuxeBookInventoryItem, InventorySalesMovement } from "../types";
+import { getCurrentEnvironment } from "../utils/environmentUtils";
 import { 
   flatRowToCustomer, 
   exportClientsExcel, 
@@ -22,8 +23,10 @@ import {
   BookOpen,
   Archive,
   TrendingDown,
-  X
+  X,
+  Clipboard
 } from "lucide-react";
+import UniversalPasteModal from "./UniversalPasteModal";
 
 interface ExcelManagerProps {
   customers: Client[];
@@ -58,6 +61,77 @@ export default function ExcelManager({
   const [excelUploadMode, setExcelUploadMode] = useState<"update" | "sync">("update");
   const [luxeSuccessMsg, setLuxeSuccessMsg] = useState("");
   const [luxeErrorMsg, setLuxeErrorMsg] = useState("");
+
+  // Universal Paste State
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+  const [pasteType, setPasteType] = useState<"clients" | "inventory" | "sales">("clients");
+
+  const handleConfirmPasteClients = (mappedList: Client[]) => {
+    if (mappedList.length === 0) return;
+    const merged = [...customers];
+    let newCount = 0;
+    let dupCount = 0;
+
+    mappedList.forEach(imported => {
+      const existingIdx = merged.findIndex(c => c.id === imported.id || (c.firstName.toLowerCase() === imported.firstName.toLowerCase() && c.lastName.toLowerCase() === imported.lastName.toLowerCase()));
+      if (existingIdx >= 0) {
+        dupCount++;
+        merged[existingIdx] = { ...merged[existingIdx], ...imported };
+      } else {
+        newCount++;
+        merged.push(imported);
+      }
+    });
+
+    onImportCustomers(merged);
+    setSuccessMsg(`Universal Excel Paste Successful! Ingested ${mappedList.length} client records (${newCount} new, ${dupCount} updated).`);
+  };
+
+  const handleConfirmPasteInventory = (pastedItems: LuxeBookInventoryItem[], mode: string) => {
+    if (!onUpdateInventory || pastedItems.length === 0) return;
+    let updatedList = [...(inventory || [])];
+    let addedCount = 0;
+    let updatedCount = 0;
+
+    if (mode === "sync") {
+      const pastedTitles = new Set(pastedItems.map(i => i.title.toLowerCase()));
+      updatedList = updatedList.map(item => {
+        if (!item.archived && !pastedTitles.has(item.title.toLowerCase())) {
+          return { ...item, archived: true };
+        }
+        return item;
+      });
+    }
+
+    pastedItems.forEach((pasted: any) => {
+      const existingIdx = updatedList.findIndex(i => (pasted.id && i.id.toLowerCase() === pasted.id.toLowerCase()) || i.title.toLowerCase() === pasted.title.toLowerCase());
+      if (existingIdx >= 0) {
+        updatedCount++;
+        updatedList[existingIdx] = {
+          ...updatedList[existingIdx],
+          quantity: pasted.totalStock || pasted.quantity || updatedList[existingIdx].quantity,
+          sellingPrice: pasted.price || pasted.sellingPrice || updatedList[existingIdx].sellingPrice,
+          category: pasted.category || updatedList[existingIdx].category
+        };
+      } else {
+        addedCount++;
+        updatedList.push({
+          ...pasted,
+          quantity: pasted.totalStock || pasted.quantity || 1,
+          office: pasted.totalStock || pasted.quantity || 1,
+          inStore: 0
+        });
+      }
+    });
+
+    onUpdateInventory(updatedList);
+    setLuxeSuccessMsg(`Universal Excel Paste Stock Sync Complete! Processed ${pastedItems.length} records (${addedCount} new, ${updatedCount} updated).`);
+  };
+
+  const handleConfirmPasteSales = (pastedSales: InventorySalesMovement[]) => {
+    if (pastedSales.length === 0) return;
+    setLuxeSuccessMsg(`Universal Excel Paste Sales Complete! Recorded ${pastedSales.length} transaction entries.`);
+  };
 
   // Parish / Country dropdown filters for custom exports
   const [exportParish, setExportParish] = useState("All");
@@ -186,6 +260,11 @@ export default function ExcelManager({
   const handleExportOverseas = () => {
     const filtered = customers.filter(c => c.contact.country !== "Jamaica");
     exportClientsExcel(filtered, "Overseas");
+  };
+
+  const handleExportActiveContactsOnly = () => {
+    const filtered = customers.filter(c => (c.communicationStatus || "Unknown") === "Active");
+    exportClientsExcel(filtered, "Active_Contacts_Only");
   };
 
   const handleExportByParish = () => {
@@ -462,10 +541,25 @@ export default function ExcelManager({
         "Status": item.archived ? "Deactivated" : "Active"
       }));
 
+      const env = getCurrentEnvironment();
+      const prefix = env === "LIVE" ? "" : "STRESS_MODE_";
+      const now = new Date();
+
       const ws = XLSX.utils.json_to_sheet(data);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Current Inventory");
-      XLSX.writeFile(wb, "Librarium_Luxe_Inventory_Export.xlsx");
+
+      const sysRefData = [
+        { "Field": "Environment", "Value": env === "LIVE" ? "LIVE MODE" : "STRESS TEST MODE" },
+        { "Field": "Export Date", "Value": now.toLocaleDateString("en-GB") },
+        { "Field": "Export Time", "Value": now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) },
+        { "Field": "Application Version", "Value": "V2.1" },
+        { "Field": "Exported By", "Value": "Master Administrator" }
+      ];
+      const wsRef = XLSX.utils.json_to_sheet(sysRefData);
+      XLSX.utils.book_append_sheet(wb, wsRef, "SYSTEM_REFERENCE");
+
+      XLSX.writeFile(wb, `${prefix}Librarium_Luxe_Inventory_Export.xlsx`);
       setLuxeSuccessMsg("Inventory exported successfully! You can modify this sheet and re-upload it to update records.");
     } catch (err: any) {
       console.error(err);
@@ -496,10 +590,25 @@ export default function ExcelManager({
         return;
       }
 
+      const env = getCurrentEnvironment();
+      const prefix = env === "LIVE" ? "" : "STRESS_MODE_";
+      const now = new Date();
+
       const ws = XLSX.utils.json_to_sheet(salesData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Sales History");
-      XLSX.writeFile(wb, "Librarium_Luxe_Sales_History_Export.xlsx");
+
+      const sysRefData = [
+        { "Field": "Environment", "Value": env === "LIVE" ? "LIVE MODE" : "STRESS TEST MODE" },
+        { "Field": "Export Date", "Value": now.toLocaleDateString("en-GB") },
+        { "Field": "Export Time", "Value": now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) },
+        { "Field": "Application Version", "Value": "V2.1" },
+        { "Field": "Exported By", "Value": "Master Administrator" }
+      ];
+      const wsRef = XLSX.utils.json_to_sheet(sysRefData);
+      XLSX.utils.book_append_sheet(wb, wsRef, "SYSTEM_REFERENCE");
+
+      XLSX.writeFile(wb, `${prefix}Librarium_Luxe_Sales_History_Export.xlsx`);
       setLuxeSuccessMsg("Sales history transactions exported successfully!");
     } catch (err: any) {
       console.error(err);
@@ -514,10 +623,25 @@ export default function ExcelManager({
       { "Book Title": "Renaissance Architecture of Jamaica", "Category": "Caribbean History", "Quantity": 3, "Status": "Deactivated" }
     ];
 
+    const env = getCurrentEnvironment();
+    const prefix = env === "LIVE" ? "" : "STRESS_MODE_";
+    const now = new Date();
+
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Inventory Quantities");
-    XLSX.writeFile(wb, "Librarium_Luxe_Quantities_Template.xlsx");
+
+    const sysRefData = [
+      { "Field": "Environment", "Value": env === "LIVE" ? "LIVE MODE" : "STRESS TEST MODE" },
+      { "Field": "Export Date", "Value": now.toLocaleDateString("en-GB") },
+      { "Field": "Export Time", "Value": now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) },
+      { "Field": "Application Version", "Value": "V2.1" },
+      { "Field": "Exported By", "Value": "Master Administrator" }
+    ];
+    const wsRef = XLSX.utils.json_to_sheet(sysRefData);
+    XLSX.utils.book_append_sheet(wb, wsRef, "SYSTEM_REFERENCE");
+
+    XLSX.writeFile(wb, `${prefix}Librarium_Luxe_Quantities_Template.xlsx`);
   };
 
   const downloadSalesTemplate = () => {
@@ -526,10 +650,25 @@ export default function ExcelManager({
       { "Book Title": "Librarium Folio: Italian Renaissance Masterpieces", "Quantity Sold": 1, "Client Name": "Daniel Sterling", "Date": "2026-07-03" }
     ];
 
+    const env = getCurrentEnvironment();
+    const prefix = env === "LIVE" ? "" : "STRESS_MODE_";
+    const now = new Date();
+
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Sales Transactions");
-    XLSX.writeFile(wb, "Librarium_Luxe_Sales_Transactions_Template.xlsx");
+
+    const sysRefData = [
+      { "Field": "Environment", "Value": env === "LIVE" ? "LIVE MODE" : "STRESS TEST MODE" },
+      { "Field": "Export Date", "Value": now.toLocaleDateString("en-GB") },
+      { "Field": "Export Time", "Value": now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) },
+      { "Field": "Application Version", "Value": "V2.1" },
+      { "Field": "Exported By", "Value": "Master Administrator" }
+    ];
+    const wsRef = XLSX.utils.json_to_sheet(sysRefData);
+    XLSX.utils.book_append_sheet(wb, wsRef, "SYSTEM_REFERENCE");
+
+    XLSX.writeFile(wb, `${prefix}Librarium_Luxe_Sales_Transactions_Template.xlsx`);
   };
 
   return (
@@ -614,6 +753,22 @@ export default function ExcelManager({
                 </p>
                 <p className="text-[11px] text-slate-400 mt-1 font-bold">Supports Microsoft Excel (.xlsx, .xls) files only.</p>
               </div>
+            </div>
+
+            {/* Universal Excel Paste Option */}
+            <div className="pt-2 flex justify-center">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPasteType("clients");
+                  setIsPasteModalOpen(true);
+                }}
+                className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-2xl text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-md"
+              >
+                <Clipboard className="w-4 h-4 text-emerald-400" />
+                Paste From Excel / Google Sheets (Clipboard)
+              </button>
             </div>
 
             {/* Error notifications */}
@@ -764,10 +919,19 @@ export default function ExcelManager({
               {/* Export Overseas */}
               <button
                 onClick={handleExportOverseas}
-                className="w-full flex items-center justify-between p-3.5 bg-slate-50/40 hover:bg-slate-50 border border-slate-200/50 hover:border-slate-300 rounded-xl transition-all font-bold text-slate-800 cursor-pointer"
+                className="w-full flex items-center justify-between p-3.5 bg-slate-50/40 hover:bg-slate-50 border border-slate-200/50 hover:border-slate-300 rounded-xl transition-all font-bold text-slate-800 cursor-pointer text-xs"
               >
                 <span>Download Overseas Clients</span>
                 <Download className="w-4 h-4 text-slate-400" />
+              </button>
+
+              {/* Export Active Contacts Only */}
+              <button
+                onClick={handleExportActiveContactsOnly}
+                className="w-full flex items-center justify-between p-3.5 bg-indigo-50/40 hover:bg-indigo-50 border border-indigo-200/50 hover:border-indigo-300 rounded-xl transition-all font-bold text-indigo-950 cursor-pointer text-xs"
+              >
+                <span>Download Active Contacts Only</span>
+                <Download className="w-4 h-4 text-indigo-500" />
               </button>
 
               {/* Export by Parish */}
@@ -1026,12 +1190,24 @@ export default function ExcelManager({
                   </div>
                 </div>
 
-                <button 
-                  onClick={() => fileInputRefQuantities.current?.click()}
-                  className="w-full mt-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold rounded-xl transition-all cursor-pointer shadow-sm"
-                >
-                  Upload Stock Excel
-                </button>
+                <div className="flex flex-col gap-2 mt-4">
+                  <button 
+                    onClick={() => fileInputRefQuantities.current?.click()}
+                    className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold rounded-xl transition-all cursor-pointer shadow-sm"
+                  >
+                    Upload Stock Excel
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setPasteType("inventory");
+                      setIsPasteModalOpen(true);
+                    }}
+                    className="w-full py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-[10px] font-bold rounded-xl transition-all cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
+                  >
+                    <Clipboard className="w-3.5 h-3.5 text-emerald-300" />
+                    Paste Stock From Clipboard
+                  </button>
+                </div>
               </div>
 
               {/* UPLOAD ZONE 2: SALES HISTORY */}
@@ -1057,18 +1233,60 @@ export default function ExcelManager({
                   </div>
                 </div>
 
-                <button 
-                  onClick={() => fileInputRefSales.current?.click()}
-                  className="w-full mt-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold rounded-xl transition-all cursor-pointer shadow-sm"
-                >
-                  Upload Sales Transaction Excel
-                </button>
+                <div className="flex flex-col gap-2 mt-4">
+                  <button 
+                    onClick={() => fileInputRefSales.current?.click()}
+                    className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold rounded-xl transition-all cursor-pointer shadow-sm"
+                  >
+                    Upload Sales Transaction Excel
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setPasteType("sales");
+                      setIsPasteModalOpen(true);
+                    }}
+                    className="w-full py-2 bg-emerald-800 hover:bg-emerald-900 text-white text-[10px] font-bold rounded-xl transition-all cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
+                  >
+                    <Clipboard className="w-3.5 h-3.5 text-emerald-300" />
+                    Paste Sales From Clipboard
+                  </button>
+                </div>
               </div>
 
             </div>
           </div>
         </div>
       )}
+
+      {/* UNIVERSAL PASTE MODAL */}
+      <UniversalPasteModal
+        isOpen={isPasteModalOpen}
+        onClose={() => setIsPasteModalOpen(false)}
+        title={
+          pasteType === "clients" 
+            ? "Paste Client Directory Records" 
+            : pasteType === "inventory" 
+              ? "Paste Luxe Stock Quantities" 
+              : "Paste Sales Transaction History"
+        }
+        subtitle="Copy rows directly from Microsoft Excel or Google Sheets (Ctrl+C) and paste them here"
+        templateType={pasteType}
+        modeOptions={
+          pasteType === "inventory" ? [
+            { value: "update", label: "Update Mode", description: "Adds new books and updates matching titles. Safe for existing listings." },
+            { value: "sync", label: "Full Sync Mode", description: "Synchronizes exact state: marks items NOT in pasted list as archived." }
+          ] : undefined
+        }
+        onConfirmImport={(mappedItems, rawRows, mode) => {
+          if (pasteType === "clients") {
+            handleConfirmPasteClients(mappedItems);
+          } else if (pasteType === "inventory") {
+            handleConfirmPasteInventory(mappedItems, mode);
+          } else if (pasteType === "sales") {
+            handleConfirmPasteSales(mappedItems);
+          }
+        }}
+      />
 
     </div>
   );

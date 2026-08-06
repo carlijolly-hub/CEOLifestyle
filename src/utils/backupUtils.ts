@@ -2,6 +2,17 @@ import * as XLSX from "xlsx";
 import { Client, LuxeBookInventoryItem, SystemSettings, AspiringClient, BackupRecord, ProductionMaterialPreset } from "../types";
 import { INITIAL_BACKUP_HISTORY, INITIAL_CLIENTS } from "../data/mockData";
 import { customerToFlatRow, flatRowToCustomer } from "./excelUtils";
+import { 
+  getCurrentEnvironment, 
+  loadEnvironmentClients, 
+  loadEnvironmentAspiringClients, 
+  loadEnvironmentInventory, 
+  loadEnvironmentQuotations, 
+  loadEnvironmentBusinessEvents, 
+  loadEnvironmentClientTierRegister, 
+  loadEnvironmentSettings,
+  loadEnvironmentOperationsOrders
+} from "./environmentUtils";
 
 export const BACKUP_HISTORY_STORAGE_KEY = "ceo_backup_history";
 
@@ -71,58 +82,27 @@ export function generateBackupId(): string {
 
 // Helper to gather all active application state into a complete payload
 export function generateFullBackupPayload(createdBy: string = "Master Administrator", notes: string = "") {
-  let clients: Client[] = [];
-  let aspiringClients: AspiringClient[] = [];
-  let inventory: LuxeBookInventoryItem[] = [];
+  const activeEnv = getCurrentEnvironment();
+  const clients: Client[] = loadEnvironmentClients(activeEnv);
+  const aspiringClients: AspiringClient[] = loadEnvironmentAspiringClients(activeEnv);
+  const inventory: LuxeBookInventoryItem[] = loadEnvironmentInventory(activeEnv);
+  const savedQuotations: any[] = loadEnvironmentQuotations(activeEnv);
+  const businessEvents: any[] = loadEnvironmentBusinessEvents(activeEnv);
+  const clientTierRegister: any[] = loadEnvironmentClientTierRegister(activeEnv);
+  const settings: SystemSettings = loadEnvironmentSettings(activeEnv);
+  const operationsOrders = loadEnvironmentOperationsOrders(activeEnv);
+
   let users: any[] = [];
-  let settings: SystemSettings = {} as SystemSettings;
-  let guideLogs: any[] = [];
-  let businessEvents: any[] = [];
-
-  try {
-    const cStr = localStorage.getItem("ceo_client_management_data") || localStorage.getItem("ceo_librarium_crm_customers");
-    if (cStr) clients = JSON.parse(cStr);
-  } catch (e) { console.error("Error reading clients for backup", e); }
-
-  if (!Array.isArray(clients) || clients.length === 0) {
-    clients = INITIAL_CLIENTS;
-  }
-
-  try {
-    const aspStr = localStorage.getItem("ceo_aspiring_clients");
-    if (aspStr) aspiringClients = JSON.parse(aspStr);
-  } catch (e) { console.error("Error reading aspiring clients for backup", e); }
-
-  try {
-    const invStr = localStorage.getItem("luxe_book_inventory");
-    if (invStr) inventory = JSON.parse(invStr);
-  } catch (e) { console.error("Error reading inventory for backup", e); }
-
   try {
     const usersStr = localStorage.getItem("ceo_application_users");
     if (usersStr) users = JSON.parse(usersStr);
   } catch (e) { console.error("Error reading users for backup", e); }
 
-  try {
-    const setStr = localStorage.getItem("librarium_system_settings");
-    if (setStr) settings = JSON.parse(setStr);
-  } catch (e) { console.error("Error reading settings for backup", e); }
-
+  let guideLogs: any[] = [];
   try {
     const guideStr = localStorage.getItem("ceo_admin_guide_logs");
     if (guideStr) guideLogs = JSON.parse(guideStr);
   } catch (e) { console.error("Error reading guide logs for backup", e); }
-
-  try {
-    const evStr = localStorage.getItem("ceo_crm_business_events");
-    if (evStr) businessEvents = JSON.parse(evStr);
-  } catch (e) { console.error("Error reading business events for backup", e); }
-
-  let savedQuotations: any[] = [];
-  try {
-    const qStr = localStorage.getItem("ceo_saved_quotations");
-    if (qStr) savedQuotations = JSON.parse(qStr);
-  } catch (e) { console.error("Error reading saved quotations for backup", e); }
 
   const calculatorStates: Record<string, string> = {};
   const calcKeys = [
@@ -155,30 +135,35 @@ export function generateFullBackupPayload(createdBy: string = "Master Administra
 
   const payload = {
     version: "2.1.0",
+    environment: activeEnv,
     backupSystem: "CEO Lifestyle Management Master Database Workbook",
     backupId,
     timestamp: now.toISOString(),
     backupDate: dateFormatted,
     backupTime: timeFormatted,
     createdBy,
-    notes: notes || "Standard operational backup snapshot",
+    notes: notes || `Standard operational backup snapshot (${activeEnv} Environment)`,
     itemCounts: {
       clients: clients.length,
       aspiringClients: aspiringClients.length,
       inventory: inventory.length,
+      operationsOrders: operationsOrders.length,
       totalBooks: totalBooksStock,
       users: users.length,
       businessEvents: businessEvents.length,
-      savedQuotations: savedQuotations.length
+      savedQuotations: savedQuotations.length,
+      clientTierRegister: clientTierRegister.length
     },
     clients,
     aspiringClients,
     inventory,
+    operationsOrders,
     users,
     settings,
     guideLogs,
     businessEvents,
     savedQuotations,
+    clientTierRegister,
     calculatorStates,
     masterUsername,
     appBg,
@@ -198,13 +183,22 @@ export function exportExcelBackup(notes: string = "", createdBy: string = "Maste
 
   const now = new Date();
   const dateIso = now.toISOString().split("T")[0]; // 2026-07-24
-  const fileName = customFileName || `CEO_Lifestyle_Test_Environment_Backup_V2.1_${dateIso}.xlsx`;
+  const defaultFileName = payload.environment === "LIVE" 
+    ? `CEO_Lifestyle_Backup_V2.1_${dateIso}.xlsx`
+    : `STRESS_MODE_CEO_Lifestyle_Backup_V2.1_${dateIso}.xlsx`;
+  let fileName = customFileName || defaultFileName;
+  if (payload.environment === "STRESS_TEST" && !fileName.startsWith("STRESS_MODE_")) {
+    fileName = `STRESS_MODE_${fileName}`;
+  } else if (payload.environment === "LIVE" && fileName.startsWith("LIVE_MODE_")) {
+    fileName = fileName.replace("LIVE_MODE_", "");
+  }
 
   const wb = XLSX.utils.book_new();
 
   // Worksheet 1: Master Backup Report
   const masterReportData = [
     { "Category": "CEO LIFESTYLE MANAGEMENT - MASTER DATA WORKBOOK REPORT", "Value": "" },
+    { "Category": "Environment Type", "Value": payload.environment === "LIVE" ? "🟢 LIVE MODE" : "🟡 STRESS TEST MODE" },
     { "Category": "Backup ID", "Value": payload.backupId },
     { "Category": "Backup Date", "Value": payload.backupDate },
     { "Category": "Backup Time", "Value": payload.backupTime },
@@ -245,17 +239,46 @@ export function exportExcelBackup(notes: string = "", createdBy: string = "Maste
   const flatAspiring = payload.aspiringClients.map(asp => ({
     "ID": asp.id,
     "Name": asp.name,
-    "Contact Info": asp.contactInfo,
+    "Phone Number": asp.phoneNumber || "",
+    "Email": asp.email || "",
+    "Instagram Username": asp.instagramUsername || "",
+    "Preferred Contact Method": asp.preferredContactMethod || "Instagram",
+    "Contact Info Summary": asp.contactInfo,
     "Source of Inquiry": asp.sourceOfInquiry,
     "Service / Product Interested": asp.serviceInterestedIn,
     "Date Contacted": asp.dateContacted,
-    "Follow-up Date": asp.followUpDate,
+    "Follow-up Date": asp.followUpDate || "N/A",
+    "Follow-up Attempts": asp.followUpCount || 0,
+    "Last Contact Date": asp.lastContactDate || asp.dateContacted,
     "Status": asp.status,
+    "Archive Reason": asp.archiveReason || "Active / None",
+    "Archived Date": asp.archivedDate || "N/A",
     "Assigned User": asp.assignedUser,
     "Notes": asp.notes
   }));
   const wsAspiring = XLSX.utils.json_to_sheet(flatAspiring.length > 0 ? flatAspiring : [{ "Notice": "No aspiring client records" }]);
   XLSX.utils.book_append_sheet(wb, wsAspiring, "Aspiring Clients");
+
+  // Worksheet 4B: Aspiring Follow-Up History
+  const followUpRows: any[] = [];
+  payload.aspiringClients.forEach(asp => {
+    if (asp.followUpHistory && asp.followUpHistory.length > 0) {
+      asp.followUpHistory.forEach(f => {
+        followUpRows.push({
+          "Aspiring Client ID": asp.id,
+          "Client Name": asp.name,
+          "Attempt Number": f.attemptNumber,
+          "Log Date & Time": f.timestamp || f.date,
+          "Channel Used": f.channel || f.method || "N/A",
+          "Logged By": f.loggedBy || f.recordedBy || "Master Administrator",
+          "Outcome Summary": f.notes,
+          "Next Scheduled Follow-up": f.nextFollowUpDate || "None"
+        });
+      });
+    }
+  });
+  const wsFollowUpHistory = XLSX.utils.json_to_sheet(followUpRows.length > 0 ? followUpRows : [{ "Notice": "No follow-up attempt logs recorded" }]);
+  XLSX.utils.book_append_sheet(wb, wsFollowUpHistory, "Aspiring Follow-Up History");
 
   // Worksheet 5: User Accounts
   const flatUsers = payload.users.map(u => ({
@@ -367,13 +390,46 @@ export function exportExcelBackup(notes: string = "", createdBy: string = "Maste
 
   // Worksheet 10: Centralized System Settings
   const flatSettings = payload.settings ? Object.entries(payload.settings)
-    .filter(([k]) => k !== "productionMaterials" && k !== "appBg" && k !== "authBg")
+    .filter(([k]) => k !== "productionMaterials" && k !== "checklistTemplates" && k !== "appBg" && k !== "authBg")
     .map(([k, v]) => ({
       "Setting Key": k,
       "Setting Value": typeof v === "object" ? JSON.stringify(v) : String(v)
     })) : [];
   const wsSettings = XLSX.utils.json_to_sheet(flatSettings.length > 0 ? flatSettings : [{ "Notice": "No custom settings" }]);
   XLSX.utils.book_append_sheet(wb, wsSettings, "Centralized System Settings");
+
+  // Worksheet 10B: Checklist Templates
+  const checklistTemplates = payload.settings?.checklistTemplates || [];
+  const flatChecklistTemplates = checklistTemplates.map(t => ({
+    "Template ID": t.id,
+    "Template Name": t.name,
+    "Category": t.category,
+    "Description": t.description,
+    "Total Steps": t.items ? t.items.length : 0,
+    "Step Labels": t.items ? t.items.map((i: any) => typeof i === "string" ? i : (i.label || "")).join(" | ") : ""
+  }));
+  const wsChecklistTemplates = XLSX.utils.json_to_sheet(flatChecklistTemplates.length > 0 ? flatChecklistTemplates : [{ "Notice": "No checklist templates configured" }]);
+  XLSX.utils.book_append_sheet(wb, wsChecklistTemplates, "Checklist Templates");
+
+  // Worksheet 10C: Operations Order Checklists
+  const opsChecklistRows: any[] = [];
+  (payload.operationsOrders || []).forEach((ord: any) => {
+    if (ord.checklist && ord.checklist.length > 0) {
+      ord.checklist.forEach((item: any) => {
+        opsChecklistRows.push({
+          "Order ID": ord.id,
+          "Order Number": ord.orderNumber,
+          "Client Name": ord.clientName,
+          "Checklist Template Name": ord.checklistTemplateName || "Custom",
+          "Checklist Item Step": item.label,
+          "Completion Status": item.completed ? "Completed" : "Pending",
+          "Production Status": ord.productionStatus
+        });
+      });
+    }
+  });
+  const wsOpsChecklists = XLSX.utils.json_to_sheet(opsChecklistRows.length > 0 ? opsChecklistRows : [{ "Notice": "No operations order checklists recorded" }]);
+  XLSX.utils.book_append_sheet(wb, wsOpsChecklists, "Operations Order Checklists");
 
   // Worksheet 11: Branding Preferences
   const brandingData = [
@@ -413,7 +469,19 @@ export function exportExcelBackup(notes: string = "", createdBy: string = "Maste
   const wsHistory = XLSX.utils.json_to_sheet(flatHistory.length > 0 ? flatHistory : [{ "Notice": "No previous backup history" }]);
   XLSX.utils.book_append_sheet(wb, wsHistory, "Backup History");
 
-  // Worksheet 14: Embedded Raw JSON Payload for 100% loss-less system restore
+  // Worksheet 14: Client Tier Register (Independent Tier Register)
+  const flatTierRegister = (payload.clientTierRegister || []).map((tr: any) => ({
+    "CEO ID": tr.ceoId,
+    "Customer Full Name": tr.customerFullName,
+    "Manual Tier": tr.manualTier,
+    "Date Promoted": tr.datePromoted,
+    "Previous Tier": tr.previousTier,
+    "Promotion Notes": tr.promotionNotes
+  }));
+  const wsTierRegister = XLSX.utils.json_to_sheet(flatTierRegister.length > 0 ? flatTierRegister : [{ "Notice": "No client tier register entries" }]);
+  XLSX.utils.book_append_sheet(wb, wsTierRegister, "Client Tier Register");
+
+  // Worksheet 15: Embedded Raw JSON Payload for 100% loss-less system restore
   const rawJsonString = JSON.stringify(payload);
   const CHUNK_SIZE = 30000;
   const jsonChunks: { "Chunk Index": number; "JSON Payload Chunk": string }[] = [];
@@ -425,6 +493,17 @@ export function exportExcelBackup(notes: string = "", createdBy: string = "Maste
   }
   const wsJson = XLSX.utils.json_to_sheet(jsonChunks);
   XLSX.utils.book_append_sheet(wb, wsJson, "Backup System Payload JSON");
+
+  // Worksheet 16: SYSTEM_REFERENCE (Metadata)
+  const systemRefData = [
+    { "Field": "Environment", "Value": payload.environment === "LIVE" ? "LIVE MODE" : "STRESS TEST MODE" },
+    { "Field": "Export Date", "Value": payload.backupDate },
+    { "Field": "Export Time", "Value": payload.backupTime },
+    { "Field": "Application Version", "Value": payload.version || "V2.1" },
+    { "Field": "Exported By", "Value": createdBy }
+  ];
+  const wsSysRef = XLSX.utils.json_to_sheet(systemRefData);
+  XLSX.utils.book_append_sheet(wb, wsSysRef, "SYSTEM_REFERENCE");
 
   // Download workbook
   XLSX.writeFile(wb, fileName);
@@ -452,7 +531,15 @@ export function exportJsonBackup(notes: string = "", createdBy: string = "Master
   const payload = generateFullBackupPayload(createdBy, notes);
   const now = new Date();
   const dateIso = now.toISOString().split("T")[0];
-  const fileName = customFileName || `CEO_Lifestyle_Test_Environment_Backup_V2.1_${dateIso}.json`;
+  const defaultFileName = payload.environment === "LIVE" 
+    ? `CEO_Lifestyle_Backup_V2.1_${dateIso}.json`
+    : `STRESS_MODE_CEO_Lifestyle_Backup_V2.1_${dateIso}.json`;
+  let fileName = customFileName || defaultFileName;
+  if (payload.environment === "STRESS_TEST" && !fileName.startsWith("STRESS_MODE_")) {
+    fileName = `STRESS_MODE_${fileName}`;
+  } else if (payload.environment === "LIVE" && fileName.startsWith("LIVE_MODE_")) {
+    fileName = fileName.replace("LIVE_MODE_", "");
+  }
 
   const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload, null, 2));
   const downloadAnchor = document.createElement("a");
@@ -464,6 +551,35 @@ export function exportJsonBackup(notes: string = "", createdBy: string = "Master
 
   const backupRecord: BackupRecord = {
     id: `bkp_${Date.now()}`,
+    backupId: payload.backupId,
+    date: `${payload.backupDate} at ${payload.backupTime}`,
+    createdBy,
+    version: payload.version,
+    notes: payload.notes,
+    fileFormat: "JSON",
+    fileName,
+    itemCounts: payload.itemCounts
+  };
+
+  recordBackupInHistory(backupRecord);
+  logBackupActivity("Backup Created", createdBy, payload.backupId, payload.notes);
+
+  return backupRecord;
+}
+
+// Internal helper to create an automatic environment snapshot when switching environments
+export function createAutomaticEnvironmentSnapshot(
+  createdBy: string = "Master Administrator",
+  notes: string = ""
+): BackupRecord {
+  const payload = generateFullBackupPayload(createdBy, notes || "Automatic Environment Switch Snapshot");
+  const now = new Date();
+  const dateIso = now.toISOString().split("T")[0];
+  const prefix = payload.environment === "LIVE" ? "" : "STRESS_MODE_";
+  const fileName = `${prefix}Auto_Snapshot_${payload.environment}_${dateIso}.json`;
+
+  const backupRecord: BackupRecord = {
+    id: `bkp_auto_${Date.now()}`,
     backupId: payload.backupId,
     date: `${payload.backupDate} at ${payload.backupTime}`,
     createdBy,
@@ -547,6 +663,7 @@ export function processBackupImport(
   let activeUsers: any[] = [];
   let activeGuideLogs: any[] = [];
   let activeSettings: SystemSettings = {} as SystemSettings;
+  let activeTierRegister: any[] = [];
 
   try {
     const c = localStorage.getItem("ceo_client_management_data");
@@ -588,6 +705,11 @@ export function processBackupImport(
     if (s) activeSettings = JSON.parse(s);
   } catch (e) {}
 
+  try {
+    const tr = localStorage.getItem("ceo_client_tier_register");
+    if (tr) activeTierRegister = JSON.parse(tr);
+  } catch (e) {}
+
   const incomingClients: Client[] = Array.isArray(rawPayload.clients) ? rawPayload.clients : [];
   const incomingAspiring: AspiringClient[] = Array.isArray(rawPayload.aspiringClients) ? rawPayload.aspiringClients : [];
   const incomingInv: LuxeBookInventoryItem[] = Array.isArray(rawPayload.inventory) ? rawPayload.inventory : [];
@@ -595,6 +717,7 @@ export function processBackupImport(
   const incomingQuotes: any[] = Array.isArray(rawPayload.savedQuotations) ? rawPayload.savedQuotations : [];
   const incomingUsers: any[] = Array.isArray(rawPayload.users) ? rawPayload.users : [];
   const incomingGuideLogs: any[] = Array.isArray(rawPayload.guideLogs) ? rawPayload.guideLogs : [];
+  const incomingTierRegister: any[] = Array.isArray(rawPayload.clientTierRegister) ? rawPayload.clientTierRegister : [];
 
   let finalClients: Client[] = [];
   let finalAspiring: AspiringClient[] = [];
@@ -603,6 +726,7 @@ export function processBackupImport(
   let finalQuotes: any[] = [];
   let finalUsers: any[] = [];
   let finalGuideLogs: any[] = [];
+  let finalTierRegister: any[] = [];
   let finalSettings: SystemSettings = activeSettings;
 
   let clientsAdded = 0;
@@ -632,6 +756,7 @@ export function processBackupImport(
     usersAdded = incomingUsers.length;
 
     finalGuideLogs = incomingGuideLogs.length > 0 ? incomingGuideLogs : activeGuideLogs;
+    finalTierRegister = incomingTierRegister.length > 0 ? incomingTierRegister : activeTierRegister;
     if (rawPayload.settings && typeof rawPayload.settings === "object") {
       finalSettings = rawPayload.settings;
     }
@@ -744,6 +869,15 @@ export function processBackupImport(
       }
     });
 
+    // 8. Client Tier Register (Independent Tier Register)
+    finalTierRegister = [...activeTierRegister];
+    incomingTierRegister.forEach(tr => {
+      const exists = finalTierRegister.some(ex => ex.ceoId && tr.ceoId && ex.ceoId.toLowerCase() === tr.ceoId.toLowerCase());
+      if (!exists) {
+        finalTierRegister.push(tr);
+      }
+    });
+
     // Settings merge
     if (rawPayload.settings && typeof rawPayload.settings === "object") {
       finalSettings = { ...activeSettings };
@@ -755,6 +889,9 @@ export function processBackupImport(
       }
       if (!finalSettings.productionMaterials || finalSettings.productionMaterials.length === 0) {
         finalSettings.productionMaterials = rawPayload.settings.productionMaterials;
+      }
+      if (!finalSettings.checklistTemplates || finalSettings.checklistTemplates.length === 0) {
+        finalSettings.checklistTemplates = rawPayload.settings.checklistTemplates;
       }
     }
   }
@@ -768,6 +905,7 @@ export function processBackupImport(
   localStorage.setItem("ceo_saved_quotations", JSON.stringify(finalQuotes));
   localStorage.setItem("ceo_application_users", JSON.stringify(finalUsers));
   localStorage.setItem("ceo_admin_guide_logs", JSON.stringify(finalGuideLogs));
+  localStorage.setItem("ceo_client_tier_register", JSON.stringify(finalTierRegister));
   localStorage.setItem("librarium_system_settings", JSON.stringify(finalSettings));
 
   if (rawPayload.appBg) {

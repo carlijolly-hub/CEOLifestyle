@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Client, ClientTier, HomeBrand, Gender, YesNo } from "../types";
-import { X, User, MapPin, Heart, Trophy, Save, ShoppingCart, AlertCircle } from "lucide-react";
+import { Client, ClientTier, HomeBrand, Gender, YesNo, CommunicationStatus, BusinessRelationship, ProfileTheme, ManagementClassification, ClassificationHistoryRecord, PersonalRemembrance, RemembranceRelationship, AdultTShirtSize, ApparelInformation } from "../types";
+import { X, User, MapPin, Heart, Trophy, Save, ShoppingCart, AlertCircle, ShieldAlert, Sparkles, Building2, Shirt, HeartHandshake, Plus, Trash2, Tag } from "lucide-react";
 import { parseMonthDay } from "../utils/dateHelpers";
+import { getProfileThemeForRelationship } from "../utils/clientTierUtils";
 
 interface ClientFormProps {
   customer?: Client | null; // If provided, we are editing. Otherwise, adding.
@@ -14,7 +15,7 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
   const isEditing = !!customer;
 
   // Track active section/tab in form wizard
-  const [activeTab, setActiveTab] = useState<"personal" | "contact" | "family" | "interests">("personal");
+  const [activeTab, setActiveTab] = useState<"personal" | "contact" | "family" | "apparel" | "remembrance" | "interests">("personal");
 
   // Error and Warning States
   const [formError, setFormError] = useState<string | null>(null);
@@ -34,9 +35,13 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
   const [drive, setDrive] = useState<YesNo>("No");
   const [tier, setTier] = useState<ClientTier>("Silver");
   const [homeBrand, setHomeBrand] = useState<HomeBrand>("CEO Lifestyle");
+  const [businessRelationship, setBusinessRelationship] = useState<BusinessRelationship>("CEO Lifestyle");
+  const [managementClassification, setManagementClassification] = useState<ManagementClassification>("Standard");
+  const [profileTheme, setProfileTheme] = useState<ProfileTheme>("CEO Blue");
 
   // Contact
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [communicationStatus, setCommunicationStatus] = useState<CommunicationStatus>("Unknown");
   const [email, setEmail] = useState("");
   const [city, setCity] = useState("");
   const [parish, setParish] = useState("N/A");
@@ -66,6 +71,27 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
   const [pets, setPets] = useState("");
   const [personalNotes, setPersonalNotes] = useState("");
 
+  // Personal Remembrance Notes
+  const [remembrances, setRemembrances] = useState<PersonalRemembrance[]>([]);
+  const [remRelInput, setRemRelInput] = useState<string>("Mother");
+  const [remRelCustom, setRemRelCustom] = useState("");
+  const [remNotesInput, setRemNotesInput] = useState("");
+  const [remDateAddedInput, setRemDateAddedInput] = useState(new Date().toISOString().split("T")[0]);
+
+  // Apparel Information
+  const [tShirtSize, setTShirtSize] = useState<string>("");
+  const [poloSize, setPoloSize] = useState("");
+  const [hoodieSize, setHoodieSize] = useState("");
+  const [jerseySize, setJerseySize] = useState("");
+  const [hatSize, setHatSize] = useState("");
+  const [shoeSize, setShoeSize] = useState("");
+  const [jacketSize, setJacketSize] = useState("");
+  const [ringSize, setRingSize] = useState("");
+  const [braceletSize, setBraceletSize] = useState("");
+  const [necklaceLength, setNecklaceLength] = useState("");
+  const [dressSize, setDressSize] = useState("");
+  const [showExtendedSizes, setShowExtendedSizes] = useState(false);
+
   // Important Dates
   const [birthday, setBirthday] = useState("");
   const [anniversary, setAnniversary] = useState("");
@@ -92,6 +118,20 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
   const [hobbies, setHobbies] = useState("");
   const [favoriteColors, setFavoriteColors] = useState("");
   const [giftPreferences, setGiftPreferences] = useState("");
+  const [favouriteAuthors, setFavouriteAuthors] = useState<string[]>([]);
+  const [newAuthorInput, setNewAuthorInput] = useState("");
+
+  const handleAddAuthor = () => {
+    const trimmed = newAuthorInput.trim();
+    if (trimmed && !favouriteAuthors.includes(trimmed)) {
+      setFavouriteAuthors(prev => [...prev, trimmed]);
+      setNewAuthorInput("");
+    }
+  };
+
+  const handleRemoveAuthor = (authorToRemove: string) => {
+    setFavouriteAuthors(prev => prev.filter(a => a !== authorToRemove));
+  };
 
   // Communication Prefs
   const [preferredCommunication, setPreferredCommunication] = useState<Client["preferredCommunication"]>("Email");
@@ -108,8 +148,14 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
       setDrive(customer.drive);
       setTier(customer.tier);
       setHomeBrand(customer.homeBrand);
+      
+      const rel = customer.businessRelationship || (customer.homeBrand === "Librarium Luxe" ? "Librarium Luxe" : customer.homeBrand === "CEO Printing Services" ? "CEO Lifestyle" : "CEO Lifestyle");
+      setBusinessRelationship(rel);
+      setManagementClassification(customer.managementClassification || (customer.tier === "Delinquent" ? "Delinquent" : customer.tier === "Problematic" ? "Problematic" : customer.tier === "Founders Family" ? "VIP Priority" : "Standard"));
+      setProfileTheme(customer.profileTheme || getProfileThemeForRelationship(rel));
 
       setPhoneNumber(customer.contact.phoneNumber);
+      setCommunicationStatus(customer.communicationStatus || "Unknown");
       setEmail(customer.contact.email);
       setCity(customer.contact.city);
       setParish(customer.contact.parish);
@@ -170,9 +216,23 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
       setHobbies(customer.interests.hobbies.join(", "));
       setFavoriteColors(customer.interests.favoriteColors.join(", "));
       setGiftPreferences(customer.interests.giftPreferences.join(", "));
+      setFavouriteAuthors(customer.favouriteAuthors || []);
 
       setPreferredCommunication(customer.preferredCommunication);
       setMarketingPermission(customer.marketingPermission || "Yes");
+
+      setRemembrances(customer.remembrances || []);
+      setTShirtSize(customer.apparelInfo?.tShirtSize || "");
+      setPoloSize(customer.apparelInfo?.poloSize || "");
+      setHoodieSize(customer.apparelInfo?.hoodieSize || "");
+      setJerseySize(customer.apparelInfo?.jerseySize || "");
+      setHatSize(customer.apparelInfo?.hatSize || "");
+      setShoeSize(customer.apparelInfo?.shoeSize || "");
+      setJacketSize(customer.apparelInfo?.jacketSize || "");
+      setRingSize(customer.apparelInfo?.ringSize || "");
+      setBraceletSize(customer.apparelInfo?.braceletSize || "");
+      setNecklaceLength(customer.apparelInfo?.necklaceLength || "");
+      setDressSize(customer.apparelInfo?.dressSize || "");
     } else {
       // Clear all state to default empty
       const generatedId = String(Math.floor(100000 + Math.random() * 900000));
@@ -184,8 +244,12 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
       setDrive("Yes");
       setTier("Silver");
       setHomeBrand("CEO Lifestyle");
+      setBusinessRelationship("CEO Lifestyle");
+      setManagementClassification("Standard");
+      setProfileTheme("CEO Blue");
 
       setPhoneNumber("");
+      setCommunicationStatus("Unknown");
       setEmail("");
       setCity("");
       setParish("St. Andrew");
@@ -210,6 +274,22 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
       setOtherFamilyMembers([]);
       setPets("None");
       setPersonalNotes("");
+
+      setRemembrances([]);
+      setRemRelInput("Mother");
+      setRemRelCustom("");
+      setRemNotesInput("");
+      setTShirtSize("");
+      setPoloSize("");
+      setHoodieSize("");
+      setJerseySize("");
+      setHatSize("");
+      setShoeSize("");
+      setJacketSize("");
+      setRingSize("");
+      setBraceletSize("");
+      setNecklaceLength("");
+      setDressSize("");
 
       setBirthday("");
       setAnniversary("");
@@ -237,6 +317,25 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
       setPreferredCommunication("Email");
     }
   }, [customer]);
+
+  const handleAddRemembrance = () => {
+    const rel = remRelInput === "Other" ? (remRelCustom.trim() || "Other") : remRelInput;
+    if (!rel) return;
+    const newEntry: PersonalRemembrance = {
+      id: `rem_${Date.now()}`,
+      relationship: rel,
+      status: "Passed Away",
+      dateAdded: remDateAddedInput || new Date().toISOString().split("T")[0],
+      notes: remNotesInput.trim() || undefined
+    };
+    setRemembrances(prev => [...prev, newEntry]);
+    setRemNotesInput("");
+    setRemRelCustom("");
+  };
+
+  const handleRemoveRemembrance = (remId: string) => {
+    setRemembrances(prev => prev.filter(r => r.id !== remId));
+  };
 
   // Dynamic duplicate checking
   useEffect(() => {
@@ -481,6 +580,7 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
         favoriteColors: parseList(favoriteColors),
         giftPreferences: parseList(giftPreferences)
       },
+      favouriteAuthors: favouriteAuthors,
       timeline: customer?.timeline || [
         {
           id: `t_${Date.now()}`,
@@ -492,34 +592,77 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
       reminders: customer?.reminders || [],
       preferredCommunication,
       lastContactedDate: customer?.lastContactedDate || new Date().toISOString().split("T")[0],
-      marketingPermission
+      marketingPermission,
+      communicationStatus: communicationStatus || "Unknown",
+      businessRelationship,
+      profileTheme: getProfileThemeForRelationship(businessRelationship),
+      managementClassification,
+      healthScore: customer?.healthScore !== undefined ? customer.healthScore : 85,
+      relationshipStatus: customer?.relationshipStatus || "Active",
+      accountStatus: customer?.accountStatus || (customer?.deactivated ? "Inactive" : "Active"),
+      tierSource: customer?.tierSource || (["Founders Family", "Delinquent", "Problematic"].includes(tier) ? "Manual" : "Calculated"),
+      manualTierReason: customer?.manualTierReason || "",
+      strategicAssociations: customer?.strategicAssociations || [],
+      calculatedTier: customer?.calculatedTier || tier,
+      remembrances,
+      apparelInfo: {
+        tShirtSize: tShirtSize.trim() || undefined,
+        poloSize: poloSize.trim() || undefined,
+        hoodieSize: hoodieSize.trim() || undefined,
+        jerseySize: jerseySize.trim() || undefined,
+        hatSize: hatSize.trim() || undefined,
+        shoeSize: shoeSize.trim() || undefined,
+        jacketSize: jacketSize.trim() || undefined,
+        ringSize: ringSize.trim() || undefined,
+        braceletSize: braceletSize.trim() || undefined,
+        necklaceLength: necklaceLength.trim() || undefined,
+        dressSize: dressSize.trim() || undefined
+      },
+      tierHistory: (() => {
+        const existingHistory = customer?.tierHistory || [];
+        const todayStr = new Date().toISOString().split("T")[0];
+        if (existingHistory.length === 0 || customer?.tier !== tier) {
+          const newRecord: ClassificationHistoryRecord = {
+            id: `hist_${Date.now()}`,
+            dateChanged: todayStr,
+            tier,
+            businessRelationship,
+            managementClassification,
+            reason: customer ? `Updated classification to ${tier} (${managementClassification})` : `Initial Registration: ${tier}`,
+            changedBy: "Master Administrator"
+          };
+          return [...existingHistory, newRecord];
+        }
+        return existingHistory;
+      })()
     };
 
     onSave(savedClient);
   };
 
   return (
-    <div className="bg-white border border-slate-200/60 rounded-3xl shadow-md text-left max-w-4xl mx-auto animate-fade-in overflow-hidden text-slate-800">
+    <div className="bg-white border border-slate-200/60 rounded-3xl shadow-2xl text-left max-w-4xl w-full flex flex-col overflow-hidden text-slate-800">
       
       {/* Title Header Cover */}
-      <div className="bg-gradient-to-tr from-slate-50 via-slate-100/40 to-slate-100/80 border-b border-slate-200/60 px-6 py-5 flex justify-between items-center">
-        <div>
-          <h2 className="text-lg font-bold text-slate-950">
-            {isEditing ? "Modify Client Account" : "Register New Premium Client"}
-          </h2>
-          <p className="text-xs text-slate-400 mt-1 font-bold">
-            {isEditing ? `Adjust specifications for account: ${id}` : "Establish a complete 360-degree relationship file"}
-          </p>
+        <div className="bg-gradient-to-tr from-slate-50 via-slate-100/40 to-slate-100/80 border-b border-slate-200/60 px-6 py-4 flex justify-between items-center shrink-0">
+          <div>
+            <h2 className="text-lg font-bold text-slate-950">
+              {isEditing ? "Modify Client Account" : "Register New Premium Client"}
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5 font-bold">
+              {isEditing ? `Adjust specifications for account: ${id}` : "Establish a complete 360-degree relationship file"}
+            </p>
+          </div>
+          <button 
+            type="button"
+            onClick={onCancel}
+            className="p-1.5 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
-        <button 
-          onClick={onCancel}
-          className="p-1.5 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-700 transition-colors"
-        >
-          <X className="w-5 h-5" />
-        </button>
-      </div>
 
-      <form onSubmit={handleSubmit} className="divide-y divide-slate-100">
+        <form onSubmit={handleSubmit} className="divide-y divide-slate-100 flex-1 overflow-y-auto flex flex-col justify-between">
         
         {/* Apple style sub-navigation tabs */}
         <div className="flex border-b border-slate-200/60 px-6 bg-slate-50/40">
@@ -558,6 +701,28 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab("apparel")}
+            className={`flex items-center gap-1.5 py-3.5 px-4 text-xs font-bold border-b-2 transition-all -mb-px ${
+              activeTab === "apparel" 
+                ? "border-slate-900 text-slate-950" 
+                : "border-transparent text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            <Shirt className="w-4 h-4 text-indigo-600" /> Apparel Sizes
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("remembrance")}
+            className={`flex items-center gap-1.5 py-3.5 px-4 text-xs font-bold border-b-2 transition-all -mb-px ${
+              activeTab === "remembrance" 
+                ? "border-slate-900 text-slate-950" 
+                : "border-transparent text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            <HeartHandshake className="w-4 h-4 text-rose-600" /> Personal Remembrance
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab("interests")}
             className={`flex items-center gap-1.5 py-3.5 px-4 text-xs font-bold border-b-2 transition-all -mb-px ${
               activeTab === "interests" 
@@ -592,12 +757,68 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Client Tier</label>
                 <select
                   value={tier}
-                  onChange={(e) => setTier(e.target.value as ClientTier)}
+                  onChange={(e) => {
+                    const newTier = e.target.value as ClientTier;
+                    setTier(newTier);
+                    if (newTier === "Delinquent") setManagementClassification("Delinquent");
+                    else if (newTier === "Problematic") setManagementClassification("Problematic");
+                    else if (newTier === "Founders Family") setManagementClassification("VIP Priority");
+                  }}
                   className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 font-bold transition-colors"
                 >
-                  <option value="Silver">Silver Tier</option>
-                  <option value="Gold">Gold Tier</option>
-                  <option value="Platinum">Platinum Tier</option>
+                  <option value="Silver">Silver Tier (Active Customer)</option>
+                  <option value="Gold">Gold Tier (Repeat Value Customer)</option>
+                  <option value="Platinum">Platinum Tier (VIP High Lifetime Value)</option>
+                  <option value="Founders Family">Founders Family (Permanent Priority)</option>
+                  <option value="Delinquent">Delinquent (Permanent Account Risk)</option>
+                  <option value="Problematic">Problematic (Permanent Relationship Management)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Business Relationship Type</label>
+                <select
+                  value={businessRelationship}
+                  onChange={(e) => {
+                    const newRel = e.target.value as BusinessRelationship;
+                    setBusinessRelationship(newRel);
+                    setProfileTheme(getProfileThemeForRelationship(newRel));
+                  }}
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 font-bold transition-colors"
+                >
+                  <option value="CEO Lifestyle">CEO Lifestyle (Apparel, Gifts, Printing)</option>
+                  <option value="Librarium Luxe">Librarium Luxe (Books, Literary, Romance)</option>
+                  <option value="CEO Lifestyle + Librarium Luxe">CEO Lifestyle + Librarium Luxe (Dual Relationship)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Profile Theme (Auto-Assigned)</label>
+                <div className={`w-full rounded-xl p-3 text-xs font-bold border flex items-center justify-between ${
+                  businessRelationship === "CEO Lifestyle"
+                    ? "bg-blue-50 border-blue-200 text-blue-900"
+                    : businessRelationship === "Librarium Luxe"
+                      ? "bg-rose-50 border-rose-200 text-rose-900"
+                      : "bg-gradient-to-r from-blue-50 via-purple-50 to-rose-50 border-purple-200 text-purple-900"
+                }`}>
+                  <span>Theme: {getProfileThemeForRelationship(businessRelationship)}</span>
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-extrabold bg-white/80 border border-current">
+                    {businessRelationship === "CEO Lifestyle" ? "🔵 Blue" : businessRelationship === "Librarium Luxe" ? "🔴 Crimson" : "🔵+Burgundy"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Management Classification</label>
+                <select
+                  value={managementClassification}
+                  onChange={(e) => setManagementClassification(e.target.value as ManagementClassification)}
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 font-bold transition-colors"
+                >
+                  <option value="Standard">Standard Account</option>
+                  <option value="VIP Priority">VIP Priority (Founders/Platinum Focus)</option>
+                  <option value="Problematic">Problematic (Service/Interaction Review Required)</option>
+                  <option value="Delinquent">Delinquent (Payment/Balance Review Required)</option>
                 </select>
               </div>
 
@@ -690,6 +911,19 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
                   onChange={(e) => setPhoneNumber(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 placeholder-slate-400 font-medium transition-colors"
                 />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Communication Status</label>
+                <select
+                  value={communicationStatus}
+                  onChange={(e) => setCommunicationStatus(e.target.value as CommunicationStatus)}
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 font-bold transition-colors"
+                >
+                  <option value="Active">Active</option>
+                  <option value="Not Active">Not Active</option>
+                  <option value="Unknown">Unknown</option>
+                </select>
               </div>
 
               <div className="space-y-1.5">
@@ -1202,6 +1436,263 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
             </div>
           )}
 
+          {/* APPAREL SIZES TAB */}
+          {activeTab === "apparel" && (
+            <div className="space-y-6 animate-fade-in text-xs">
+              <div className="border-b border-slate-100 pb-3">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <Shirt className="w-4 h-4 text-indigo-600" />
+                  Client Apparel & Fitting Information
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Store client garment sizes to streamline custom merchandise orders and staff fulfillment on the Operations Board.
+                </p>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 space-y-4">
+                <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <Tag className="w-3.5 h-3.5 text-slate-500" />
+                  Primary Apparel Garments
+                </h4>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Adult T-Shirt Size
+                    </label>
+                    <select
+                      value={tShirtSize}
+                      onChange={(e) => setTShirtSize(e.target.value)}
+                      className="w-full bg-white border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-2.5 text-xs text-slate-800 font-semibold"
+                    >
+                      <option value="">Not Specified</option>
+                      <option value="XS">XS</option>
+                      <option value="S">S</option>
+                      <option value="M">M</option>
+                      <option value="L">L</option>
+                      <option value="XL">XL</option>
+                      <option value="2XL">2XL</option>
+                      <option value="3XL">3XL</option>
+                      <option value="4XL">4XL</option>
+                      <option value="5XL">5XL</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Polo Shirt Size
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="E.g. L, XL, Custom"
+                      value={poloSize}
+                      onChange={(e) => setPoloSize(e.target.value)}
+                      className="w-full bg-white border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-2.5 text-xs text-slate-800 font-semibold"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Hoodie Size
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="E.g. XL"
+                      value={hoodieSize}
+                      onChange={(e) => setHoodieSize(e.target.value)}
+                      className="w-full bg-white border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-2.5 text-xs text-slate-800 font-semibold"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Jersey Size
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="E.g. XL"
+                      value={jerseySize}
+                      onChange={(e) => setJerseySize(e.target.value)}
+                      className="w-full bg-white border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-2.5 text-xs text-slate-800 font-semibold"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 space-y-4">
+                <div className="flex justify-between items-center cursor-pointer" onClick={() => setShowExtendedSizes(!showExtendedSizes)}>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                      Extended Accessories & Custom Fits
+                    </h4>
+                    <p className="text-[11px] text-slate-500">Hat, Shoe, Ring, Bracelet, Necklace, and Dress sizes</p>
+                  </div>
+                  <button type="button" className="text-xs font-bold text-indigo-600 hover:underline">
+                    {showExtendedSizes ? "Hide Extended Sizes" : "Show Extended Sizes (+7 Fields)"}
+                  </button>
+                </div>
+
+                {showExtendedSizes && (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-3 border-t border-slate-200/60">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Hat Size</label>
+                      <input type="text" placeholder="E.g. 7 3/8" value={hatSize} onChange={e => setHatSize(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-medium" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Shoe Size</label>
+                      <input type="text" placeholder="E.g. 11 US" value={shoeSize} onChange={e => setShoeSize(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-medium" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Jacket Size</label>
+                      <input type="text" placeholder="E.g. 42R" value={jacketSize} onChange={e => setJacketSize(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-medium" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Ring Size</label>
+                      <input type="text" placeholder="E.g. 8" value={ringSize} onChange={e => setRingSize(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-medium" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Bracelet Size</label>
+                      <input type="text" placeholder="E.g. 7.5 in" value={braceletSize} onChange={e => setBraceletSize(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-medium" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Necklace Length</label>
+                      <input type="text" placeholder="E.g. 18 in" value={necklaceLength} onChange={e => setNecklaceLength(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-medium" />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase">Dress Size</label>
+                      <input type="text" placeholder="E.g. 6 US" value={dressSize} onChange={e => setDressSize(e.target.value)} className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs font-medium" />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* PERSONAL REMEMBRANCE TAB */}
+          {activeTab === "remembrance" && (
+            <div className="space-y-6 animate-fade-in text-xs">
+              <div className="border-b border-slate-100 pb-3">
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <HeartHandshake className="w-4 h-4 text-rose-600" />
+                  Personal Remembrance Notes (Family Loss)
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Record lost family members respectfully. Stores relationship and status without requiring relative names, guiding sensitive communication for holidays like Mother's Day and Father's Day.
+                </p>
+              </div>
+
+              <div className="bg-rose-50/50 border border-rose-200/70 rounded-2xl p-5 space-y-4">
+                <h4 className="text-xs font-bold text-rose-900 uppercase tracking-wider">
+                  + Add New Remembrance Note
+                </h4>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Relationship</label>
+                    <select
+                      value={remRelInput}
+                      onChange={(e) => setRemRelInput(e.target.value)}
+                      className="w-full bg-white border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-2.5 text-xs text-slate-800 font-semibold"
+                    >
+                      <option value="Mother">Mother</option>
+                      <option value="Father">Father</option>
+                      <option value="Husband">Husband</option>
+                      <option value="Wife">Wife</option>
+                      <option value="Son">Son</option>
+                      <option value="Daughter">Daughter</option>
+                      <option value="Brother">Brother</option>
+                      <option value="Sister">Sister</option>
+                      <option value="Grandmother">Grandmother</option>
+                      <option value="Grandfather">Grandfather</option>
+                      <option value="Other">Other / Custom</option>
+                    </select>
+                  </div>
+
+                  {remRelInput === "Other" && (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Custom Relationship</label>
+                      <input
+                        type="text"
+                        placeholder="E.g. Uncle, Mentor"
+                        value={remRelCustom}
+                        onChange={(e) => setRemRelCustom(e.target.value)}
+                        className="w-full bg-white border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-2.5 text-xs text-slate-800 font-semibold"
+                      />
+                    </div>
+                  )}
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Date Added / Recorded</label>
+                    <input
+                      type="date"
+                      value={remDateAddedInput}
+                      onChange={(e) => setRemDateAddedInput(e.target.value)}
+                      className="w-full bg-white border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-2.5 text-xs text-slate-800 font-semibold"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5 md:col-span-3">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Remembrance & Sensitivity Notes (Optional)</label>
+                    <input
+                      type="text"
+                      placeholder="E.g. Client prefers thoughtful communication around Mother's Day."
+                      value={remNotesInput}
+                      onChange={(e) => setRemNotesInput(e.target.value)}
+                      className="w-full bg-white border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-2.5 text-xs text-slate-800 font-medium"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleAddRemembrance}
+                  className="px-4 py-2 bg-rose-700 hover:bg-rose-800 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  Record Personal Remembrance Entry
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Saved Remembrance Entries ({remembrances.length})
+                </h4>
+                {remembrances.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic py-2">No personal loss remembrance entries recorded for this client.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {remembrances.map((rem) => (
+                      <div key={rem.id} className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-slate-900 text-xs">{rem.relationship}</span>
+                            <span className="bg-rose-100 text-rose-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-rose-200">
+                              {rem.status || "Passed Away"}
+                            </span>
+                            {rem.dateAdded && (
+                              <span className="text-[10px] text-slate-400 font-medium">Recorded: {rem.dateAdded}</span>
+                            )}
+                          </div>
+                          {rem.notes && (
+                            <p className="text-xs text-slate-600 font-medium">{rem.notes}</p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveRemembrance(rem.id)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                          title="Delete remembrance record"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* INTERESTS & HISTORY TAB */}
           {activeTab === "interests" && (
             <div className="space-y-6 animate-fade-in text-xs">
@@ -1398,6 +1889,89 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
                     onChange={(e) => setGiftPreferences(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 placeholder-slate-400 font-medium transition-colors"
                   />
+                </div>
+
+                {/* Favourite Authors Section */}
+                <div className="space-y-2 bg-amber-50/40 border border-amber-200/70 p-4 rounded-xl">
+                  <label className="text-[10px] font-bold text-amber-900 uppercase tracking-widest flex items-center gap-1.5">
+                    <Tag className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Favourite Authors</span>
+                  </label>
+                  <p className="text-[11px] text-amber-800/80 font-medium">
+                    Add or search key literary inspirations, authors, or thought leaders associated with this client profile.
+                  </p>
+                  
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      list="authors-suggestions"
+                      placeholder="Search existing or enter new author (e.g. Malcolm Gladwell, Robert Greene)..."
+                      value={newAuthorInput}
+                      onChange={(e) => setNewAuthorInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleAddAuthor();
+                        }
+                      }}
+                      className="flex-1 bg-white border border-amber-200 focus:border-amber-500 focus:outline-none rounded-xl p-2.5 text-xs text-slate-800 placeholder-slate-400 font-medium"
+                    />
+                    <datalist id="authors-suggestions">
+                      {Array.from(
+                        new Set([
+                          "Malcolm Gladwell",
+                          "Robert Greene",
+                          "Napoleon Hill",
+                          "Simon Sinek",
+                          "James Clear",
+                          "Dale Carnegie",
+                          "Stephen Covey",
+                          "Robin Sharma",
+                          "Ryan Holiday",
+                          "Marcus Aurelius",
+                          "Paulo Coelho",
+                          "Seth Godin",
+                          "Tim Ferriss",
+                          "Brian Tracy",
+                          "C.S. Lewis",
+                          "George Orwell",
+                          ...existingCustomers.flatMap(c => c.favouriteAuthors || [])
+                        ])
+                      ).map(author => (
+                        <option key={author} value={author} />
+                      ))}
+                    </datalist>
+                    <button
+                      type="button"
+                      onClick={handleAddAuthor}
+                      className="flex items-center gap-1 px-3.5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>➕</span>
+                    </button>
+                  </div>
+
+                  {favouriteAuthors.length > 0 ? (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {favouriteAuthors.map(author => (
+                        <span
+                          key={author}
+                          className="inline-flex items-center gap-1.5 bg-amber-100/80 text-amber-900 border border-amber-300/80 text-xs font-bold px-3 py-1 rounded-lg"
+                        >
+                          <span>📚 {author}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAuthor(author)}
+                            className="hover:text-rose-600 text-amber-700 transition-colors cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-slate-400 italic">No favourite authors added yet.</p>
+                  )}
                 </div>
               </div>
 

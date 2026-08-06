@@ -1,5 +1,7 @@
 import React, { useState, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import * as XLSX from "xlsx";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { LuxeBookInventoryItem, InventorySalesMovement, SystemSettings } from "../types";
 import { 
   BookOpen, 
@@ -23,8 +25,10 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Clipboard
 } from "lucide-react";
+import UniversalPasteModal from "./UniversalPasteModal";
 
 export function calculateRestockQuantity(
   rankingStatus?: string,
@@ -100,11 +104,57 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
 
   // Full item editing state
   const [editingItem, setEditingItem] = useState<LuxeBookInventoryItem | null>(null);
+
   const [editingOriginalId, setEditingOriginalId] = useState<string | null>(null);
 
   // Success / Error messages
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
+
+  const isAnyModalOpen = !!(showAddForm || isPasteModalOpen || editingId || editingItem);
+  useBodyScrollLock(isAnyModalOpen);
+
+  const handleConfirmPasteInventory = (pastedItems: LuxeBookInventoryItem[], rawRows: any[], mode: string) => {
+    if (pastedItems.length === 0) return;
+    let updatedList = [...inventory];
+    let addedCount = 0;
+    let updatedCount = 0;
+
+    if (mode === "sync") {
+      const pastedTitles = new Set(pastedItems.map(i => i.title.toLowerCase()));
+      updatedList = updatedList.map(item => {
+        if (!item.archived && !pastedTitles.has(item.title.toLowerCase())) {
+          return { ...item, archived: true };
+        }
+        return item;
+      });
+    }
+
+    pastedItems.forEach((pasted: any) => {
+      const existingIdx = updatedList.findIndex(i => (pasted.id && i.id.toLowerCase() === pasted.id.toLowerCase()) || i.title.toLowerCase() === pasted.title.toLowerCase());
+      if (existingIdx >= 0) {
+        updatedCount++;
+        updatedList[existingIdx] = {
+          ...updatedList[existingIdx],
+          quantity: pasted.totalStock || pasted.quantity || updatedList[existingIdx].quantity,
+          sellingPrice: pasted.price || pasted.sellingPrice || updatedList[existingIdx].sellingPrice,
+          category: pasted.category || updatedList[existingIdx].category
+        };
+      } else {
+        addedCount++;
+        updatedList.push({
+          ...pasted,
+          quantity: pasted.totalStock || pasted.quantity || 1,
+          office: pasted.totalStock || pasted.quantity || 1,
+          inStore: 0
+        });
+      }
+    });
+
+    onUpdateInventory(updatedList);
+    setSuccessMsg(`Universal Excel Paste Sync Complete! Ingested ${pastedItems.length} records (${addedCount} new, ${updatedCount} updated).`);
+  };
 
   const [currentCarouselIndex, setCurrentCarouselIndex] = useState(() => {
     const stored = localStorage.getItem("luxe_inventory_carousel_index");
@@ -977,8 +1027,16 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
             </div>
 
             <button
+              onClick={() => setIsPasteModalOpen(true)}
+              className="ml-2 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+            >
+              <Clipboard className="w-3.5 h-3.5 text-emerald-200" />
+              <span>Paste Stock</span>
+            </button>
+
+            <button
               onClick={() => setShowAddForm(!showAddForm)}
-              className="ml-2 px-3.5 py-1.5 bg-rose-900 hover:bg-rose-800 text-white text-xs font-bold rounded-xl flex items-center gap-1 transition-all shadow-sm"
+              className="px-3.5 py-1.5 bg-rose-900 hover:bg-rose-800 text-white text-xs font-bold rounded-xl flex items-center gap-1 transition-all shadow-sm cursor-pointer"
             >
               {showAddForm ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
               {showAddForm ? "Cancel" : "Add Book"}
@@ -986,13 +1044,23 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
           </div>
         </div>
 
-        {/* ADD BOOK MANUAL FORM */}
-        {showAddForm && (
-          <form onSubmit={handleAddItem} className="p-5 bg-slate-50 border border-slate-200/60 rounded-2xl space-y-4 animate-fade-in text-left">
-            <div className="flex items-center gap-1.5 pb-2 border-b border-slate-200">
-              <Sparkles className="w-4 h-4 text-rose-700" />
-              <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Catalog New Premium Book Edition</h4>
-            </div>
+        {/* ADD BOOK MANUAL FORM MODAL */}
+        {showAddForm && createPortal(
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto animate-fade-in">
+            <form onSubmit={handleAddItem} className="bg-white border border-slate-200/80 rounded-3xl max-w-2xl w-full p-6 space-y-4 shadow-2xl relative my-auto max-h-[90vh] overflow-y-auto text-left">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-rose-700" />
+                  <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Catalog New Premium Book Edition</h4>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAddForm(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-slate-400 uppercase">Book ID (Unique)</label>
@@ -1157,17 +1225,20 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
               </button>
             </div>
           </form>
-        )}
+        </div>,
+        document.body
+      )}
 
-        {/* EDIT BOOK MANUAL FORM */}
-        {editingItem && (
-          <form onSubmit={handleSaveFullEdit} className="p-5 bg-indigo-50/40 border border-indigo-200/60 rounded-2xl space-y-4 animate-fade-in text-left">
-            <div className="flex items-center justify-between pb-2 border-b border-indigo-200">
+      {/* EDIT BOOK MANUAL FORM MODAL */}
+      {editingItem && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-md overflow-y-auto animate-fade-in">
+          <form onSubmit={handleSaveFullEdit} className="bg-white border border-slate-200/80 rounded-3xl max-w-2xl w-full p-6 space-y-4 shadow-2xl relative my-auto max-h-[90vh] overflow-y-auto text-left">
+            <div className="flex items-center justify-between pb-3 border-b border-indigo-200">
               <div className="flex items-center gap-1.5">
                 <Edit2 className="w-4 h-4 text-indigo-700" />
-                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Edit Premium Book Catalog Detail ({editingItem.id})</h4>
+                <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Edit Premium Book Catalog Detail ({editingItem.id})</h4>
               </div>
-              <button type="button" onClick={() => setEditingItem(null)} className="text-slate-400 hover:text-slate-600">
+              <button type="button" onClick={() => setEditingItem(null)} className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -1356,7 +1427,9 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
               </button>
             </div>
           </form>
-        )}
+        </div>,
+        document.body
+      )}
 
         {/* INVENTORY LIST COLLAPSIBLE CARDS */}
         <div className="grid grid-cols-1 gap-4">
@@ -1703,6 +1776,16 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
 
       </div>
       )}
+
+      {/* UNIVERSAL PASTE MODAL */}
+      <UniversalPasteModal
+        isOpen={isPasteModalOpen}
+        onClose={() => setIsPasteModalOpen(false)}
+        title="Paste Librarium Luxe Inventory Stock"
+        subtitle="Copy stock rows directly from Excel or Google Sheets (Ctrl+C) and paste them here to update inventory"
+        templateType="inventory"
+        onConfirmImport={(pastedItems, rawRows, mode) => handleConfirmPasteInventory(pastedItems, rawRows, mode)}
+      />
 
     </div>
   );

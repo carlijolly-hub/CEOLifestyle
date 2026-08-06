@@ -13,8 +13,10 @@ import {
   Info,
   FileText
 } from "lucide-react";
-import { SystemSettings } from "../types";
+import { SystemSettings, SavedQuotation } from "../types";
 import { DEFAULT_QUOTE_TEMPLATES, formatQuoteTemplate } from "../utils/settingsHelper";
+import { normalizeQuotation } from "../utils/quotationUtils";
+import { loadEnvironmentQuotations, saveEnvironmentQuotations } from "../utils/environmentUtils";
 
 interface AdditionalCharge {
   id: string;
@@ -268,6 +270,10 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
     const prodTemplate = settings?.quoteTemplates?.find(t => t.active && (t.toolKey === "production_layout" || t.id === "tpl_production_layout_quote" || t.id === "tpl_production_layout"))
       || DEFAULT_QUOTE_TEMPLATES.find(t => t.id === "tpl_production_layout_quote");
 
+    const customerRespTpl = settings?.quoteTemplates?.find(t => t.active && (t.id === "tpl_customer_response" || t.name === "Customer Response"))
+      || DEFAULT_QUOTE_TEMPLATES.find(t => t.id === "tpl_customer_response");
+    const customerResponseStr = customerRespTpl?.content.trim() || "Thank you so much for providing those details.\n\nHere is your personalized quotation based on your request.";
+
     const isItemValid = reqQty > 0 && finalQuote > 0;
 
     // Filter out zero-cost charges
@@ -283,6 +289,7 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
 
     if (prodTemplate) {
       return formatQuoteTemplate(prodTemplate.content, {
+        CustomerResponse: customerResponseStr,
         MaterialName: materialName,
         SheetSpecs: `${pw}" × ${ph}"`,
         Quantity: isItemValid ? reqQty : "",
@@ -329,6 +336,39 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
     navigator.clipboard.writeText(quoteText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
+  };
+
+  const [savedSuccess, setSavedSuccess] = useState(false);
+
+  const handleSaveQuotation = () => {
+    const prodName = productType === "Custom" ? (customProductType || "Custom Item") : productType;
+    const newQuote: SavedQuotation = normalizeQuotation({
+      id: "quote_" + Date.now(),
+      quoteNumber: `LAY-QT-${Math.floor(1000 + Math.random() * 9000)}`,
+      clientName: "Layout Print Order",
+      toolType: "layout",
+      title: `${reqQty} Units ${prodName} (${materialName})`,
+      date: new Date().toISOString().split("T")[0],
+      totalCost: totalCostBeforeQuote,
+      quotedPrice: finalQuote,
+      details: `${prodName} - Qty: ${reqQty}, Material: ${materialName}, Sheet size: ${sw}"x${sh}". Total: $${finalQuote.toLocaleString()} JMD.`,
+      summaryText: `${reqQty} Units ${prodName} on ${materialName}`,
+      subtotalJMD: baseQuoteBeforeDiscount,
+      discountPercent: parsedDiscount,
+      discountAmountJMD: discountAmount,
+      totalJMD: finalQuote,
+      formattedResponseText: getGeneratedQuoteText(),
+      createdAt: new Date().toISOString(),
+      createdBy: "Master Administrator",
+      status: "Active"
+    });
+
+    const existing = loadEnvironmentQuotations();
+    const updated = [newQuote, ...existing];
+    saveEnvironmentQuotations(updated);
+
+    setSavedSuccess(true);
+    setTimeout(() => setSavedSuccess(false), 2500);
   };
 
   return (
@@ -814,27 +854,50 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
               )}
             </div>
 
-            {/* Copy Quote Button */}
-            <button
-              onClick={handleCopyQuote}
-              className={`w-full py-2.5 rounded-xl font-extrabold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
-                copied 
-                  ? "bg-emerald-600 text-white" 
-                  : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm hover:shadow-indigo-500/25"
-              }`}
-            >
-              {copied ? (
-                <>
-                  <Check className="w-4 h-4" />
-                  <span>Quotation Copied to Clipboard!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-4 h-4" />
-                  <span>Copy Customer Quotation</span>
-                </>
-              )}
-            </button>
+            {/* Action Buttons: Copy Quote & Save Quote */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                onClick={handleCopyQuote}
+                className={`py-2.5 rounded-xl font-extrabold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  copied 
+                    ? "bg-emerald-600 text-white" 
+                    : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-sm hover:shadow-indigo-500/25"
+                }`}
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Quotation Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    <span>Copy Quotation</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={handleSaveQuotation}
+                className={`py-2.5 rounded-xl font-extrabold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer border ${
+                  savedSuccess
+                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50"
+                    : "bg-amber-500 hover:bg-amber-400 text-slate-950 border-amber-400 shadow-sm"
+                }`}
+              >
+                {savedSuccess ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-400" />
+                    <span className="text-emerald-300 font-extrabold">Saved to Log!</span>
+                  </>
+                ) : (
+                  <>
+                    <FileText className="w-4 h-4 text-slate-950" />
+                    <span>Save Quotation</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
         </div>

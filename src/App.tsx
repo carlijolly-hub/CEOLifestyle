@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { Client, LuxeBookInventoryItem, SystemSettings, AspiringClient } from "./types";
-import { INITIAL_CLIENTS, INITIAL_INVENTORY, INITIAL_ASPIRING_CLIENTS } from "./data/mockData";
+import { Client, LuxeBookInventoryItem, SystemSettings, AspiringClient, OperationsOrder } from "./types";
+import { INITIAL_CLIENTS, INITIAL_INVENTORY, INITIAL_ASPIRING_CLIENTS, INITIAL_OPERATIONS_ORDERS } from "./data/mockData";
 import { syncFamilyBirthdayReminders } from "./utils/dateHelpers";
 import { getSystemSettings, saveSystemSettings } from "./utils/settingsHelper";
 import Dashboard from "./components/Dashboard";
+import OperationsHub from "./components/OperationsHub";
 import ClientList from "./components/ClientList";
 import ClientDetail from "./components/ClientDetail";
 import ClientForm from "./components/ClientForm";
@@ -13,8 +14,22 @@ import LuxeInventory from "./components/LuxeInventory";
 import UserManagement from "./components/UserManagement";
 import ProductionTools from "./components/ProductionTools";
 import AspiringClients from "./components/AspiringClients";
+import AddAspiringClientModal from "./components/AddAspiringClientModal";
 import EndSessionBackupModal from "./components/EndSessionBackupModal";
 import SystemReferenceClock from "./components/SystemReferenceClock";
+import { 
+  getCurrentEnvironment, 
+  loadEnvironmentClients, 
+  saveEnvironmentClients, 
+  loadEnvironmentAspiringClients, 
+  saveEnvironmentAspiringClients, 
+  loadEnvironmentInventory, 
+  saveEnvironmentInventory, 
+  loadEnvironmentSettings, 
+  saveEnvironmentSettings,
+  loadEnvironmentOperationsOrders,
+  saveEnvironmentOperationsOrders
+} from "./utils/environmentUtils";
 import { 
   Users, 
   LayoutDashboard, 
@@ -31,7 +46,9 @@ import {
   LogOut,
   Shield,
   Wrench,
-  UserPlus
+  UserPlus,
+  ClipboardList,
+  Crown
 } from "lucide-react";
 // @ts-ignore
 import spaceBg from "./assets/images/space_background_1783612418079.jpg";
@@ -115,9 +132,51 @@ export default function App() {
 
   // State for Librarium Luxe Inventory
   const [inventory, setInventory] = useState<LuxeBookInventoryItem[]>([]);
+
+  // State for Operations Orders
+  const [operationsOrders, setOperationsOrders] = useState<OperationsOrder[]>(() => {
+    const activeEnv = getCurrentEnvironment();
+    return loadEnvironmentOperationsOrders(activeEnv);
+  });
+
+  const handleSaveOperationsOrder = (order: OperationsOrder) => {
+    setOperationsOrders(prev => {
+      const existingIdx = prev.findIndex(o => o.id === order.id);
+      let updated: OperationsOrder[];
+      if (existingIdx !== -1) {
+        updated = [...prev];
+        updated[existingIdx] = order;
+      } else {
+        updated = [order, ...prev];
+      }
+      const activeEnv = getCurrentEnvironment();
+      saveEnvironmentOperationsOrders(updated, activeEnv);
+      return updated;
+    });
+  };
+
+  const handleDeleteOperationsOrder = (orderId: string) => {
+    setOperationsOrders(prev => {
+      const updated = prev.filter(o => o.id !== orderId);
+      const activeEnv = getCurrentEnvironment();
+      saveEnvironmentOperationsOrders(updated, activeEnv);
+      return updated;
+    });
+  };
   
-  // Tab state: "dashboard" | "directory" | "excel" | "calendar" | "inventory" | "production" | "branding" | "users"
-  const [activeTab, setActiveTab] = useState<"dashboard" | "directory" | "excel" | "calendar" | "inventory" | "production" | "branding" | "users">("dashboard");
+  // Tab state: "dashboard" | "operations" | "directory" | "aspiring" | "excel" | "calendar" | "inventory" | "production" | "branding" | "users"
+  const [activeTab, setActiveTab] = useState<"dashboard" | "operations" | "directory" | "aspiring" | "excel" | "calendar" | "inventory" | "production" | "branding" | "users">("dashboard");
+  const [autoOpenAddAspiring, setAutoOpenAddAspiring] = useState(false);
+  const [isGlobalAddAspiringOpen, setIsGlobalAddAspiringOpen] = useState(false);
+
+  // Always scroll to top when active tab changes
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [activeTab]);
+
+  const handleNavigateToAspiringAdd = () => {
+    setIsGlobalAddAspiringOpen(true);
+  };
 
   // Settings dropdown state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -168,6 +227,7 @@ export default function App() {
   const handleUpdateSettings = (newSettings: SystemSettings) => {
     setSettings(newSettings);
     saveSystemSettings(newSettings);
+    saveEnvironmentSettings(newSettings);
     
     // Sync related legacy states
     if (newSettings.appBg !== appBg) {
@@ -274,16 +334,20 @@ export default function App() {
     const firstName = nameParts[0] || "Prospect";
     const lastName = nameParts.slice(1).join(" ") || "Client";
     
-    let phone = "";
-    let email = "";
-    if (asp.contactInfo.includes("|")) {
-      const parts = asp.contactInfo.split("|");
-      phone = parts[0].trim();
-      email = parts[1].trim();
-    } else if (asp.contactInfo.includes("@")) {
-      email = asp.contactInfo.trim();
-    } else {
-      phone = asp.contactInfo.trim();
+    let phone = asp.phoneNumber || "";
+    let email = asp.email || "";
+    let instagram = asp.instagramUsername || "";
+
+    if (!phone && !email && asp.contactInfo) {
+      if (asp.contactInfo.includes("|")) {
+        const parts = asp.contactInfo.split("|");
+        phone = parts[0].trim();
+        email = parts[1].trim();
+      } else if (asp.contactInfo.includes("@")) {
+        email = asp.contactInfo.trim();
+      } else {
+        phone = asp.contactInfo.trim();
+      }
     }
 
     const newClientId = `CLI-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -299,11 +363,12 @@ export default function App() {
       homeBrand: "CEO Printing Services",
       marketingPermission: "Yes",
       deactivated: false,
-      preferredCommunication: "Phone",
+      preferredCommunication: (asp.preferredContactMethod || "Phone") as any,
       lastContactedDate: new Date().toISOString().split("T")[0],
       contact: {
         phoneNumber: phone || "+1 (876) 555-0000",
         email: email || `${firstName.toLowerCase()}@client.jm`,
+        instagramUsername: instagram,
         city: "Kingston",
         parish: "St. Andrew",
         country: "Jamaica",
@@ -540,6 +605,19 @@ export default function App() {
     }
   }, []);
 
+  // Listen for environment changes (LIVE vs STRESS_TEST vs Reset)
+  useEffect(() => {
+    const handleEnvChange = () => {
+      const activeEnv = getCurrentEnvironment();
+      setOperationsOrders(loadEnvironmentOperationsOrders(activeEnv));
+      setClients(loadEnvironmentClients(activeEnv));
+      setAspiringClients(loadEnvironmentAspiringClients(activeEnv));
+      setInventory(loadEnvironmentInventory(activeEnv));
+    };
+    window.addEventListener("ceo_environment_changed", handleEnvChange);
+    return () => window.removeEventListener("ceo_environment_changed", handleEnvChange);
+  }, []);
+
   // Recalculate client milestones automatically when reminder settings change
   useEffect(() => {
     if (clients.length > 0) {
@@ -559,6 +637,7 @@ export default function App() {
   const saveInventory = (updatedList: LuxeBookInventoryItem[]) => {
     setInventory(updatedList);
     localStorage.setItem("luxe_book_inventory", JSON.stringify(updatedList));
+    saveEnvironmentInventory(updatedList);
   };
 
   // Restore application backup
@@ -624,6 +703,7 @@ export default function App() {
     setClients(updatedList);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
     localStorage.setItem("ceo_client_management_data", JSON.stringify(updatedList));
+    saveEnvironmentClients(updatedList);
   };
 
   // Select client and force directory tab open
@@ -756,113 +836,181 @@ export default function App() {
       `}</style>
 
       {/* Main Top Header Navigation */}
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200/60 shadow-[0_1px_3px_0_rgba(0,0,0,0.05)]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.06)]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
           
-          {/* Left Brand block */}
-          <div className="flex items-center cursor-pointer group" onClick={() => setActiveTab("dashboard")}>
-            <div className="text-left">
-              <span className="font-extrabold text-[14px] sm:text-[15px] tracking-tight text-slate-900 block transition-colors group-hover:text-slate-700">
-                CEO Lifestyle Management
+          {/* Left Executive Logo Wordmark */}
+          <div className="flex items-center cursor-pointer group shrink-0 select-none py-1 overflow-visible h-full" onClick={() => setActiveTab("dashboard")}>
+            <div className="inline-flex items-center leading-normal py-1 px-1 overflow-visible my-auto">
+              <span className="font-satisfy text-2xl sm:text-3xl md:text-[28px] font-bold tracking-normal bg-gradient-to-r from-blue-700 via-indigo-600 to-amber-600 bg-clip-text text-transparent group-hover:opacity-90 transition-opacity whitespace-nowrap leading-[1.6] py-1 px-0.5 inline-block overflow-visible">
+                CEO Lifestyle
               </span>
+              <sup className="text-[10px] sm:text-[11px] ml-1 font-sans font-black text-amber-600 inline-block select-none -translate-y-2 shrink-0 overflow-visible">®</sup>
             </div>
           </div>
 
-          {/* Middle Navigation Tabs (Apple style) */}
-          <nav className="hidden sm:flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/40">
+          {/* Middle Navigation Tabs (3D-Style Premium Icons & Exact Order) */}
+          <nav className="hidden md:flex items-center gap-1 bg-slate-100/90 p-1 rounded-2xl border border-slate-200/60 shadow-inner">
+            {/* 1. Dashboard */}
             <button
               onClick={() => {
                 setActiveTab("dashboard");
                 setIsAdding(false);
                 setIsEditing(false);
               }}
-              className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
                 activeTab === "dashboard" 
-                  ? "bg-white text-slate-950 shadow-sm border border-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-950 hover:bg-slate-50/80"
+                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
               }`}
             >
-              <LayoutDashboard className="w-3.5 h-3.5" />
+              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                activeTab === "dashboard"
+                  ? "bg-gradient-to-b from-indigo-500 to-indigo-600 text-white shadow-[0_2px_4px_rgba(99,102,241,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
+                  : "bg-gradient-to-b from-white to-slate-100 text-indigo-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+              }`}>
+                <LayoutDashboard className="w-3.5 h-3.5" />
+              </div>
               Dashboard
             </button>
+
+            {/* 2. Operations Board */}
+            <button
+              onClick={() => {
+                setActiveTab("operations");
+                setIsAdding(false);
+                setIsEditing(false);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
+                activeTab === "operations" 
+                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
+              }`}
+            >
+              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                activeTab === "operations"
+                  ? "bg-gradient-to-b from-emerald-500 to-emerald-600 text-white shadow-[0_2px_4px_rgba(16,185,129,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
+                  : "bg-gradient-to-b from-white to-slate-100 text-emerald-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+              }`}>
+                <ClipboardList className="w-3.5 h-3.5" />
+              </div>
+              Operations Board
+            </button>
+
+            {/* 3. Client Directory */}
             <button
               onClick={() => {
                 setActiveTab("directory");
                 setIsAdding(false);
                 setIsEditing(false);
               }}
-              className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
                 activeTab === "directory" 
-                  ? "bg-white text-slate-950 shadow-sm border border-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-950 hover:bg-slate-50/80"
+                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
               }`}
             >
-              <Users className="w-3.5 h-3.5" />
-              Directory
+              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                activeTab === "directory"
+                  ? "bg-gradient-to-b from-blue-500 to-blue-600 text-white shadow-[0_2px_4px_rgba(59,130,246,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
+                  : "bg-gradient-to-b from-white to-slate-100 text-blue-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+              }`}>
+                <Users className="w-3.5 h-3.5" />
+              </div>
+              Client Directory
             </button>
 
-            <button
-              onClick={() => {
-                setActiveTab("aspiring");
-                setIsAdding(false);
-                setIsEditing(false);
-              }}
-              className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
-                activeTab === "aspiring" 
-                  ? "bg-white text-slate-950 shadow-sm border border-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-950 hover:bg-slate-50/80"
-              }`}
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              Aspiring Clients
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveTab("calendar");
-                setIsAdding(false);
-                setIsEditing(false);
-              }}
-              className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
-                activeTab === "calendar" 
-                  ? "bg-white text-slate-950 shadow-sm border border-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-950 hover:bg-slate-50/80"
-              }`}
-            >
-              <Calendar className="w-3.5 h-3.5" />
-              Milestone Hub
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab("inventory");
-                setIsAdding(false);
-                setIsEditing(false);
-              }}
-              className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
-                activeTab === "inventory" 
-                  ? "bg-white text-slate-950 shadow-sm border border-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-950 hover:bg-slate-50/80"
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              Luxe Inventory
-            </button>
+            {/* 4. Production Tools */}
             <button
               onClick={() => {
                 setActiveTab("production");
                 setIsAdding(false);
                 setIsEditing(false);
               }}
-              className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ${
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
                 activeTab === "production" 
-                  ? "bg-white text-slate-950 shadow-sm border border-slate-200/50" 
-                  : "text-slate-500 hover:text-slate-950 hover:bg-slate-50/80"
+                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
               }`}
             >
-              <Wrench className="w-3.5 h-3.5" />
+              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                activeTab === "production"
+                  ? "bg-gradient-to-b from-amber-500 to-amber-600 text-white shadow-[0_2px_4px_rgba(245,158,11,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
+                  : "bg-gradient-to-b from-white to-slate-100 text-amber-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+              }`}>
+                <Wrench className="w-3.5 h-3.5" />
+              </div>
               Production Tools
             </button>
 
+            {/* 5. Luxe Inventory */}
+            <button
+              onClick={() => {
+                setActiveTab("inventory");
+                setIsAdding(false);
+                setIsEditing(false);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
+                activeTab === "inventory" 
+                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
+              }`}
+            >
+              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                activeTab === "inventory"
+                  ? "bg-gradient-to-b from-purple-500 to-purple-600 text-white shadow-[0_2px_4px_rgba(168,85,247,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
+                  : "bg-gradient-to-b from-white to-slate-100 text-purple-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+              }`}>
+                <BookOpen className="w-3.5 h-3.5" />
+              </div>
+              Luxe Inventory
+            </button>
+
+            {/* 6. Milestone Hub */}
+            <button
+              onClick={() => {
+                setActiveTab("calendar");
+                setIsAdding(false);
+                setIsEditing(false);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
+                activeTab === "calendar" 
+                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
+              }`}
+            >
+              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                activeTab === "calendar"
+                  ? "bg-gradient-to-b from-rose-500 to-rose-600 text-white shadow-[0_2px_4px_rgba(244,63,94,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
+                  : "bg-gradient-to-b from-white to-slate-100 text-rose-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+              }`}>
+                <Calendar className="w-3.5 h-3.5" />
+              </div>
+              Milestone Hub
+            </button>
+
+            {/* 7. Aspiring Clients */}
+            <button
+              onClick={() => {
+                setActiveTab("aspiring");
+                setIsAdding(false);
+                setIsEditing(false);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
+                activeTab === "aspiring" 
+                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
+              }`}
+            >
+              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                activeTab === "aspiring"
+                  ? "bg-gradient-to-b from-pink-500 to-pink-600 text-white shadow-[0_2px_4px_rgba(236,72,153,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
+                  : "bg-gradient-to-b from-white to-slate-100 text-pink-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+              }`}>
+                <UserPlus className="w-3.5 h-3.5" />
+              </div>
+              Aspiring Clients
+            </button>
           </nav>
 
           {/* Right Status Indicator & Settings dropdown */}
@@ -1060,44 +1208,58 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
         
         {/* Phase Two - Consistent User Identity Header */}
-        <div className="text-left pb-6 mb-8 border-b border-slate-200/20 flex flex-col md:flex-row justify-between items-start md:items-end gap-4 animate-fade-in">
-          <div className="space-y-1">
-            <span className="text-xs font-black uppercase tracking-widest text-emerald-400 block drop-shadow-sm font-mono leading-none mb-1">
-              {userRole === "Staff" ? "Staff User" : userRole}
-            </span>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-extrabold tracking-widest text-slate-300 uppercase bg-slate-900/40 backdrop-blur-md px-2.5 py-1 rounded border border-slate-700/50">
-                Personal Client Assistant
-              </span>
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+        <div className="text-left pb-6 mb-8 border-b border-slate-200/20 animate-fade-in">
+          <div className="flex flex-col md:flex-row justify-between items-start gap-6">
+            {/* Left Column: User Identity, Page Title & Description */}
+            <div className="space-y-1.5 flex-1">
+              <div className="flex flex-wrap items-center gap-2.5 mb-2">
+                <span className="text-xs sm:text-sm font-black uppercase tracking-widest text-emerald-400 block drop-shadow-sm font-mono leading-none">
+                  {userRole === "Staff" ? "Staff User" : userRole}
+                </span>
+                <div className="flex items-center gap-1.5 bg-slate-900/50 backdrop-blur-md px-2.5 py-1 rounded border border-slate-700/50">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-[10px] font-mono tracking-wider uppercase text-slate-300">
+                    System Active
+                  </span>
+                </div>
+              </div>
+
+              <h1 className="text-3xl md:text-4xl font-normal tracking-tight text-white drop-shadow-sm">
+                {activeTab === "dashboard" && "Client Watchtower"}
+                {activeTab === "operations" && "Operations Board & Production Management"}
+                {activeTab === "directory" && (isAdding ? "Create Client Profile" : isEditing ? "Modify Client Profile" : "Client Directory")}
+                {activeTab === "aspiring" && "Aspiring Clients & Lead Management"}
+                {activeTab === "excel" && "Excel Exchange"}
+                {activeTab === "calendar" && "Milestone Calendar"}
+                {activeTab === "inventory" && "Librarium Luxe Inventory"}
+                {activeTab === "production" && "Production Tools Workspace"}
+                {activeTab === "branding" && "Centralized System Settings"}
+                {activeTab === "users" && "User Access & Governance"}
+              </h1>
+              <p className="text-slate-300 text-xs md:text-sm leading-relaxed max-w-2xl font-medium pt-1">
+                {activeTab === "dashboard" && `Welcome, ${userFullName}. Let's look at who needs your personal attention today to foster authentic, high-value client experiences.`}
+                {activeTab === "operations" && "Real-time production workflow manager tracking active customer orders from deposit confirmation through artwork, production, quality control, and delivery."}
+                {activeTab === "directory" && "A centralized database for managing client relationships, profiles, history, important dates, and lifestyle touchpoints."}
+                {activeTab === "aspiring" && "Track potential future customers, schedule follow-ups, and convert leads into active portfolio clients."}
+                {activeTab === "excel" && "Maintain perfect backup parity. Seamlessly ingest or export customer files and private catalog items."}
+                {activeTab === "calendar" && "Your visual guide to critical client anniversaries, birthdays, and important lifestyle touchpoints."}
+                {activeTab === "inventory" && "Manage and inspect exquisite private catalog items, standard stock quotas, and client-allocated assets."}
+                {activeTab === "production" && "Centralized workspace for production layout calculations, apparel studio quotation, book cost estimation, and travel logistics."}
+                {activeTab === "branding" && "Configure pricing equations, warehouse alerts, dynamic milestone triggers, and workspace branding styles."}
+                {activeTab === "users" && "Manage application user credentials, provision future workspace roles, and control active status."}
+              </p>
             </div>
-            
-            <h1 className="text-3xl md:text-4xl font-normal tracking-tight text-white drop-shadow-sm mt-3">
-              {activeTab === "dashboard" && "Client Watchtower"}
-              {activeTab === "directory" && (activeClient ? `Profile: ${activeClient.fullName}` : isAdding ? "Create Profile" : isEditing ? "Modify Profile" : "Brand Directory")}
-              {activeTab === "aspiring" && "Aspiring Clients & Lead Management"}
-              {activeTab === "excel" && "Excel Exchange"}
-              {activeTab === "calendar" && "Milestone Calendar"}
-              {activeTab === "inventory" && "Librarium Luxe Inventory"}
-              {activeTab === "production" && "Production Tools Workspace"}
-              {activeTab === "branding" && "Centralized System Settings"}
-              {activeTab === "users" && "User Access & Governance"}
-            </h1>
-            <p className="text-slate-300 text-xs md:text-sm leading-relaxed max-w-2xl font-medium mt-1">
-              {activeTab === "dashboard" && `Welcome, ${userFullName}. Let's look at who needs your personal attention today to foster authentic, high-value client experiences.`}
-              {activeTab === "directory" && (activeClient ? `Managing high-net-worth portfolio for ${activeClient.fullName}.` : "A curated look book of high-net-worth client profiles, interaction histories, preferences, and private directories.")}
-              {activeTab === "aspiring" && "Track potential future customers, schedule follow-ups, and convert leads into active portfolio clients."}
-              {activeTab === "excel" && "Maintain perfect backup parity. Seamlessly ingest or export customer files and private catalog items."}
-              {activeTab === "calendar" && "Your visual guide to critical client anniversaries, birthdays, and important lifestyle touchpoints."}
-              {activeTab === "inventory" && "Manage and inspect exquisite private catalog items, standard stock quotas, and client-allocated assets."}
-              {activeTab === "production" && "Centralized workspace for production layout calculations, apparel studio quotation, book cost estimation, and travel logistics."}
-              {activeTab === "branding" && "Configure pricing equations, warehouse alerts, dynamic milestone triggers, and workspace branding styles."}
-              {activeTab === "users" && "Manage application user credentials, provision future workspace roles, and control active status."}
-            </p>
+
+            {/* Right Column: System Reference Card */}
+            <SystemReferenceClock 
+              clientsCount={clients.length}
+              showDirectoryStatusWidgets={activeTab === "directory"}
+              onOpenEnvironmentManagement={() => {
+                setActiveTab("branding");
+                setIsSettingsOpen(false);
+              }}
+            />
           </div>
-          
-          {/* System Reference Date & Time Block */}
-          <SystemReferenceClock />
         </div>
         
         {/* Tab 1: Dashboard */}
@@ -1108,10 +1270,23 @@ export default function App() {
             setAspiringClients={setAspiringClients}
             onConvertToClient={handleConvertToClient}
             inventory={inventory}
+            operationsOrders={operationsOrders}
             onSelectClient={handleSelectClient}
-            onNavigateToTab={setActiveTab}
+            onNavigateToTab={(tab) => setActiveTab(tab as any)}
+            onNavigateToAspiringAdd={handleNavigateToAspiringAdd}
             onOpenTask={(clientId, reminderId) => setActiveTaskInfo({ clientId, reminderId })}
             settings={settings}
+          />
+        )}
+
+        {/* Tab: Operations Board */}
+        {activeTab === "operations" && (
+          <OperationsHub 
+            operationsOrders={operationsOrders}
+            clients={clients}
+            onSaveOrder={handleSaveOperationsOrder}
+            onDeleteOrder={handleDeleteOperationsOrder}
+            onNavigateToTab={(tab) => setActiveTab(tab as any)}
           />
         )}
 
@@ -1122,6 +1297,8 @@ export default function App() {
             setAspiringClients={setAspiringClients}
             onConvertToClient={handleConvertToClient}
             onNavigateToCalendar={() => setActiveTab("calendar")}
+            autoOpenAddModal={autoOpenAddAspiring}
+            onResetAutoOpenAdd={() => setAutoOpenAddAspiring(false)}
           />
         )}
 
@@ -1136,11 +1313,6 @@ export default function App() {
               <div className={`lg:col-span-4 space-y-4 ${
                 (activeClient || isAdding || isEditing) ? "hidden lg:block" : "block"
               }`}>
-                <div className="text-left">
-                  <h1 className="text-lg font-bold tracking-tight text-white">Brand Directory</h1>
-                  <p className="text-xs text-slate-300 mt-1">Select accounts to track custom interaction notes.</p>
-                </div>
-
                 <ClientList 
                   clients={clients}
                   selectedClientId={selectedClientId}
@@ -1270,6 +1442,8 @@ export default function App() {
             onStartTour={handleStartTour}
             onNavigateToTab={setActiveTab}
             clients={clients}
+            onUpdateClients={saveClients}
+            onNavigateToClient={handleSelectClient}
           />
         )}
 
@@ -1286,7 +1460,14 @@ export default function App() {
       {/* Clean Footer */}
       <footer className="mt-auto border-t border-neutral-800/10 bg-white/90 backdrop-blur-md py-6 text-center text-xs text-neutral-400 relative z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-4">
-          <p>. © Since 2024 • CEO Lifestyle  The Home Of Endless Creativity</p>
+          <p className="flex items-center gap-1.5 justify-center flex-wrap">
+            <span>© Since 2024 •</span>
+            <span className="font-satisfy text-sm bg-gradient-to-r from-blue-700 via-indigo-600 to-amber-600 bg-clip-text text-transparent font-bold py-0.5 px-0.5 inline-block leading-[1.5] overflow-visible">
+              CEO Lifestyle
+            </span>
+            <sup className="text-[9px] font-sans font-black text-amber-600 inline-block select-none -translate-y-1">®</sup>
+            <span>• The Home Of Endless Creativity</span>
+          </p>
           <div className="flex gap-4">
             <span className="font-semibold text-neutral-500">Executive Relationship Hub</span>
             <span>•</span>
@@ -1503,6 +1684,31 @@ export default function App() {
           handleLogout();
         }}
         userFullName={userFullName}
+      />
+
+      {/* Global Add Aspiring Client Popup Modal */}
+      <AddAspiringClientModal
+        isOpen={isGlobalAddAspiringOpen}
+        onClose={() => setIsGlobalAddAspiringOpen(false)}
+        onSave={(newClientData) => {
+          let summaryContact = newClientData.contactInfo || "";
+          if (newClientData.phoneNumber || newClientData.email) {
+            summaryContact = [newClientData.phoneNumber, newClientData.email].filter(Boolean).join(" | ");
+          }
+
+          const newEntry: AspiringClient = {
+            id: `ASP${String(Date.now()).slice(-4)}`,
+            ...newClientData,
+            contactInfo: summaryContact
+          };
+
+          setAspiringClients(prev => {
+            const updated = [newEntry, ...prev];
+            const activeEnv = getCurrentEnvironment();
+            saveEnvironmentAspiringClients(updated, activeEnv);
+            return updated;
+          });
+        }}
       />
 
     </div>

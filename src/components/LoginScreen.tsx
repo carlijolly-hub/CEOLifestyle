@@ -115,10 +115,11 @@ export default function LoginScreen({ onLoginSuccess, backgroundUrl }: LoginScre
             <Lock className="w-5 h-5 text-slate-100" />
           </div>
           <div>
-            <h1 className="text-base font-extrabold text-slate-900 tracking-tight">
-              CEO Lifestyle Management
+            <h1 className="font-satisfy text-2xl sm:text-3xl font-bold bg-gradient-to-r from-blue-700 via-indigo-600 to-amber-600 bg-clip-text text-transparent leading-[1.35] py-1 inline-flex items-center">
+              CEO Lifestyle
+              <sup className="text-[10px] ml-1 font-sans font-black text-amber-600 select-none -translate-y-1 shrink-0">®</sup>
             </h1>
-            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-0.5">
+            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">
               Administrative Gateway
             </p>
           </div>
@@ -235,8 +236,12 @@ export default function LoginScreen({ onLoginSuccess, backgroundUrl }: LoginScre
       </div>
 
       {/* Premium Apple-inspired Footer */}
-      <div className="absolute bottom-6 left-0 right-0 z-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-400/80 drop-shadow-sm font-sans">
-        . © Since 2024 • CEO Lifestyle  The Home Of Endless Creativity
+      <div className="absolute bottom-6 left-0 right-0 z-10 text-center text-[10px] font-bold uppercase tracking-widest text-slate-400/80 drop-shadow-sm font-sans flex items-center justify-center gap-1.5 flex-wrap px-4">
+        <span>© Since 2024 •</span>
+        <span className="font-satisfy text-sm bg-gradient-to-r from-blue-700 via-indigo-600 to-amber-600 bg-clip-text text-transparent leading-normal py-0.5 inline-flex items-center normal-case font-bold">
+          CEO Lifestyle<sup className="text-[8px] ml-0.5 font-sans font-black text-amber-600 select-none -translate-y-0.5">®</sup>
+        </span>
+        <span>• The Home Of Endless Creativity</span>
       </div>
     </div>
   );

@@ -27,7 +27,9 @@ import {
   Bell,
   X,
   Archive,
-  RefreshCw
+  RefreshCw,
+  Shirt,
+  HeartHandshake
 } from "lucide-react";
 
 interface ClientDetailProps {
@@ -139,11 +141,12 @@ export default function ClientDetail({
     }));
   }, [customer]);
 
-  const isCeoBrand = customer.homeBrand === "CEO Printing Services";
-  const isLibrariumBrand = customer.homeBrand === "Librarium Luxe";
-  const isBothBrands = customer.homeBrand === "CEO Lifestyle";
+  const relationship = customer.businessRelationship || (customer.homeBrand === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle");
+  const isLibrarium = relationship === "Librarium Luxe";
+  const isDual = relationship === "CEO Lifestyle + Librarium Luxe";
+  const isCeo = relationship === "CEO Lifestyle" || (!isLibrarium && !isDual);
 
-  // Brand-based styling definitions: CEO = blue, Librarium = velvet (rich burgundy red)
+  // Brand-based styling definitions: CEO = blue, Librarium = velvet (rich burgundy red), Dual = Burgundy/Blue blend
   let headerBgClass = "bg-gradient-to-tr from-slate-50 via-slate-100/30 to-slate-100/70 border-b border-slate-200/60 text-slate-900";
   let titleTextClass = "text-slate-950";
   let subtitleTextClass = "text-slate-500";
@@ -153,8 +156,8 @@ export default function ClientDetail({
   let actionButtonClass = "flex-1 md:flex-none flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-bold text-slate-700 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-all shadow-xs";
   let sectionTitleClass = "text-slate-400";
 
-  if (isCeoBrand) {
-    headerBgClass = "bg-gradient-to-tr from-blue-900 via-blue-800 to-indigo-950 text-white border-b border-blue-950";
+  if (isCeo) {
+    headerBgClass = "bg-gradient-to-tr from-blue-950 via-blue-900 to-indigo-950 text-white border-b border-blue-900";
     titleTextClass = "text-white";
     subtitleTextClass = "text-blue-100";
     linkTextClass = "text-blue-100 hover:text-white hover:underline";
@@ -162,7 +165,7 @@ export default function ClientDetail({
     initialsCircleBgClass = "bg-blue-600 text-white border-2 border-blue-400";
     actionButtonClass = "flex-1 md:flex-none flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-800 border border-blue-700 rounded-xl hover:bg-blue-700 transition-all shadow-sm";
     sectionTitleClass = "text-blue-600 font-bold tracking-wider";
-  } else if (isLibrariumBrand) {
+  } else if (isLibrarium) {
     headerBgClass = "bg-gradient-to-tr from-[#3B0E14] via-[#5C1A24] to-[#4C1D24] text-white border-b border-rose-950";
     titleTextClass = "text-white";
     subtitleTextClass = "text-rose-100";
@@ -171,7 +174,7 @@ export default function ClientDetail({
     initialsCircleBgClass = "bg-rose-800 text-white border-2 border-rose-400";
     actionButtonClass = "flex-1 md:flex-none flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-rose-900 border border-rose-800 rounded-xl hover:bg-rose-850 transition-all shadow-sm";
     sectionTitleClass = "text-rose-800 font-bold tracking-wider";
-  } else if (isBothBrands) {
+  } else if (isDual) {
     headerBgClass = "bg-gradient-to-tr from-blue-950 via-purple-950 to-[#4C1D24] text-white border-b border-purple-950";
     titleTextClass = "text-white";
     subtitleTextClass = "text-purple-100";
@@ -181,6 +184,25 @@ export default function ClientDetail({
     actionButtonClass = "flex-1 md:flex-none flex items-center justify-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-purple-900 border border-purple-800 rounded-xl hover:bg-purple-850 transition-all shadow-sm";
     sectionTitleClass = "text-purple-700 font-bold tracking-wider";
   }
+
+  const getTierBadgeClass = (t: string) => {
+    switch (t) {
+      case "Founders Family":
+        return "bg-gradient-to-r from-purple-700 via-indigo-700 to-purple-800 text-white border-purple-400 font-black shadow-sm";
+      case "Platinum":
+        return "bg-slate-900 text-slate-100 border-slate-700 font-extrabold shadow-sm";
+      case "Gold":
+        return "bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-500 text-amber-950 border-amber-600 font-extrabold shadow-sm";
+      case "Silver":
+        return "bg-slate-100 text-slate-700 border-slate-300 font-bold";
+      case "Delinquent":
+        return "bg-rose-600 text-white border-rose-700 font-black animate-pulse shadow-sm";
+      case "Problematic":
+        return "bg-black text-rose-400 border-rose-900 font-black shadow-sm";
+      default:
+        return "bg-slate-100 text-slate-700 border-slate-200 font-bold";
+    }
+  };
 
   return (
     <div className="bg-white border border-slate-200/60 rounded-3xl shadow-sm overflow-hidden animate-fade-in text-slate-800">
@@ -218,15 +240,20 @@ export default function ClientDetail({
                 <h1 className={`text-xl font-bold ${titleTextClass}`}>
                   {customer.firstName} {customer.lastName}
                 </h1>
-                <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${
-                  customer.tier === "Gold" 
-                    ? "bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-500 text-amber-950 border-amber-600 shadow-[0_1px_4px_rgba(245,158,11,0.2)] font-extrabold" 
-                    : customer.tier === "Platinum" 
-                      ? "bg-slate-900 text-slate-100 border-slate-950 font-extrabold shadow-[0_1px_4px_rgba(0,0,0,0.1)]" 
-                      : "bg-slate-100 text-slate-700 border-slate-200"
-                }`}>
-                  {customer.tier} Client
+                <span className={`px-2.5 py-0.5 rounded text-[10px] uppercase tracking-wider border ${getTierBadgeClass(customer.tier)}`}>
+                  {customer.tier === "Founders Family" ? "Priority Client – Founders Family" : `${customer.tier} Tier`}
                 </span>
+                {customer.managementClassification && customer.managementClassification !== "Standard" && (
+                  <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
+                    customer.managementClassification === "Problematic"
+                      ? "bg-black text-rose-400 border-rose-900"
+                      : customer.managementClassification === "Delinquent"
+                        ? "bg-rose-600 text-white border-rose-700 animate-pulse"
+                        : "bg-purple-900 text-purple-200 border-purple-700"
+                  }`}>
+                    Status: {customer.managementClassification}
+                  </span>
+                )}
                 {customer.deactivated && (
                   <span className="px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-rose-600 text-white border border-rose-500 animate-pulse">
                     📁 Inactive / Deactivated
@@ -280,7 +307,7 @@ export default function ClientDetail({
         </div>
 
         {/* Quick Brands Bar */}
-        <div className={`flex flex-wrap items-center gap-3 mt-6 pt-5 border-t ${isCeoBrand || isLibrariumBrand || isBothBrands ? "border-white/10" : "border-slate-200/60"}`}>
+        <div className={`flex flex-wrap items-center gap-3 mt-6 pt-5 border-t ${isCeo || isLibrarium || isDual ? "border-white/10" : "border-slate-200/60"}`}>
           <span className={`text-[10px] font-bold uppercase tracking-widest ${brandTextLightClass}`}>Home Brand Relationship:</span>
           <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border ${
             customer.homeBrand === "CEO Printing Services" || customer.homeBrand === "CEO Lifestyle"
@@ -315,6 +342,272 @@ export default function ClientDetail({
         
         {/* Left column - 7 units width */}
         <div className="lg:col-span-7 space-y-8">
+
+          {/* V2.1 CLIENT INTELLIGENCE PROFILE CARD */}
+          <div className="bg-slate-900 text-white rounded-2xl p-6 shadow-md border border-slate-800 text-left space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <h3 className="text-xs font-black uppercase tracking-widest text-slate-200">Client Intelligence & Relationship Profile</h3>
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 bg-slate-800 px-2 py-0.5 rounded">V2.1 Intelligence</span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Client Identity</span>
+                <span className="text-sm font-extrabold text-white block">{customer.firstName} {customer.lastName}</span>
+                <span className="text-[10px] font-mono text-slate-400 block">CL ID: {customer.id}</span>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Relationship Health Score</span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-base font-black ${
+                    (customer.healthScore ?? 75) >= 80 ? "text-emerald-400" : (customer.healthScore ?? 75) >= 50 ? "text-amber-400" : "text-rose-400"
+                  }`}>
+                    {customer.healthScore ?? 75}/100
+                  </span>
+                  <div className="flex-1 bg-slate-800 h-2 rounded-full overflow-hidden border border-slate-700">
+                    <div 
+                      className={`h-full rounded-full ${
+                        (customer.healthScore ?? 75) >= 80 ? "bg-emerald-500" : (customer.healthScore ?? 75) >= 50 ? "bg-amber-500" : "bg-rose-500"
+                      }`}
+                      style={{ width: `${Math.min(100, Math.max(0, customer.healthScore ?? 75))}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Business Relationship</span>
+                <span className={`inline-block px-2.5 py-1 rounded text-[11px] font-extrabold uppercase border ${
+                  relationship === "CEO Lifestyle"
+                    ? "bg-blue-900/60 text-blue-200 border-blue-700"
+                    : relationship === "Librarium Luxe"
+                      ? "bg-rose-950/80 text-rose-200 border-rose-800"
+                      : "bg-purple-950/80 text-purple-200 border-purple-700"
+                }`}>
+                  {relationship}
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Final Tier (Official)</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`inline-block px-2.5 py-0.5 rounded text-[11px] uppercase tracking-wider border ${getTierBadgeClass(customer.tier)}`}>
+                    {customer.tier === "Founders Family" ? "Priority Client – Founders Family" : customer.tier}
+                  </span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                    (customer.tierSource || (["Founders Family", "Delinquent", "Problematic"].includes(customer.tier) ? "Manual" : "Calculated")) === "Manual"
+                      ? "bg-purple-950/80 text-purple-300 border-purple-700"
+                      : "bg-slate-800 text-slate-300 border-slate-700"
+                  }`}>
+                    Source: {customer.tierSource || (["Founders Family", "Delinquent", "Problematic"].includes(customer.tier) ? "Manual" : "Calculated")}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Relationship Status</span>
+                <span className={`inline-block px-2.5 py-0.5 rounded text-[11px] font-extrabold uppercase border ${
+                  (customer.relationshipStatus || "Active") === "Active"
+                    ? "bg-emerald-950/80 text-emerald-300 border-emerald-800"
+                    : (customer.relationshipStatus || "Active") === "Warm"
+                      ? "bg-amber-950/80 text-amber-300 border-amber-800"
+                      : "bg-rose-950/80 text-rose-300 border-rose-800"
+                }`}>
+                  {customer.relationshipStatus || "Active"}
+                </span>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Account Operational Status</span>
+                <span className={`inline-block px-2.5 py-0.5 rounded text-[11px] font-extrabold uppercase border ${
+                  customer.deactivated || customer.accountStatus === "Inactive" || customer.accountStatus === "Archived"
+                    ? "bg-rose-950/80 text-rose-300 border-rose-800"
+                    : "bg-blue-950/80 text-blue-300 border-blue-800"
+                }`}>
+                  {customer.deactivated ? "Inactive / Archived" : (customer.accountStatus || "Active")}
+                </span>
+              </div>
+
+              {customer.manualTierReason && (
+                <div className="sm:col-span-2 space-y-1 bg-slate-800/60 p-2.5 rounded-xl border border-slate-800">
+                  <span className="text-[10px] font-bold text-purple-300 uppercase tracking-wider block">Manual Tier Context</span>
+                  <p className="text-xs text-slate-200">{customer.manualTierReason}</p>
+                </div>
+              )}
+
+              {customer.strategicAssociations && customer.strategicAssociations.length > 0 && (
+                <div className="sm:col-span-2 space-y-1 bg-slate-800/60 p-2.5 rounded-xl border border-slate-800">
+                  <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider block">Strategic Associated Relationships</span>
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {customer.strategicAssociations.map((assoc, i) => (
+                      <span key={i} className="text-[10.5px] font-bold px-2 py-0.5 bg-amber-500/20 text-amber-200 border border-amber-500/30 rounded-lg">
+                        🔗 {assoc}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="sm:col-span-2 pt-2 border-t border-slate-800 flex justify-between items-center">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Lifetime Value</span>
+                <span className="text-sm font-mono font-black text-emerald-400">{formatCurrency(customer.history.lifetimeRevenue)}</span>
+              </div>
+
+              {/* Discreet Loss Notes */}
+              <div className="sm:col-span-2 pt-3 border-t border-slate-800/80 space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Discreet Loss Notes</span>
+                {(!customer.remembrances || customer.remembrances.length === 0) ? (
+                  <p className="text-xs text-slate-400 italic">No personal remembrance notes recorded for this client.</p>
+                ) : (
+                  <div className="space-y-1.5 pt-0.5">
+                    {customer.remembrances.map((rem) => (
+                      <div key={rem.id} className="p-2.5 bg-slate-800/80 border border-slate-700/60 rounded-xl space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-extrabold text-white text-xs">{rem.relationship}</span>
+                          <span className="bg-rose-950/90 text-rose-300 text-[9px] font-extrabold px-2 py-0.5 rounded border border-rose-800/70">
+                            {rem.status || "Passed Away"}
+                          </span>
+                          {rem.dateAdded && (
+                            <span className="text-[9.5px] text-slate-400 font-medium ml-auto">Added {rem.dateAdded}</span>
+                          )}
+                        </div>
+                        {rem.notes && (
+                          <p className="text-[11px] text-slate-300 leading-relaxed pt-0.5">{rem.notes}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Apparel & Fit Sizes */}
+              <div className="sm:col-span-2 pt-3 border-t border-slate-800/80 space-y-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Apparel & Fit Sizes</span>
+                {(!customer.apparelInfo || Object.values(customer.apparelInfo).every(v => !v)) ? (
+                  <p className="text-xs text-slate-400 italic">No apparel or fitting information saved for this client.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2 pt-0.5">
+                    {customer.apparelInfo.tShirtSize && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-indigo-300">Adult T-Shirt:</span>
+                        <span className="font-bold text-white text-xs">{customer.apparelInfo.tShirtSize}</span>
+                      </div>
+                    )}
+                    {customer.apparelInfo.poloSize && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-400">Polo:</span>
+                        <span className="font-bold text-white text-xs">{customer.apparelInfo.poloSize}</span>
+                      </div>
+                    )}
+                    {customer.apparelInfo.hoodieSize && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-400">Hoodie:</span>
+                        <span className="font-bold text-white text-xs">{customer.apparelInfo.hoodieSize}</span>
+                      </div>
+                    )}
+                    {customer.apparelInfo.jerseySize && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-400">Jersey:</span>
+                        <span className="font-bold text-white text-xs">{customer.apparelInfo.jerseySize}</span>
+                      </div>
+                    )}
+                    {customer.apparelInfo.jacketSize && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-400">Jacket:</span>
+                        <span className="font-bold text-white text-xs">{customer.apparelInfo.jacketSize}</span>
+                      </div>
+                    )}
+                    {customer.apparelInfo.hatSize && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-400">Hat:</span>
+                        <span className="font-bold text-white text-xs">{customer.apparelInfo.hatSize}</span>
+                      </div>
+                    )}
+                    {customer.apparelInfo.shoeSize && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-400">Shoe:</span>
+                        <span className="font-bold text-white text-xs">{customer.apparelInfo.shoeSize}</span>
+                      </div>
+                    )}
+                    {customer.apparelInfo.ringSize && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-400">Ring:</span>
+                        <span className="font-bold text-white text-xs">{customer.apparelInfo.ringSize}</span>
+                      </div>
+                    )}
+                    {customer.apparelInfo.braceletSize && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-400">Bracelet:</span>
+                        <span className="font-bold text-white text-xs">{customer.apparelInfo.braceletSize}</span>
+                      </div>
+                    )}
+                    {customer.apparelInfo.necklaceLength && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-400">Necklace:</span>
+                        <span className="font-bold text-white text-xs">{customer.apparelInfo.necklaceLength}</span>
+                      </div>
+                    )}
+                    {customer.apparelInfo.dressSize && (
+                      <div className="bg-slate-800/90 border border-slate-700/80 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase text-slate-400">Dress:</span>
+                        <span className="font-bold text-white text-xs">{customer.apparelInfo.dressSize}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* CLIENT HISTORY PRESERVATION TIMELINE */}
+          <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-6 text-left space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
+              <h3 className="text-xs font-black uppercase tracking-widest text-slate-800">Client History Preservation</h3>
+              <span className="text-[10px] font-bold text-slate-400">Never Deleted</span>
+            </div>
+
+            {/* Progression Sequence Display */}
+            <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center gap-2 flex-wrap text-xs font-bold text-slate-700">
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider mr-1">Status Trail:</span>
+              {(customer.tierHistory && customer.tierHistory.length > 0
+                ? customer.tierHistory
+                : [
+                    { tier: "Silver" },
+                    ...(customer.tier !== "Silver" ? [{ tier: customer.tier }] : [])
+                  ]
+              ).map((h, i, arr) => (
+                <React.Fragment key={i}>
+                  <span className={`px-2 py-0.5 rounded text-[10px] uppercase tracking-wider border ${getTierBadgeClass(h.tier)}`}>
+                    {h.tier}
+                  </span>
+                  {i < arr.length - 1 && <span className="text-slate-400 font-extrabold">↓</span>}
+                </React.Fragment>
+              ))}
+            </div>
+
+            {/* Detailed Log Table */}
+            {customer.tierHistory && customer.tierHistory.length > 0 && (
+              <div className="space-y-2 pt-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 block">Classification Audit Log</span>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto text-[11px]">
+                  {customer.tierHistory.map((rec, idx) => (
+                    <div key={rec.id || idx} className="bg-white p-2.5 rounded-lg border border-slate-200 flex items-center justify-between gap-2">
+                      <div>
+                        <span className="font-mono font-bold text-slate-500 mr-2">{rec.dateChanged || (rec as any).date}</span>
+                        <span className={`px-1.5 py-0.2 rounded text-[9px] uppercase font-bold border mr-2 ${getTierBadgeClass(rec.tier)}`}>{rec.tier}</span>
+                        <span className="text-slate-700">{rec.reason || "Classification update"}</span>
+                      </div>
+                      <span className="text-[9px] font-bold text-slate-400 shrink-0">{rec.changedBy || "System"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
           
           {/* Overseas Buyer Indicator Panel */}
           {isOverseasBuyer && (
@@ -340,6 +633,12 @@ export default function ClientDetail({
                     <Phone className="w-3.5 h-3.5 text-slate-400" />
                     {customer.contact.phoneNumber}
                   </a>
+                </div>
+                <div>
+                  <span className="text-slate-400 font-bold block uppercase text-[9px] tracking-wider">Communication Status</span>
+                  <span className="text-slate-900 font-bold block mt-1">
+                    {customer.communicationStatus || "Unknown"}
+                  </span>
                 </div>
                 <div>
                   <span className="text-slate-400 font-bold block uppercase text-[9px] tracking-wider">Email Address</span>
@@ -519,6 +818,22 @@ export default function ClientDetail({
                     <div>
                       <span className="text-slate-400 font-bold block mb-1 text-[9px] uppercase tracking-wider">Gift Preferences</span>
                       <p className="text-slate-900 font-bold">{customer.interests.giftPreferences.join(", ") || "N/A"}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-400 font-bold block mb-1 text-[9px] uppercase tracking-wider flex items-center gap-1">
+                        <BookOpen className="w-3 h-3 text-amber-600" /> Favourite Authors
+                      </span>
+                      <div className="flex gap-1.5 flex-wrap">
+                        {customer.favouriteAuthors && customer.favouriteAuthors.length > 0 ? (
+                          customer.favouriteAuthors.map(author => (
+                            <span key={author} className="bg-amber-50 text-amber-900 border border-amber-200/80 px-2.5 py-0.5 rounded-md font-bold text-[10px]">
+                              📚 {author}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-slate-400 font-medium italic text-[11px]">No favourite authors logged yet</span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

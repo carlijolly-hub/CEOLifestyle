@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
+import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { 
   Calculator, 
   Layers, 
@@ -43,7 +45,8 @@ import {
   FileText,
   Tag,
   Filter,
-  Plus
+  Plus,
+  Crown
 } from "lucide-react";
 import { SystemSettings, Client, LuxeBookInventoryItem, ProductionMaterialPreset, BackupRecord, DTFSupplier, DTFPricingPreset, DeliveryMethod, SystemQuoteTemplate } from "../types";
 import { DEFAULT_PRODUCTION_MATERIALS, DEFAULT_DTF_SUPPLIERS, DEFAULT_DTF_PRICING, DEFAULT_DELIVERY_METHODS, DEFAULT_QUOTE_TEMPLATES, formatQuoteTemplate } from "../utils/settingsHelper";
@@ -57,6 +60,8 @@ import {
   ImportResult
 } from "../utils/backupUtils";
 import ClientExportModal from "./ClientExportModal";
+import ClientTierManagement from "./ClientTierManagement";
+import EnvironmentManagement from "./EnvironmentManagement";
 
 interface BrandingSettingsProps {
   appBg: string;
@@ -74,6 +79,8 @@ interface BrandingSettingsProps {
   onStartTour?: (tourId: string) => void;
   onNavigateToTab?: (tab: "dashboard" | "directory" | "excel" | "calendar" | "inventory" | "branding" | "users") => void;
   clients?: Client[];
+  onUpdateClients?: (updatedClients: Client[]) => void;
+  onNavigateToClient?: (clientId: string) => void;
 }
 
 const GUIDE_MODULES = [
@@ -248,11 +255,15 @@ export default function BrandingSettings({
   onRestoreBackup,
   onStartTour,
   onNavigateToTab,
-  clients = []
+  clients = [],
+  onUpdateClients,
+  onNavigateToClient
 }: BrandingSettingsProps) {
+  const isMasterAdmin = userRole === "Master Administrator" || userRole?.toLowerCase().includes("master");
+
   const [activeSubTab, setActiveSubTab] = useState<
-    "business" | "delivery_methods" | "quote_templates" | "production_materials" | "inventory" | "reminders" | "branding" | "security" | "preferences" | "expansion" | "backup" | "guide"
-  >("business");
+    "environment_management" | "business" | "tier_management" | "delivery_methods" | "quote_templates" | "production_materials" | "inventory" | "reminders" | "branding" | "security" | "preferences" | "expansion" | "backup" | "guide"
+  >(isMasterAdmin ? "environment_management" : "business");
 
   // Production materials internal subtab
   const [prodMatSubTab, setProdMatSubTab] = useState<"dtf_suppliers" | "dtf_pricing" | "paper">("dtf_suppliers");
@@ -268,6 +279,7 @@ export default function BrandingSettings({
   const [activePreviewTemplateId, setActivePreviewTemplateId] = useState<string | null>(null);
   const [copiedPreviewId, setCopiedPreviewId] = useState<string | null>(null);
   const [showAddTemplateModal, setShowAddTemplateModal] = useState(false);
+  useBodyScrollLock(showAddTemplateModal);
   const [newTplName, setNewTplName] = useState("");
   const [newTplCategory, setNewTplCategory] = useState<"Quotations" | "Delivery & Collection" | "Customer Communications">("Quotations");
   const [newTplToolKey, setNewTplToolKey] = useState<"apparel" | "book" | "dtf" | "production_layout" | "location" | "general">("general");
@@ -831,6 +843,20 @@ export default function BrandingSettings({
           <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider px-3.5 py-2 block">
             System Modules
           </span>
+
+          {isMasterAdmin && (
+            <button
+              onClick={() => setActiveSubTab("environment_management")}
+              className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
+                activeSubTab === "environment_management"
+                  ? "bg-slate-900 text-amber-300 shadow-md ring-1 ring-amber-400/40"
+                  : "bg-slate-900/10 text-slate-800 hover:bg-slate-900/20"
+              }`}
+            >
+              <Database className="w-4 h-4 text-amber-500" />
+              <span>Environment Management</span>
+            </button>
+          )}
           
           <button
             onClick={() => setActiveSubTab("business")}
@@ -842,6 +868,18 @@ export default function BrandingSettings({
           >
             <Coins className="w-4 h-4" />
             Calculations
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab("tier_management")}
+            className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
+              activeSubTab === "tier_management"
+                ? "bg-amber-600 text-white shadow-xs"
+                : "text-amber-700 hover:text-amber-900 hover:bg-amber-50/60"
+            }`}
+          >
+            <Crown className="w-4 h-4 text-amber-500 group-hover:text-amber-600" />
+            Client Tier Management
           </button>
 
           <button
@@ -983,6 +1021,23 @@ export default function BrandingSettings({
 
         {/* Right Column Content Areas */}
         <div className="lg:col-span-9">
+
+          {/* ENVIRONMENT MANAGEMENT */}
+          {activeSubTab === "environment_management" && (
+            <EnvironmentManagement 
+              userRole={userRole} 
+              userFullName={userFullName} 
+            />
+          )}
+
+          {/* CLIENT TIER MANAGEMENT */}
+          {activeSubTab === "tier_management" && (
+            <ClientTierManagement 
+              clients={clients} 
+              onUpdateClients={onUpdateClients}
+              onNavigateToClient={onNavigateToClient}
+            />
+          )}
           
           {/* 1. BUSINESS CALCULATIONS */}
           {activeSubTab === "business" && (
@@ -1120,7 +1175,7 @@ export default function BrandingSettings({
                   <button
                     type="button"
                     onClick={() => {
-                      if (window.confirm("Reset all delivery and collection methods to system default settings?")) {
+                      if (window.confirm("Reset all delivery methods to system default settings?")) {
                         handleChange("deliveryMethods", DEFAULT_DELIVERY_METHODS);
                       }
                     }}
@@ -1136,7 +1191,7 @@ export default function BrandingSettings({
               <div className="space-y-4">
                 {(!localSettings.deliveryMethods || localSettings.deliveryMethods.length === 0) ? (
                   <div className="p-8 text-center bg-slate-50 border border-slate-200/60 rounded-2xl text-slate-500">
-                    No delivery or collection methods configured. Click "Reset Defaults" or "Add Method" above.
+                    No delivery methods configured. Click "Reset Defaults" or "Add Method" above.
                   </div>
                 ) : (
                   (localSettings.deliveryMethods || []).map((method, idx) => {
@@ -1338,7 +1393,7 @@ export default function BrandingSettings({
               <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-200/60">
                 {/* Category Pills */}
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
-                  {["All", "Quotations", "Delivery & Collection", "Customer Communications"].map((cat) => (
+                  {["All", "Customer Communication", "Sales Quotes", "Operations"].map((cat) => (
                     <button
                       key={cat}
                       type="button"
@@ -1371,7 +1426,19 @@ export default function BrandingSettings({
               <div className="space-y-6">
                 {(() => {
                   const filtered = activeQuoteTemplates.filter((tpl) => {
-                    const matchesCategory = selectedTemplateCategory === "All" || tpl.category === selectedTemplateCategory;
+                    let matchesCategory = selectedTemplateCategory === "All";
+                    if (!matchesCategory) {
+                      if (selectedTemplateCategory === "Customer Communication") {
+                        matchesCategory = tpl.category === "Customer Communication" || tpl.category === "Customer Communications";
+                      } else if (selectedTemplateCategory === "Sales Quotes") {
+                        matchesCategory = tpl.category === "Sales Quotes" || tpl.category === "Quotations";
+                      } else if (selectedTemplateCategory === "Operations") {
+                        matchesCategory = tpl.category === "Operations" || tpl.category === "Delivery & Collection";
+                      } else {
+                        matchesCategory = tpl.category === selectedTemplateCategory;
+                      }
+                    }
+
                     const query = templateSearchQuery.toLowerCase().trim();
                     const matchesQuery = !query || 
                       tpl.name.toLowerCase().includes(query) || 
@@ -1408,9 +1475,9 @@ export default function BrandingSettings({
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
-                              tpl.category === "Quotations"
+                              tpl.category === "Sales Quotes" || tpl.category === "Quotations"
                                 ? "bg-indigo-50 text-indigo-700 border border-indigo-200/60"
-                                : tpl.category === "Delivery & Collection"
+                                : tpl.category === "Operations" || tpl.category === "Delivery & Collection"
                                 ? "bg-amber-50 text-amber-700 border border-amber-200/60"
                                 : "bg-emerald-50 text-emerald-700 border border-emerald-200/60"
                             }`}>
@@ -1525,10 +1592,10 @@ export default function BrandingSettings({
 
                           <div className="flex flex-wrap gap-1.5 bg-slate-50 p-2.5 rounded-2xl border border-slate-200/60">
                             {[
-                              "{CustomerName}", "{QuoteDate}", "{GarmentType}", "{GarmentItems}", "{BookTitle}", 
-                              "{Quantity}", "{UnitPrice}", "{Subtotal}", "{DiscountPercent}", "{DiscountAmount}", 
+                              "{CustomerResponse}", "{CustomerName}", "{QuoteDate}", "{GarmentType}", "{GarmentItems}", "{BookTitle}", 
+                              "{BooksList}", "{BooksSubtotal}", "{TargetDestination}", "{Quantity}", "{UnitPrice}", "{Subtotal}", "{DiscountPercent}", "{DiscountAmount}", 
                               "{GrandTotal}", "{DeliveryMethod}", "{DeliveryCharge}", "{DeliveryMessage}", 
-                              "{PickupLocation}", "{DepositAmount}", "{BusinessName}"
+                              "{PickupLocation}", "{DepositAmount}", "{OrderNumber}", "{DueDate}", "{ProductionStatus}", "{BusinessName}"
                             ].map((ph) => (
                               <button
                                 key={ph}
@@ -1612,9 +1679,9 @@ export default function BrandingSettings({
               </div>
 
               {/* New Template Creation Modal */}
-              {showAddTemplateModal && (
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-                  <div className="bg-white rounded-3xl p-6 md:p-8 max-w-xl w-full space-y-5 shadow-2xl border border-slate-200 text-left animate-fade-in">
+              {showAddTemplateModal && createPortal(
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+                  <div className="bg-white rounded-3xl p-6 md:p-8 max-w-xl w-full space-y-5 shadow-2xl border border-slate-200 text-left relative my-auto animate-fade-in">
                     <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                       <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
                         <Plus className="w-5 h-5 text-indigo-600" /> Create Custom Message Template
@@ -1713,7 +1780,8 @@ export default function BrandingSettings({
                       </div>
                     </form>
                   </div>
-                </div>
+                </div>,
+                document.body
               )}
             </div>
           )}
@@ -3234,7 +3302,7 @@ export default function BrandingSettings({
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-mono font-extrabold text-indigo-900 bg-indigo-100 px-2 py-0.5 rounded-md">
-                          ID: {validationReport.backupId || "TEST-EXP-V2.1"}
+                          ID: {(validationReport as any).backupId || "TEST-EXP-V2.1"}
                         </span>
                         <span className="text-[10px] font-mono font-extrabold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">
                           Version {validationReport.version || "2.1.0"}
@@ -3261,7 +3329,7 @@ export default function BrandingSettings({
                       </div>
                       <div className="p-2.5 bg-white border border-amber-100 rounded-xl">
                         <span className="text-[9px] font-bold uppercase text-slate-400 block">Luxe Inventory</span>
-                        <span className="font-extrabold text-slate-800">{validationReport.itemCounts?.inventory || 0} items ({validationReport.itemCounts?.totalBooks || 0} books)</span>
+                        <span className="font-extrabold text-slate-800">{validationReport.itemCounts?.inventory || 0} items ({(validationReport.itemCounts as any)?.totalBooks || 0} books)</span>
                       </div>
                       <div className="p-2.5 bg-white border border-amber-100 rounded-xl">
                         <span className="text-[9px] font-bold uppercase text-slate-400 block">User Accounts</span>
