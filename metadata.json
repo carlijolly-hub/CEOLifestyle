@@ -1,6 +1,0 @@
-{
-  "name": "CEO Client Managment",
-  "description": "An elegant, Apple-inspired CRM system for CEO Printing Services and Librarium Luxe brands.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
