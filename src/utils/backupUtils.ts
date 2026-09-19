@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { Client, LuxeBookInventoryItem, SystemSettings, AspiringClient, BackupRecord, ProductionMaterialPreset } from "../types";
+import { Client, LuxeBookInventoryItem, SystemSettings, AspiringClient, BackupRecord, ProductionMaterialPreset, OperationsOrder } from "../types";
 import { INITIAL_BACKUP_HISTORY, INITIAL_CLIENTS } from "../data/mockData";
 import { customerToFlatRow, flatRowToCustomer } from "./excelUtils";
 import { 
@@ -11,8 +11,10 @@ import {
   loadEnvironmentBusinessEvents, 
   loadEnvironmentClientTierRegister, 
   loadEnvironmentSettings,
-  loadEnvironmentOperationsOrders
+  loadEnvironmentOperationsOrders,
+  saveEnvironmentOperationsOrders
 } from "./environmentUtils";
+import { normalizeOperationsOrder } from "./orderNumberUtils";
 
 export const BACKUP_HISTORY_STORAGE_KEY = "ceo_backup_history";
 
@@ -135,14 +137,14 @@ export function generateFullBackupPayload(createdBy: string = "Master Administra
 
   const payload = {
     version: "2.1.0",
-    environment: activeEnv,
+    environment: "PRODUCTION",
     backupSystem: "CEO Lifestyle Management Master Database Workbook",
     backupId,
     timestamp: now.toISOString(),
     backupDate: dateFormatted,
     backupTime: timeFormatted,
     createdBy,
-    notes: notes || `Standard operational backup snapshot (${activeEnv} Environment)`,
+    notes: notes || `Standard operational backup snapshot`,
     itemCounts: {
       clients: clients.length,
       aspiringClients: aspiringClients.length,
@@ -183,22 +185,15 @@ export function exportExcelBackup(notes: string = "", createdBy: string = "Maste
 
   const now = new Date();
   const dateIso = now.toISOString().split("T")[0]; // 2026-07-24
-  const defaultFileName = payload.environment === "LIVE" 
-    ? `CEO_Lifestyle_Backup_V2.1_${dateIso}.xlsx`
-    : `STRESS_MODE_CEO_Lifestyle_Backup_V2.1_${dateIso}.xlsx`;
+  const defaultFileName = `CEO_Lifestyle_Backup_V2.1_${dateIso}.xlsx`;
   let fileName = customFileName || defaultFileName;
-  if (payload.environment === "STRESS_TEST" && !fileName.startsWith("STRESS_MODE_")) {
-    fileName = `STRESS_MODE_${fileName}`;
-  } else if (payload.environment === "LIVE" && fileName.startsWith("LIVE_MODE_")) {
-    fileName = fileName.replace("LIVE_MODE_", "");
-  }
 
   const wb = XLSX.utils.book_new();
 
   // Worksheet 1: Master Backup Report
   const masterReportData = [
     { "Category": "CEO LIFESTYLE MANAGEMENT - MASTER DATA WORKBOOK REPORT", "Value": "" },
-    { "Category": "Environment Type", "Value": payload.environment === "LIVE" ? "🟢 LIVE MODE" : "🟡 STRESS TEST MODE" },
+    { "Category": "System Status", "Value": "CEO Lifestyle Management" },
     { "Category": "Backup ID", "Value": payload.backupId },
     { "Category": "Backup Date", "Value": payload.backupDate },
     { "Category": "Backup Time", "Value": payload.backupTime },
@@ -496,7 +491,7 @@ export function exportExcelBackup(notes: string = "", createdBy: string = "Maste
 
   // Worksheet 16: SYSTEM_REFERENCE (Metadata)
   const systemRefData = [
-    { "Field": "Environment", "Value": payload.environment === "LIVE" ? "LIVE MODE" : "STRESS TEST MODE" },
+    { "Field": "Application", "Value": "CEO Lifestyle Management" },
     { "Field": "Export Date", "Value": payload.backupDate },
     { "Field": "Export Time", "Value": payload.backupTime },
     { "Field": "Application Version", "Value": payload.version || "V2.1" },
@@ -531,15 +526,8 @@ export function exportJsonBackup(notes: string = "", createdBy: string = "Master
   const payload = generateFullBackupPayload(createdBy, notes);
   const now = new Date();
   const dateIso = now.toISOString().split("T")[0];
-  const defaultFileName = payload.environment === "LIVE" 
-    ? `CEO_Lifestyle_Backup_V2.1_${dateIso}.json`
-    : `STRESS_MODE_CEO_Lifestyle_Backup_V2.1_${dateIso}.json`;
+  const defaultFileName = `CEO_Lifestyle_Backup_V2.1_${dateIso}.json`;
   let fileName = customFileName || defaultFileName;
-  if (payload.environment === "STRESS_TEST" && !fileName.startsWith("STRESS_MODE_")) {
-    fileName = `STRESS_MODE_${fileName}`;
-  } else if (payload.environment === "LIVE" && fileName.startsWith("LIVE_MODE_")) {
-    fileName = fileName.replace("LIVE_MODE_", "");
-  }
 
   const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload, null, 2));
   const downloadAnchor = document.createElement("a");
@@ -567,16 +555,15 @@ export function exportJsonBackup(notes: string = "", createdBy: string = "Master
   return backupRecord;
 }
 
-// Internal helper to create an automatic environment snapshot when switching environments
+// Internal helper to create an automatic snapshot
 export function createAutomaticEnvironmentSnapshot(
   createdBy: string = "Master Administrator",
   notes: string = ""
 ): BackupRecord {
-  const payload = generateFullBackupPayload(createdBy, notes || "Automatic Environment Switch Snapshot");
+  const payload = generateFullBackupPayload(createdBy, notes || "Automatic System Snapshot");
   const now = new Date();
   const dateIso = now.toISOString().split("T")[0];
-  const prefix = payload.environment === "LIVE" ? "" : "STRESS_MODE_";
-  const fileName = `${prefix}Auto_Snapshot_${payload.environment}_${dateIso}.json`;
+  const fileName = `Auto_Snapshot_${dateIso}.json`;
 
   const backupRecord: BackupRecord = {
     id: `bkp_auto_${Date.now()}`,
@@ -596,7 +583,7 @@ export function createAutomaticEnvironmentSnapshot(
   return backupRecord;
 }
 
-// Specialized Test Environment Export Helper
+// Specialized System Export Helper
 export function exportTestEnvironmentBackup(
   fileFormat: "xlsx" | "json" = "xlsx",
   notes: string = "",
@@ -604,20 +591,20 @@ export function exportTestEnvironmentBackup(
 ): BackupRecord {
   const now = new Date();
   const dateIso = now.toISOString().split("T")[0]; // 2026-07-24
-  const testEnvNotes = notes || "Production Test Data Export for Live Migration & Stress Testing";
-  const customFileName = `CEO_Lifestyle_Test_Environment_Backup_V2.1_${dateIso}.${fileFormat}`;
+  const systemNotes = notes || "Production Database Export";
+  const customFileName = `CEO_Lifestyle_Backup_V2.1_${dateIso}.${fileFormat}`;
 
   if (fileFormat === "xlsx") {
-    return exportExcelBackup(testEnvNotes, createdBy, customFileName);
+    return exportExcelBackup(systemNotes, createdBy, customFileName);
   } else {
-    return exportJsonBackup(testEnvNotes, createdBy, customFileName);
+    return exportJsonBackup(systemNotes, createdBy, customFileName);
   }
 }
 
 export interface ImportResult {
   success: boolean;
   statusText: string;
-  mode: "Add Test Data (Merge)" | "Replace Environment";
+  mode: "Add Records (Merge)" | "Restore Database (Replace)";
   clientsProcessed: number;
   clientsAdded: number;
   aspiringClientsProcessed: number;
@@ -630,11 +617,14 @@ export interface ImportResult {
   productionQuotesAdded: number;
   usersProcessed: number;
   usersAdded: number;
+  operationsOrdersProcessed?: number;
+  operationsOrdersAdded?: number;
   error?: string;
   mergedData: {
     clients: Client[];
     aspiringClients: AspiringClient[];
     inventory: LuxeBookInventoryItem[];
+    operationsOrders?: OperationsOrder[];
     users: any[];
     settings: SystemSettings;
     guideLogs: any[];
@@ -710,6 +700,16 @@ export function processBackupImport(
     if (tr) activeTierRegister = JSON.parse(tr);
   } catch (e) {}
 
+  let activeOrders: OperationsOrder[] = [];
+  try {
+    activeOrders = loadEnvironmentOperationsOrders(getCurrentEnvironment());
+  } catch (e) {
+    try {
+      const ord = localStorage.getItem("ceo_operations_orders");
+      if (ord) activeOrders = JSON.parse(ord);
+    } catch (err) {}
+  }
+
   const incomingClients: Client[] = Array.isArray(rawPayload.clients) ? rawPayload.clients : [];
   const incomingAspiring: AspiringClient[] = Array.isArray(rawPayload.aspiringClients) ? rawPayload.aspiringClients : [];
   const incomingInv: LuxeBookInventoryItem[] = Array.isArray(rawPayload.inventory) ? rawPayload.inventory : [];
@@ -718,6 +718,19 @@ export function processBackupImport(
   const incomingUsers: any[] = Array.isArray(rawPayload.users) ? rawPayload.users : [];
   const incomingGuideLogs: any[] = Array.isArray(rawPayload.guideLogs) ? rawPayload.guideLogs : [];
   const incomingTierRegister: any[] = Array.isArray(rawPayload.clientTierRegister) ? rawPayload.clientTierRegister : [];
+
+  // Extract and normalize Operations Orders
+  const hasIncomingOrdersProperty = 
+    rawPayload.operationsOrders !== undefined || 
+    (rawPayload as any).orders !== undefined;
+
+  const incomingOrdersRaw: any[] = Array.isArray(rawPayload.operationsOrders)
+    ? rawPayload.operationsOrders
+    : (Array.isArray((rawPayload as any).orders) ? (rawPayload as any).orders : []);
+
+  const incomingOrders: OperationsOrder[] = incomingOrdersRaw.map((o: any) =>
+    normalizeOperationsOrder(o, incomingOrdersRaw)
+  );
 
   let finalClients: Client[] = [];
   let finalAspiring: AspiringClient[] = [];
@@ -728,6 +741,7 @@ export function processBackupImport(
   let finalGuideLogs: any[] = [];
   let finalTierRegister: any[] = [];
   let finalSettings: SystemSettings = activeSettings;
+  let finalOrders: OperationsOrder[] = [];
 
   let clientsAdded = 0;
   let aspiringAdded = 0;
@@ -735,6 +749,7 @@ export function processBackupImport(
   let tasksAndEventsAdded = 0;
   let quotesAdded = 0;
   let usersAdded = 0;
+  let ordersAdded = 0;
 
   if (mode === "replace") {
     finalClients = incomingClients;
@@ -760,8 +775,18 @@ export function processBackupImport(
     if (rawPayload.settings && typeof rawPayload.settings === "object") {
       finalSettings = rawPayload.settings;
     }
+
+    // Operations Orders (Safe Replace with Legacy Backup Protection)
+    if (hasIncomingOrdersProperty) {
+      finalOrders = incomingOrders;
+      ordersAdded = incomingOrders.length;
+    } else {
+      // Legacy backup without operationsOrders property - protect existing orders against wipeout
+      finalOrders = activeOrders;
+      ordersAdded = 0;
+    }
   } else {
-    // MERGE MODE (Add Test Data with Duplicate Protection)
+    // MERGE MODE (Add Records with Duplicate Protection)
     
     // 1. Clients (Duplicate Protection)
     finalClients = [...activeClients];
@@ -878,6 +903,24 @@ export function processBackupImport(
       }
     });
 
+    // 9. Operations Orders (Safe Merge with Duplicate Protection based on orderNumber and id)
+    finalOrders = [...activeOrders];
+    if (hasIncomingOrdersProperty) {
+      incomingOrders.forEach(inc => {
+        const incNum = (inc.orderNumber || "").toLowerCase().trim();
+        const exists = finalOrders.some(existing => {
+          if (existing.id && inc.id && existing.id === inc.id) return true;
+          if (incNum && existing.orderNumber && existing.orderNumber.toLowerCase().trim() === incNum) return true;
+          return false;
+        });
+
+        if (!exists) {
+          finalOrders.push(inc);
+          ordersAdded++;
+        }
+      });
+    }
+
     // Settings merge
     if (rawPayload.settings && typeof rawPayload.settings === "object") {
       finalSettings = { ...activeSettings };
@@ -908,6 +951,10 @@ export function processBackupImport(
   localStorage.setItem("ceo_client_tier_register", JSON.stringify(finalTierRegister));
   localStorage.setItem("librarium_system_settings", JSON.stringify(finalSettings));
 
+  // Persist Operations Orders to authoritative storage key
+  localStorage.setItem("ceo_operations_orders", JSON.stringify(finalOrders));
+  saveEnvironmentOperationsOrders(finalOrders, getCurrentEnvironment());
+
   if (rawPayload.appBg) {
     localStorage.setItem("ceo_app_background_base64", rawPayload.appBg);
   }
@@ -925,15 +972,16 @@ export function processBackupImport(
     "Backup Restored",
     createdBy,
     rawPayload.backupId || "MIGRATION-V2.1",
-    `Imported via ${isMerge ? "Add Test Data (Merge)" : "Replace Environment"}`
+    `Imported via ${isMerge ? "Add Records (Merge)" : "Restore Database (Replace)"}`
   );
 
   window.dispatchEvent(new Event("storage"));
+  window.dispatchEvent(new Event("ceo_environment_changed"));
 
   return {
     success: true,
     statusText: "Successful",
-    mode: isMerge ? "Add Test Data (Merge)" : "Replace Environment",
+    mode: isMerge ? "Add Records (Merge)" : "Restore Database (Replace)",
     clientsProcessed: incomingClients.length,
     clientsAdded,
     aspiringClientsProcessed: incomingAspiring.length,
@@ -946,10 +994,13 @@ export function processBackupImport(
     productionQuotesAdded: quotesAdded,
     usersProcessed: incomingUsers.length,
     usersAdded,
+    operationsOrdersProcessed: hasIncomingOrdersProperty ? incomingOrders.length : 0,
+    operationsOrdersAdded: ordersAdded,
     mergedData: {
       clients: finalClients,
       aspiringClients: finalAspiring,
       inventory: finalInv,
+      operationsOrders: finalOrders,
       users: finalUsers,
       settings: finalSettings,
       guideLogs: finalGuideLogs,
@@ -970,7 +1021,7 @@ export async function validateAndParseBackupFile(file: File): Promise<{
   backupDate?: string;
   createdBy?: string;
   notes?: string;
-  itemCounts?: { clients: number; aspiringClients: number; inventory: number; users: number; totalBooks?: number };
+  itemCounts?: { clients: number; aspiringClients: number; inventory: number; users: number; totalBooks?: number; operationsOrders?: number };
   rawPayload: any;
   error?: string;
 }> {
@@ -990,12 +1041,13 @@ export async function validateAndParseBackupFile(file: File): Promise<{
       const hasInventory = Array.isArray(parsed.inventory);
       const hasSettings = parsed.settings && typeof parsed.settings === "object";
       const hasAspiring = Array.isArray(parsed.aspiringClients);
+      const hasOrders = Array.isArray(parsed.operationsOrders) || Array.isArray(parsed.orders);
 
-      if (!hasClients && !hasInventory && !hasSettings && !hasAspiring) {
+      if (!hasClients && !hasInventory && !hasSettings && !hasAspiring && !hasOrders) {
         return {
           isValid: false,
           rawPayload: null,
-          error: "Unrecognized backup file. Missing clients, inventory, aspiring clients, or settings data."
+          error: "Unrecognized backup file. Missing clients, inventory, aspiring clients, operations orders, or settings data."
         };
       }
 
@@ -1003,6 +1055,9 @@ export async function validateAndParseBackupFile(file: File): Promise<{
       const aspiringCount = Array.isArray(parsed.aspiringClients) ? parsed.aspiringClients.length : 0;
       const inventoryCount = Array.isArray(parsed.inventory) ? parsed.inventory.length : 0;
       const usersCount = Array.isArray(parsed.users) ? parsed.users.length : 0;
+      const ordersCount = Array.isArray(parsed.operationsOrders) 
+        ? parsed.operationsOrders.length 
+        : (Array.isArray(parsed.orders) ? parsed.orders.length : 0);
       const totalBooks = Array.isArray(parsed.inventory)
         ? parsed.inventory.reduce((acc: number, item: any) => acc + (item.quantity ?? ((item.inStore ?? 0) + (item.office ?? 0))), 0)
         : 0;
@@ -1014,7 +1069,14 @@ export async function validateAndParseBackupFile(file: File): Promise<{
         backupDate: parsed.backupDate || "Unknown Date",
         createdBy: parsed.createdBy || "Administrator",
         notes: parsed.notes || "JSON System Backup File",
-        itemCounts: { clients: clientsCount, aspiringClients: aspiringCount, inventory: inventoryCount, users: usersCount, totalBooks },
+        itemCounts: { 
+          clients: clientsCount, 
+          aspiringClients: aspiringCount, 
+          inventory: inventoryCount, 
+          users: usersCount, 
+          totalBooks,
+          operationsOrders: ordersCount 
+        },
         rawPayload: parsed
       };
     }
@@ -1051,7 +1113,10 @@ export async function validateAndParseBackupFile(file: File): Promise<{
                   users: Array.isArray(parsed.users) ? parsed.users.length : 0,
                   totalBooks: Array.isArray(parsed.inventory)
                     ? parsed.inventory.reduce((acc: number, item: any) => acc + (item.quantity ?? ((item.inStore ?? 0) + (item.office ?? 0))), 0)
-                    : 0
+                    : 0,
+                  operationsOrders: Array.isArray(parsed.operationsOrders) 
+                    ? parsed.operationsOrders.length 
+                    : (Array.isArray(parsed.orders) ? parsed.orders.length : 0)
                 },
                 rawPayload: parsed
               };

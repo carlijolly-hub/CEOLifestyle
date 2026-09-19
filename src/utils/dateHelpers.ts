@@ -1,6 +1,6 @@
 // Helper to parse dates like "March 14" or "July 8" or "Wedding Date: August 22, 2018"
 // and compute days until next occurrence from the current date (July 8, 2026)
-import { SystemSettings } from "../types";
+import { SystemSettings, FollowUpReminder, OpportunityStatus } from "../types";
 
 const MONTH_MAP: { [key: string]: number } = {
   january: 0, jan: 0,
@@ -28,6 +28,10 @@ export interface UpcomingEvent {
 
 export function parseMonthDay(dateStr: string): { month: number; day: number } | null {
   if (!dateStr) return null;
+  const pDate = parseDateString(dateStr);
+  if (pDate) {
+    return { month: pDate.month, day: pDate.day };
+  }
   const cleaned = dateStr.toLowerCase().replace(/,/g, "").trim();
   const tokens = cleaned.split(/\s+/);
   if (tokens.length < 2) return null;
@@ -411,10 +415,11 @@ export function getClientMilestones(client: any): ClientMilestone[] {
   rawList.forEach(item => {
     const alreadyExists = uniqueList.some(existing => {
       const sameDate = existing.date === item.date;
-      const sameLabel = existing.originalLabel.toLowerCase() === item.originalLabel.toLowerCase();
-      const overlapLabel = existing.originalLabel.toLowerCase().includes(item.originalLabel.toLowerCase()) || 
-                           item.originalLabel.toLowerCase().includes(existing.originalLabel.toLowerCase());
-      const samePerson = existing.personName.toLowerCase() === item.personName.toLowerCase();
+      const exLabel = (existing.originalLabel || "").toLowerCase();
+      const itLabel = (item.originalLabel || "").toLowerCase();
+      const sameLabel = exLabel === itLabel;
+      const overlapLabel = (exLabel && itLabel) ? (exLabel.includes(itLabel) || itLabel.includes(exLabel)) : false;
+      const samePerson = (existing.personName || "").toLowerCase() === (item.personName || "").toLowerCase();
       
       // If same date and same person, or same date and overlapping labels
       return (sameDate && samePerson) || (sameDate && overlapLabel) || (sameLabel && samePerson);
@@ -444,105 +449,184 @@ export function syncFamilyBirthdayReminders(client: any, settings?: SystemSettin
     client.homeBrand = "CEO Lifestyle";
   }
 
-  // 1. Keep only non-automated reminders
-  const manualReminders = client.reminders.filter((r: any) => 
-    !r.id.startsWith("rem-bday-") && 
-    !r.id.startsWith("rem-own-date-") && 
-    !r.id.startsWith("rem-milestone-")
-  );
+  const existingReminders: FollowUpReminder[] = Array.isArray(client.reminders) ? client.reminders : [];
 
-  const newReminders: any[] = [];
+  // 1. Separate manual reminders (not matching our auto milestone prefixes)
+  const isMilestoneReminder = (r: FollowUpReminder) => 
+    r.id.startsWith("rem-madv-") ||
+    r.id.startsWith("rem-mact-") ||
+    r.id.startsWith("rem-milestone-") ||
+    r.id.startsWith("rem-bday-") ||
+    r.id.startsWith("rem-own-date-");
 
-  // Helper to construct a reminder date (configurable days before birthday/special date)
-  const getReminderDate = (bdayStr: string, daysPrior = 14): string | null => {
-    const parsed = parseMonthDay(bdayStr);
-    if (!parsed) return null;
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const currentYear = today.getFullYear();
-    const specialDateThisYear = new Date(currentYear, parsed.month, parsed.day);
-    
-    if (specialDateThisYear.getTime() < today.getTime()) {
-      return null; // Event has passed this year, not progressive
-    }
-    
-    // Progressive date - calculate reminder date daysPrior prior
-    let d = new Date(currentYear, parsed.month, parsed.day);
-    d.setDate(d.getDate() - daysPrior);
-    
-    // If the reminder date itself has passed, opt for next year
-    if (d.getTime() < today.getTime()) {
-      d = new Date(currentYear + 1, parsed.month, parsed.day);
-      d.setDate(d.getDate() - daysPrior);
-    }
-    
-    const yStr = d.getFullYear();
-    const mStr = String(d.getMonth() + 1).padStart(2, "0");
-    const dStr = String(d.getDate()).padStart(2, "0");
-    return `${yStr}-${mStr}-${dStr}`;
-  };
+  const manualReminders = existingReminders.filter(r => !isMilestoneReminder(r));
+  const previousMilestoneReminders = existingReminders.filter(r => isMilestoneReminder(r));
 
+  // Map of existing milestone reminders for fast lookup
+  const existingMap = new Map<string, FollowUpReminder>();
+  previousMilestoneReminders.forEach(r => {
+    existingMap.set(r.id, r);
+  });
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const currentYear = today.getFullYear();
+
+  const generatedReminders: FollowUpReminder[] = [];
   const milestones = getClientMilestones(client);
-  milestones.forEach((m, idx) => {
+
+  milestones.forEach((m) => {
+    const parsed = parseMonthDay(m.date);
+    if (!parsed) return;
+
     // Dynamic reminder windows based on settings
     let daysPrior = 14;
     if (settings) {
       if (m.type === "birthday") {
-        daysPrior = settings.birthdayReminderDays;
+        daysPrior = settings.birthdayReminderDays || 14;
       } else if (m.type === "anniversary") {
-        const isProposal = m.originalLabel.toLowerCase().includes("proposal");
-        daysPrior = isProposal ? settings.proposalAnniversaryReminderDays : settings.anniversaryReminderDays;
+        const isProposal = (m.originalLabel || "").toLowerCase().includes("proposal");
+        daysPrior = isProposal ? (settings.proposalAnniversaryReminderDays || 14) : (settings.anniversaryReminderDays || 14);
       } else {
-        daysPrior = settings.customMilestoneReminderDays;
+        daysPrior = settings.customMilestoneReminderDays || 14;
       }
     }
 
-    const remDate = getReminderDate(m.date, daysPrior);
-    if (remDate) {
-      // Build task message based on milestone info
-      let taskMsg = `Reach out to coordinate a premium package for ${client.firstName} ${client.lastName}'s ${m.originalLabel} (${m.date})`;
+    // Determine target occurrence year(s)
+    // HIGH-005: If the event has already passed during currentYear, calculate the NEXT occurrence (currentYear + 1).
+    // If today is on or before the occurrence date, the target occurrence is currentYear.
+    const isLeapYear = (y: number) => (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
+    const thisYearDay = (parsed.month === 1 && parsed.day === 29 && !isLeapYear(currentYear)) ? 28 : parsed.day;
+    const eventThisYear = new Date(currentYear, parsed.month, thisYearDay);
+    eventThisYear.setHours(0, 0, 0, 0);
+
+    const targetYear = eventThisYear.getTime() < today.getTime() ? currentYear + 1 : currentYear;
+    const yearsToGenerate: number[] = [targetYear];
+
+    const relKey = (m.relationship || "Client").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const personKey = (m.personName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const typeKey = (m.type || "milestone").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+    yearsToGenerate.forEach(targetYear => {
+      const occurrenceDay = (parsed.month === 1 && parsed.day === 29 && !isLeapYear(targetYear)) ? 28 : parsed.day;
+      const occurrenceDateStr = `${targetYear}-${String(parsed.month + 1).padStart(2, "0")}-${String(occurrenceDay).padStart(2, "0")}`;
+
+      const advDateObj = new Date(targetYear, parsed.month, occurrenceDay);
+      advDateObj.setDate(advDateObj.getDate() - daysPrior);
+      advDateObj.setHours(0, 0, 0, 0);
+      const advDateStr = `${advDateObj.getFullYear()}-${String(advDateObj.getMonth() + 1).padStart(2, "0")}-${String(advDateObj.getDate()).padStart(2, "0")}`;
+
+      // 1. Advance Opportunity Task
+      const advId = `rem-madv-${client.id}-${typeKey}-${relKey}${personKey ? `-${personKey}` : ""}-${occurrenceDateStr}`;
+      
+      let advTaskText = "";
       if (m.type === "birthday") {
         if (m.relationship === "Client") {
-          taskMsg = `Reach out to coordinate a premium package for ${client.firstName} ${client.lastName}'s Birthday (${m.date})`;
+          advTaskText = `🎁 Birthday Opportunity: ${client.firstName || ""} ${client.lastName || ""} has a birthday in ${daysPrior} days (${m.date}). Plan outreach or custom gift.`;
         } else {
-          taskMsg = `Reach out to coordinate a personalized gift for ${m.relationship.toLowerCase()} ${m.personName}'s birthday (${m.date})`;
+          advTaskText = `🎁 Birthday Opportunity: ${(m.relationship || "Family").toLowerCase()} ${m.personName || ""}'s birthday is in ${daysPrior} days (${m.date}). Coordinate outreach.`;
         }
       } else if (m.type === "anniversary") {
-        taskMsg = `Reach out to coordinate an exclusive surprise for ${client.firstName} ${client.lastName}'s ${m.originalLabel} (${m.date})`;
+        advTaskText = `💍 Anniversary Opportunity: ${client.firstName || ""} ${client.lastName || ""}'s ${m.originalLabel || "Anniversary"} is in ${daysPrior} days (${m.date}). Plan exclusive surprise.`;
+      } else {
+        advTaskText = `✨ Milestone Opportunity: ${client.firstName || ""} ${client.lastName || ""}'s ${m.originalLabel || "Milestone"} is in ${daysPrior} days (${m.date}).`;
       }
 
-      newReminders.push({
-        id: `rem-milestone-${idx}-${client.id}`,
-        date: remDate,
-        task: taskMsg,
-        completed: false,
+      // Check if existing reminder exists
+      const existingAdv = existingMap.get(advId) || previousMilestoneReminders.find(r => 
+        (r.milestone?.triggerType === "advance_opportunity" && r.milestone?.occurrenceYear === targetYear && r.milestone?.eventType === m.type && r.milestone?.relationship === m.relationship) ||
+        (r.date === advDateStr && r.task === advTaskText)
+      );
+
+      const actionDate = existingAdv?.nextActionDate || advDateStr;
+      const isPastUnresolved = !existingAdv?.completed && 
+        existingAdv?.opportunityStatus !== "Resolved" && 
+        existingAdv?.opportunityStatus !== "Converted" && 
+        existingAdv?.opportunityStatus !== "Closed" && 
+        getDaysSince(actionDate) > 0;
+
+      const currentOppStatus: OpportunityStatus = existingAdv?.opportunityStatus 
+        ? (isPastUnresolved ? "Missed Opportunity" : existingAdv.opportunityStatus)
+        : (existingAdv?.completed ? "Resolved" : (isPastUnresolved ? "Missed Opportunity" : "Open"));
+
+      generatedReminders.push({
+        id: advId,
+        date: advDateStr,
+        task: existingAdv?.task || advTaskText,
+        completed: existingAdv ? existingAdv.completed : false,
+        completedAt: existingAdv?.completedAt,
+        followUpCount: existingAdv?.followUpCount || 0,
+        followUpHistory: existingAdv?.followUpHistory || [],
+        opportunityStatus: currentOppStatus,
+        nextActionDate: actionDate,
         milestone: {
           clientName: `${client.firstName} ${client.lastName}`,
-          personName: m.personName,
-          relationship: m.relationship,
+          personName: m.personName || client.firstName,
+          relationship: m.relationship || "Client",
           eventType: m.type,
-          eventDate: m.date,
-          recommendedActionDate: remDate
+          eventDate: occurrenceDateStr,
+          recommendedActionDate: advDateStr,
+          triggerType: "advance_opportunity",
+          occurrenceYear: targetYear
         }
       });
-    }
+
+      // 2. Actual Day Task
+      const actId = `rem-mact-${client.id}-${typeKey}-${relKey}${personKey ? `-${personKey}` : ""}-${occurrenceDateStr}`;
+      
+      let actTaskText = "";
+      if (m.type === "birthday") {
+        if (m.relationship === "Client") {
+          actTaskText = `🎂 Birthday Today: Wish ${client.firstName || ""} ${client.lastName || ""} a happy birthday!`;
+        } else {
+          actTaskText = `🎂 Birthday Today: Wish ${(m.relationship || "Family").toLowerCase()} ${m.personName || ""} a happy birthday (${m.originalLabel || "Birthday"})!`;
+        }
+      } else if (m.type === "anniversary") {
+        actTaskText = `💍 Anniversary Today: Wish ${client.firstName || ""} ${client.lastName || ""} a happy ${m.originalLabel || "Anniversary"}!`;
+      } else {
+        actTaskText = `✨ Milestone Today: Acknowledge ${client.firstName || ""} ${client.lastName || ""}'s ${m.originalLabel || "Milestone"}!`;
+      }
+
+      const existingAct = existingMap.get(actId) || previousMilestoneReminders.find(r => 
+        (r.milestone?.triggerType === "actual_day" && r.milestone?.occurrenceYear === targetYear && r.milestone?.eventType === m.type && r.milestone?.relationship === m.relationship) ||
+        (r.date === occurrenceDateStr && r.task === actTaskText)
+      );
+
+      generatedReminders.push({
+        id: actId,
+        date: occurrenceDateStr,
+        task: existingAct?.task || actTaskText,
+        completed: existingAct ? existingAct.completed : false,
+        completedAt: existingAct?.completedAt,
+        milestone: {
+          clientName: `${client.firstName} ${client.lastName}`,
+          personName: m.personName || client.firstName,
+          relationship: m.relationship || "Client",
+          eventType: m.type,
+          eventDate: occurrenceDateStr,
+          recommendedActionDate: occurrenceDateStr,
+          triggerType: "actual_day",
+          occurrenceYear: targetYear
+        }
+      });
+    });
   });
 
-  // Preserve completion state for reminders with the same milestone ID if they already existed
-  const syncedReminders = newReminders.map(newRem => {
-    const existing = client.reminders.find((r: any) => 
-      r.id === newRem.id || (r.task === newRem.task && r.date === newRem.date)
-    );
-    if (existing) {
-      return { ...newRem, id: existing.id, completed: existing.completed };
+  // Also preserve any historical completed milestone reminders that were not re-generated (e.g. from previous years)
+  const genIds = new Set(generatedReminders.map(r => r.id));
+  const historicalCompleted = previousMilestoneReminders.filter(r => r.completed && !genIds.has(r.id));
+
+  // Combine and deduplicate
+  const allRemindersMap = new Map<string, FollowUpReminder>();
+  [...manualReminders, ...historicalCompleted, ...generatedReminders].forEach(r => {
+    if (!allRemindersMap.has(r.id)) {
+      allRemindersMap.set(r.id, r);
     }
-    return newRem;
   });
 
   return {
     ...client,
-    reminders: [...manualReminders, ...syncedReminders]
+    reminders: Array.from(allRemindersMap.values())
   };
 }
 
@@ -564,10 +648,35 @@ export function getDaysSince(dateStr: string): number {
   if (!dateObj) return 9999;
 
   const today = new Date();
-  const simToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const target = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+  const utcToday = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const utcTarget = Date.UTC(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
   
-  const diffTime = simToday.getTime() - target.getTime();
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  const diffDays = Math.round((utcToday - utcTarget) / (1000 * 60 * 60 * 24));
   return diffDays;
+}
+
+export type FollowUpActionStatus = "Upcoming" | "Due" | "Missed" | "Completed" | "Resolved";
+
+export function getFollowUpActionState(
+  actionDateStr: string,
+  isCompleted: boolean,
+  opportunityStatus?: string
+): { status: FollowUpActionStatus; label: string; daysDiff: number } {
+  if (isCompleted || opportunityStatus === "Resolved" || opportunityStatus === "Converted" || opportunityStatus === "Closed") {
+    return { status: "Completed", label: "Completed", daysDiff: 0 };
+  }
+
+  const daysSince = getDaysSince(actionDateStr);
+  // daysSince > 0 means the date was in the past (e.g. yesterday = 1 day since)
+  // daysSince === 0 means today
+  // daysSince < 0 means future (e.g. -5 means 5 days in future)
+
+  if (daysSince === 0) {
+    return { status: "Due", label: "Due Today", daysDiff: 0 };
+  } else if (daysSince > 0) {
+    return { status: "Missed", label: "Missed", daysDiff: daysSince };
+  } else {
+    const daysUntil = Math.abs(daysSince);
+    return { status: "Upcoming", label: `Upcoming (in ${daysUntil}d)`, daysDiff: daysSince };
+  }
 }

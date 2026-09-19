@@ -51,7 +51,9 @@ export default function AddAspiringClientModal({
     assignedUser: "Chief Executive Officer",
     status: "New Inquiry",
     followUpDate: new Date().toISOString().split("T")[0],
-    clientHome: "CEO Lifestyle"
+    clientHome: "CEO Lifestyle",
+    adventist: "No" as any,
+    priority: "Normal"
   });
 
   useEffect(() => {
@@ -70,7 +72,9 @@ export default function AddAspiringClientModal({
         assignedUser: editingClient.assignedUser || "Chief Executive Officer",
         status: editingClient.status || "New Inquiry",
         followUpDate: editingClient.followUpDate || new Date().toISOString().split("T")[0],
-        clientHome: editingClient.clientHome || "CEO Lifestyle"
+        clientHome: editingClient.clientHome || "CEO Lifestyle",
+        adventist: editingClient.adventist || "No",
+        priority: editingClient.priority || "Normal"
       });
     } else {
       setFormData({
@@ -87,7 +91,9 @@ export default function AddAspiringClientModal({
         assignedUser: "Chief Executive Officer",
         status: "New Inquiry",
         followUpDate: new Date().toISOString().split("T")[0],
-        clientHome: "CEO Lifestyle"
+        clientHome: "CEO Lifestyle",
+        adventist: "No",
+        priority: "Normal"
       });
     }
     setFormError("");
@@ -282,8 +288,8 @@ export default function AddAspiringClientModal({
             />
           </div>
 
-          {/* Inquiry Source, Client Home & Status */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Inquiry Source, Client Home, Adventist & Status */}
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <div className="space-y-1">
               <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
                 Client Home
@@ -295,7 +301,20 @@ export default function AddAspiringClientModal({
               >
                 <option value="CEO Lifestyle">CEO Lifestyle</option>
                 <option value="Librarium Luxe">Librarium Luxe</option>
-                <option value="CEO Lifestyle | Librarium Luxe">CEO Lifestyle | Librarium Luxe</option>
+              </select>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600">
+                Adventist ✝
+              </label>
+              <select
+                value={formData.adventist || "No"}
+                onChange={(e) => setFormData({ ...formData, adventist: e.target.value as any })}
+                className="w-full bg-slate-50 border border-amber-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:bg-white focus:border-amber-500 focus:outline-none transition-colors"
+              >
+                <option value="No">No</option>
+                <option value="Yes">Yes (🔴 DO NOT MESSAGE FRIDAY 5 PM OR SATURDAY)</option>
               </select>
             </div>
 
@@ -337,8 +356,8 @@ export default function AddAspiringClientModal({
             </div>
           </div>
 
-          {/* Schedule Dates */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Schedule Dates & Priority */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="space-y-1">
               <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1">
                 <Calendar className="w-3 h-3 text-slate-500" /> Date Contacted
@@ -361,6 +380,21 @@ export default function AddAspiringClientModal({
                 onChange={(e) => setFormData({ ...formData, followUpDate: e.target.value })}
                 className="w-full bg-slate-50 border border-amber-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:bg-white focus:border-amber-500 focus:outline-none transition-colors"
               />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] font-extrabold uppercase tracking-wider text-rose-600 flex items-center gap-1">
+                <Tag className="w-3 h-3 text-rose-500" /> Priority Level
+              </label>
+              <select
+                value={formData.priority || "Normal"}
+                onChange={(e) => setFormData({ ...formData, priority: e.target.value as "Normal" | "High" | "Urgent" })}
+                className="w-full bg-slate-50 border border-rose-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:bg-white focus:border-rose-500 focus:outline-none transition-colors"
+              >
+                <option value="Normal">Normal</option>
+                <option value="High">High</option>
+                <option value="Urgent">Urgent 🔥</option>
+              </select>
             </div>
           </div>
 

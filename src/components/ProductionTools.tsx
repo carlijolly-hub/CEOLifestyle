@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 import { 
@@ -23,7 +23,10 @@ import {
   RefreshCw,
   Filter,
   ShieldAlert,
-  Star
+  Star,
+  CircleDot,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import { SystemSettings, LuxeBookInventoryItem, SavedQuotation } from "../types";
 import { INITIAL_QUOTATIONS } from "../data/mockData";
@@ -33,19 +36,84 @@ import BookCostCalculator from "./BookCostCalculator";
 import LocationCostCalculator from "./LocationCostCalculator";
 import TShirtStudioQuoteCalculator from "./TShirtStudioQuoteCalculator";
 import ProductionLayoutCalculator from "./ProductionLayoutCalculator";
+import CircularProductionLayoutCalculator from "./CircularProductionLayoutCalculator";
 import DTFPrintingCalculator from "./DTFPrintingCalculator";
+import InHouseDTFCalculator from "./InHouseDTFCalculator";
 
 interface ProductionToolsProps {
   settings?: SystemSettings;
   inventory?: LuxeBookInventoryItem[];
+  onUpdateSettings?: (settings: SystemSettings) => void;
 }
 
-type ToolType = "layout" | "apparel" | "book" | "location" | "dtf";
+type ToolType = "layout" | "circular_layout" | "apparel" | "book" | "location" | "dtf" | "inhouse_dtf";
 
-export default function ProductionTools({ settings, inventory }: ProductionToolsProps) {
+const PRODUCTION_TOOL_ITEMS: {
+  id: ToolType;
+  label: string;
+  fullName: string;
+  icon: React.ElementType;
+  iconColor: string;
+  badge?: string;
+}[] = [
+  { id: "layout", label: "Production Layout", fullName: "Production Layout Calculator", icon: Layers, iconColor: "text-indigo-400" },
+  { id: "circular_layout", label: "Circular Layout", fullName: "Circular Production Layout Calculator", icon: CircleDot, iconColor: "text-emerald-400" },
+  { id: "inhouse_dtf", label: "In-House DTF", fullName: "In-House DTF Printing Calculator", icon: Sparkles, iconColor: "text-emerald-400", badge: "NEW" },
+  { id: "dtf", label: "Sourced DTF", fullName: "Supplier Comparison Analysis", icon: Printer, iconColor: "text-indigo-400" },
+  { id: "apparel", label: "T-Shirt Studio", fullName: "T-Shirt Studio Quote Calculator", icon: Shirt, iconColor: "text-rose-400" },
+  { id: "book", label: "Book Cost Calculator", fullName: "Book Cost Calculator", icon: Calculator, iconColor: "text-amber-400" },
+  { id: "location", label: "Location Logistics", fullName: "Location Logistics Calculator", icon: MapPin, iconColor: "text-sky-400" },
+];
+
+export default function ProductionTools({ settings, inventory, onUpdateSettings }: ProductionToolsProps) {
   const [activeTool, setActiveTool] = useState<ToolType>(() => {
     return (localStorage.getItem("active_prod_tool") as ToolType) || "layout";
   });
+
+  // Carousel ref and scroll states
+  const carouselRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState<boolean>(false);
+  const [canScrollRight, setCanScrollRight] = useState<boolean>(true);
+
+  const checkCarouselScroll = () => {
+    if (!carouselRef.current) return;
+    const { scrollLeft, scrollWidth, clientWidth } = carouselRef.current;
+    setCanScrollLeft(scrollLeft > 4);
+    setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 4);
+  };
+
+  useEffect(() => {
+    checkCarouselScroll();
+    const el = carouselRef.current;
+    if (!el) return;
+    el.addEventListener("scroll", checkCarouselScroll, { passive: true });
+    window.addEventListener("resize", checkCarouselScroll);
+    return () => {
+      el.removeEventListener("scroll", checkCarouselScroll);
+      window.removeEventListener("resize", checkCarouselScroll);
+    };
+  }, []);
+
+  // When activeTool changes, smoothly bring it into view if needed
+  useEffect(() => {
+    if (!carouselRef.current) return;
+    const activeBtn = carouselRef.current.querySelector<HTMLElement>(`[data-tool-id="${activeTool}"]`);
+    if (activeBtn) {
+      activeBtn.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    }
+    const timer = setTimeout(checkCarouselScroll, 300);
+    return () => clearTimeout(timer);
+  }, [activeTool]);
+
+  const handleScrollCarousel = (direction: "left" | "right") => {
+    if (!carouselRef.current) return;
+    const scrollAmount = 240;
+    carouselRef.current.scrollBy({
+      left: direction === "left" ? -scrollAmount : scrollAmount,
+      behavior: "smooth"
+    });
+    setTimeout(checkCarouselScroll, 250);
+  };
 
   const [showSavedQuotes, setShowSavedQuotes] = useState<boolean>(false);
   const [quoteSearchQuery, setQuoteSearchQuery] = useState<string>("");
@@ -335,81 +403,77 @@ export default function ProductionTools({ settings, inventory }: ProductionTools
   return (
     <div className="space-y-4 text-left animate-fade-in" id="production-tools-module">
       
-      {/* Sub-tab Navigation Pills & Saved Quotations Toggle */}
-      <div className="bg-white/80 backdrop-blur-md border border-slate-200/60 rounded-2xl p-2 shadow-xs flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 overflow-x-auto">
-          {/* 1. Production Layout */}
+      {/* Sub-tab Navigation Carousel & Saved Quotations Toggle */}
+      <div className="glass-workspace p-2 sm:p-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+        
+        {/* Carousel-Style Tool Navigation */}
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          {/* Left Navigation Arrow */}
           <button
-            onClick={() => handleToolChange("layout")}
-            className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap ${
-              activeTool === "layout"
-                ? "bg-slate-900 text-white shadow-xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-            }`}
+            type="button"
+            onClick={() => handleScrollCarousel("left")}
+            disabled={!canScrollLeft}
+            aria-label="Previous production tool"
+            className="p-2 text-slate-600 hover:text-slate-950 bg-slate-100 hover:bg-slate-200 disabled:opacity-25 disabled:pointer-events-none rounded-xl transition-all shrink-0 cursor-pointer shadow-2xs active:scale-95 flex items-center justify-center"
+            title="Scroll left"
           >
-            <Layers className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Production Layout</span>
+            <ChevronLeft className="w-4 h-4" />
           </button>
 
-          {/* 2. T-Shirt Studio */}
-          <button
-            onClick={() => handleToolChange("apparel")}
-            className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap ${
-              activeTool === "apparel"
-                ? "bg-slate-900 text-white shadow-xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-            }`}
+          {/* Carousel Track without visible scrollbar */}
+          <div
+            ref={carouselRef}
+            className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden scroll-smooth py-0.5 px-0.5 flex-1 min-w-0"
           >
-            <Shirt className="w-3.5 h-3.5 text-rose-400" />
-            <span>T-Shirt Studio</span>
-          </button>
+            {PRODUCTION_TOOL_ITEMS.map((tool) => {
+              const isActive = activeTool === tool.id;
+              const ToolIcon = tool.icon;
+              return (
+                <button
+                  key={tool.id}
+                  id={`prod-tool-tab-${tool.id}`}
+                  data-tool-id={tool.id}
+                  onClick={() => handleToolChange(tool.id)}
+                  title={tool.fullName}
+                  className={`flex items-center gap-2 px-3.5 py-2 text-xs rounded-xl transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                    isActive
+                      ? "bg-slate-900 text-white font-extrabold shadow-sm ring-2 ring-slate-900/10 scale-[1.01]"
+                      : "bg-white/90 hover:bg-slate-100 text-slate-600 hover:text-slate-900 font-bold border border-slate-200/80 shadow-2xs"
+                  }`}
+                >
+                  <ToolIcon className={`w-3.5 h-3.5 ${isActive ? "text-emerald-400" : tool.iconColor}`} />
+                  <span>{tool.label}</span>
+                  {tool.badge && (
+                    <span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
+                      isActive ? "bg-emerald-400 text-slate-950" : "bg-emerald-100 text-emerald-800"
+                    }`}>
+                      {tool.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
 
-          {/* 3. Book Cost Calculator */}
+          {/* Right Navigation Arrow */}
           <button
-            onClick={() => handleToolChange("book")}
-            className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap ${
-              activeTool === "book"
-                ? "bg-slate-900 text-white shadow-xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-            }`}
+            type="button"
+            onClick={() => handleScrollCarousel("right")}
+            disabled={!canScrollRight}
+            aria-label="Next production tool"
+            className="p-2 text-slate-600 hover:text-slate-950 bg-slate-100 hover:bg-slate-200 disabled:opacity-25 disabled:pointer-events-none rounded-xl transition-all shrink-0 cursor-pointer shadow-2xs active:scale-95 flex items-center justify-center"
+            title="Scroll right"
           >
-            <Calculator className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Book Cost Calculator</span>
-          </button>
-
-          {/* 4. Location Logistics */}
-          <button
-            onClick={() => handleToolChange("location")}
-            className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap ${
-              activeTool === "location"
-                ? "bg-slate-900 text-white shadow-xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-            }`}
-          >
-            <MapPin className="w-3.5 h-3.5 text-sky-400" />
-            <span>Location Logistics</span>
-          </button>
-
-          {/* 5. DTF Printing Calculator */}
-          <button
-            onClick={() => handleToolChange("dtf")}
-            className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer whitespace-nowrap ${
-              activeTool === "dtf"
-                ? "bg-slate-900 text-white shadow-xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-            }`}
-          >
-            <Printer className="w-3.5 h-3.5 text-indigo-400" />
-            <span>DTF Printing Calculator</span>
+            <ChevronRight className="w-4 h-4" />
           </button>
         </div>
 
         {/* Saved Quotations Log Toggle Button */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 self-end sm:self-auto shrink-0 border-t sm:border-t-0 sm:border-l border-slate-200/80 pt-2 sm:pt-0 sm:pl-3">
           <button
             type="button"
             onClick={syncWithLocalStorage}
-            className="p-2 text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all cursor-pointer"
+            className="p-2 text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all cursor-pointer shadow-2xs"
             title="Sync Latest Saved Quotations"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -420,9 +484,9 @@ export default function ProductionTools({ settings, inventory }: ProductionTools
               syncWithLocalStorage();
               setShowSavedQuotes(!showSavedQuotes);
             }}
-            className={`flex items-center gap-2 px-4 py-2 text-xs font-extrabold rounded-xl transition-all cursor-pointer whitespace-nowrap border ${
+            className={`flex items-center gap-2 px-3.5 py-2 text-xs font-extrabold rounded-xl transition-all cursor-pointer whitespace-nowrap border shadow-2xs ${
               showSavedQuotes
-                ? "bg-amber-500 text-slate-950 border-amber-400 shadow-md"
+                ? "bg-amber-500 text-slate-950 border-amber-400 shadow-sm"
                 : "bg-slate-900 text-amber-400 border-slate-800 hover:bg-slate-800 shadow-xs"
             }`}
           >
@@ -531,10 +595,12 @@ export default function ProductionTools({ settings, inventory }: ProductionTools
                   {[
                     { id: "all", label: `All (${safeQuotations.length})` },
                     { id: "layout", label: "Layout" },
+                    { id: "circular_layout", label: "Circular" },
                     { id: "apparel", label: "Apparel" },
                     { id: "book", label: "Book" },
                     { id: "location", label: "Location" },
-                    { id: "dtf", label: "DTF" },
+                    { id: "dtf", label: "Sourced DTF" },
+                    { id: "inhouse_dtf", label: "In-House DTF" },
                   ].map(cat => (
                     <button
                       key={cat.id}
@@ -762,6 +828,10 @@ export default function ProductionTools({ settings, inventory }: ProductionTools
           <ProductionLayoutCalculator settings={settings} />
         )}
 
+        {activeTool === "circular_layout" && (
+          <CircularProductionLayoutCalculator settings={settings} />
+        )}
+
         {activeTool === "apparel" && (
           <TShirtStudioQuoteCalculator settings={settings} />
         )}
@@ -775,7 +845,11 @@ export default function ProductionTools({ settings, inventory }: ProductionTools
         )}
 
         {activeTool === "dtf" && (
-          <DTFPrintingCalculator settings={settings} />
+          <DTFPrintingCalculator settings={settings} onUpdateSettings={onUpdateSettings} />
+        )}
+
+        {activeTool === "inhouse_dtf" && (
+          <InHouseDTFCalculator settings={settings} />
         )}
       </div>
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Calculator, MapPin, RefreshCw, Info, Navigation, ArrowRightLeft, DollarSign, Copy, Check, FileText } from "lucide-react";
+import { Calculator, MapPin, RefreshCw, Info, Navigation, ArrowRightLeft, DollarSign, Copy, Check, FileText, User } from "lucide-react";
 import { SystemSettings, SavedQuotation } from "../types";
 import { DEFAULT_QUOTE_TEMPLATES, formatQuoteTemplate } from "../utils/settingsHelper";
 import { normalizeQuotation } from "../utils/quotationUtils";
@@ -30,6 +30,14 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
     return localStorage.getItem("calc_loc_discount") || "0";
   });
 
+  // Optional Order & Client Information
+  const [clientName, setClientName] = useState<string>(() => {
+    return localStorage.getItem("calc_loc_client_name") || "";
+  });
+  const [orderTitle, setOrderTitle] = useState<string>(() => {
+    return localStorage.getItem("calc_loc_order_title") || "";
+  });
+
   // Copy state
   const [copied, setCopied] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -39,7 +47,7 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
     const newQuote: SavedQuotation = normalizeQuotation({
       id: "quote_" + Date.now(),
       quoteNumber: `LOC-QT-${Math.floor(1000 + Math.random() * 9000)}`,
-      clientName: `Delivery: ${locationName || 'Kingston'}`,
+      clientName: clientName.trim() || `Delivery: ${locationName || 'Kingston'}`,
       toolType: "location",
       title: `Logistics Transport to ${locationName || 'Kingston'} (${parsedDistance} km)`,
       date: new Date().toISOString().split("T")[0],
@@ -73,7 +81,9 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
     localStorage.setItem("calc_loc_toll_fee", tollFee);
     localStorage.setItem("calc_loc_trip_type", tripType);
     localStorage.setItem("calc_loc_discount", discountPercent);
-  }, [locationName, distance, costPerKm, tollFee, tripType, discountPercent]);
+    localStorage.setItem("calc_loc_client_name", clientName);
+    localStorage.setItem("calc_loc_order_title", orderTitle);
+  }, [locationName, distance, costPerKm, tollFee, tripType, discountPercent, clientName, orderTitle]);
 
   // Reset to absolute standard defaults
   const handleReset = () => {
@@ -83,6 +93,8 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
     setTollFee("2400");
     setTripType("round_trip");
     setDiscountPercent("0");
+    setClientName("");
+    setOrderTitle("");
     setCopied(false);
   };
 
@@ -129,6 +141,10 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
     if (locTemplate) {
       return formatQuoteTemplate(locTemplate.content, {
         CustomerResponse: customerResponseStr,
+        CustomerName: clientName.trim(),
+        ClientName: clientName.trim(),
+        OrderTitle: orderTitle.trim(),
+        Personalization: orderTitle.trim(),
         ParishLocation: locationName || "Kingston",
         ServiceTier: serviceTierStr,
         DiscountPercent: hasDiscount ? parsedDiscount : 0,
@@ -141,7 +157,19 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
     }
 
     const sections: string[] = [];
-    sections.push("Thank you so much for providing those details. Here is your personalized quote based on your request:");
+    const greeting = clientName.trim()
+      ? `Hi ${clientName.trim()},\n\nThank you so much for providing those details. Here is your personalized quote based on your request:`
+      : "Thank you so much for providing those details. Here is your personalized quote based on your request:";
+    sections.push(greeting);
+
+    if (clientName.trim()) {
+      sections.push(`Client: ${clientName.trim()}`);
+    }
+
+    if (orderTitle.trim()) {
+      sections.push(`Order / Job Reference: ${orderTitle.trim()}`);
+    }
+
     sections.push(`Logistics Details:\n* Location / Parish: ${locationName || "Kingston"}\n* Service Tier: ${serviceTierStr}`);
 
     if (hasDiscount) {
@@ -176,6 +204,42 @@ export default function LocationCostCalculator({ settings }: LocationCostCalcula
           <RefreshCw className="w-2.5 h-2.5" />
           Reset
         </button>
+      </div>
+
+      {/* Order & Client Information — Optional */}
+      <div className="bg-slate-50/70 border border-slate-200/60 rounded-2xl p-4 space-y-3">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+          <User className="w-3.5 h-3.5 text-indigo-600" />
+          <span>Order &amp; Client Information <span className="text-[10px] font-normal text-slate-400">— Optional</span></span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 block">
+              Client / Customer Name
+            </label>
+            <input
+              type="text"
+              value={clientName}
+              onChange={(e) => setClientName(e.target.value)}
+              placeholder="e.g. John Smith"
+              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-hidden focus:border-indigo-500 transition-all"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 block">
+              Order / Job Reference
+            </label>
+            <input
+              type="text"
+              value={orderTitle}
+              onChange={(e) => setOrderTitle(e.target.value)}
+              placeholder="e.g. Kingston Event Delivery"
+              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-hidden focus:border-indigo-500 transition-all"
+            />
+          </div>
+        </div>
       </div>
 
       {/* Input Grid */}

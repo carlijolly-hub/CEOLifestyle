@@ -2,6 +2,7 @@ import React, { useState, useRef } from "react";
 import * as XLSX from "xlsx";
 import { Client, ClientTier, LuxeBookInventoryItem, InventorySalesMovement } from "../types";
 import { getCurrentEnvironment } from "../utils/environmentUtils";
+import { getClientHome } from "../utils/clientTierUtils";
 import { 
   flatRowToCustomer, 
   exportClientsExcel, 
@@ -68,22 +69,19 @@ export default function ExcelManager({
 
   const handleConfirmPasteClients = (mappedList: Client[]) => {
     if (mappedList.length === 0) return;
-    const merged = [...customers];
     let newCount = 0;
     let dupCount = 0;
 
     mappedList.forEach(imported => {
-      const existingIdx = merged.findIndex(c => c.id === imported.id || (c.firstName.toLowerCase() === imported.firstName.toLowerCase() && c.lastName.toLowerCase() === imported.lastName.toLowerCase()));
+      const existingIdx = customers.findIndex(c => c.id === imported.id || (c.firstName.toLowerCase() === imported.firstName.toLowerCase() && c.lastName.toLowerCase() === imported.lastName.toLowerCase()));
       if (existingIdx >= 0) {
         dupCount++;
-        merged[existingIdx] = { ...merged[existingIdx], ...imported };
       } else {
         newCount++;
-        merged.push(imported);
       }
     });
 
-    onImportCustomers(merged);
+    onImportCustomers(mappedList);
     setSuccessMsg(`Universal Excel Paste Successful! Ingested ${mappedList.length} client records (${newCount} new, ${dupCount} updated).`);
   };
 
@@ -247,8 +245,8 @@ export default function ExcelManager({
     exportClientsExcel(customers, "All");
   };
 
-  const handleExportBrand = (brand: "CEO Printing Services" | "Librarium Luxe") => {
-    const filtered = customers.filter(c => c.homeBrand === brand || c.homeBrand === "CEO Lifestyle");
+  const handleExportBrand = (brand: "CEO Lifestyle" | "Librarium Luxe") => {
+    const filtered = customers.filter(c => getClientHome(c) === brand || getClientHome(c) === "CEO Lifestyle | Librarium Luxe");
     exportClientsExcel(filtered, brand.replace(/\s+/g, "_"));
   };
 
@@ -873,12 +871,12 @@ export default function ExcelManager({
                 <Download className="w-4 h-4 text-slate-400" />
               </button>
 
-              {/* Export CEO Printing */}
+              {/* Export CEO Lifestyle */}
               <button
-                onClick={() => handleExportBrand("CEO Printing Services")}
+                onClick={() => handleExportBrand("CEO Lifestyle")}
                 className="w-full flex items-center justify-between p-3.5 bg-slate-50/40 hover:bg-slate-50 border border-slate-200/50 hover:border-slate-300 rounded-xl transition-all font-bold text-slate-800 cursor-pointer"
               >
-                <span>Download CEO Printing Clients</span>
+                <span>Download CEO Lifestyle Clients</span>
                 <Download className="w-4 h-4 text-slate-400" />
               </button>
 

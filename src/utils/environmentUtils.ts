@@ -10,138 +10,145 @@ import {
 import { getSystemSettings } from "./settingsHelper";
 import { getClientTierRegister } from "./clientTierUtils";
 
-export type EnvironmentType = "LIVE" | "STRESS_TEST";
+export type EnvironmentType = "PRODUCTION";
 
-const ACTIVE_ENV_KEY = "ceo_active_environment";
-
-// Get current environment (defaults to STRESS_TEST as specified)
-export function getCurrentEnvironment(): EnvironmentType {
-  const stored = localStorage.getItem(ACTIVE_ENV_KEY);
-  if (stored === "LIVE") return "LIVE";
-  return "STRESS_TEST";
+// Get current environment (standard production operational system)
+export function getCurrentEnvironment(): string {
+  return "PRODUCTION";
 }
 
-// Set active environment
-export function setCurrentEnvironment(env: EnvironmentType): void {
-  localStorage.setItem(ACTIVE_ENV_KEY, env);
-  // Dispatch custom window event so all components update seamlessly
-  window.dispatchEvent(new CustomEvent("ceo_environment_changed", { detail: { environment: env } }));
+// Set active environment (kept for compatibility)
+export function setCurrentEnvironment(_env?: string): void {
+  window.dispatchEvent(new CustomEvent("ceo_environment_changed"));
 }
 
-// Storage Key Map generator based on active or specified environment
-function getStorageKey(baseKey: string, env?: EnvironmentType): string {
-  const currentEnv = env || getCurrentEnvironment();
-  if (currentEnv === "LIVE") {
-    return `live_${baseKey}`;
+// Storage Key Map generator based on canonical production keys
+function getStorageKey(baseKey: string, _env?: any): string {
+  return baseKey;
+}
+
+// Load Clients for system database
+export function loadEnvironmentClients(_env?: any): Client[] {
+  if (typeof window !== "undefined" && localStorage.getItem("ceo_clients_cleared") === "true") {
+    return [];
   }
-  return baseKey; // STRESS_TEST uses baseline keys
-}
-
-// Load Clients for active environment
-export function loadEnvironmentClients(env?: EnvironmentType): Client[] {
-  const currentEnv = env || getCurrentEnvironment();
-  const key = getStorageKey("ceo_client_management_data", currentEnv);
-  const legacyKey = currentEnv === "STRESS_TEST" ? "ceo_librarium_crm_customers" : null;
+  const key = "ceo_client_management_data";
+  const legacyKey = "ceo_librarium_crm_customers";
 
   try {
-    const raw = localStorage.getItem(key) || (legacyKey ? localStorage.getItem(legacyKey) : null);
+    const raw = localStorage.getItem(key) || localStorage.getItem(legacyKey);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.map((c: any) => ({
-          ...c,
-          communicationStatus: c.communicationStatus || "Unknown"
-        }));
+      if (Array.isArray(parsed)) {
+        if (parsed.length === 0 && localStorage.getItem("ceo_clients_cleared") === "true") {
+          return [];
+        }
+        if (parsed.length > 0) {
+          return parsed.map((c: any) => ({
+            ...c,
+            communicationStatus: c.communicationStatus || "Unknown"
+          }));
+        }
       }
     }
   } catch (e) {
-    console.error("Error reading environment clients", e);
+    console.error("Error reading clients database", e);
   }
 
-  // Fallbacks:
-  if (currentEnv === "STRESS_TEST") {
-    // Save initial stress test dataset
-    const normalized = INITIAL_CLIENTS.map(c => ({
-      ...c,
-      communicationStatus: c.communicationStatus || "Unknown"
-    }));
-    localStorage.setItem(key, JSON.stringify(normalized));
-    return normalized;
-  } else {
-    // Pristine Live Mode defaults to empty or clean list
+  // Baseline system data
+  const normalized = INITIAL_CLIENTS.map(c => ({
+    ...c,
+    communicationStatus: c.communicationStatus || "Unknown"
+  }));
+  localStorage.setItem(key, JSON.stringify(normalized));
+  return normalized;
+}
+
+// Save Clients to system database
+export function saveEnvironmentClients(clients: Client[], _env?: any): void {
+  const key = "ceo_client_management_data";
+  localStorage.setItem(key, JSON.stringify(clients));
+  localStorage.setItem("ceo_librarium_crm_customers", JSON.stringify(clients));
+  if (clients.length > 0) {
+    localStorage.removeItem("ceo_clients_cleared");
+  }
+}
+
+// Load Aspiring Clients
+export function loadEnvironmentAspiringClients(_env?: any): AspiringClient[] {
+  if (typeof window !== "undefined" && localStorage.getItem("ceo_aspiring_clients_cleared") === "true") {
     return [];
   }
-}
-
-// Save Clients for active environment
-export function saveEnvironmentClients(clients: Client[], env?: EnvironmentType): void {
-  const key = getStorageKey("ceo_client_management_data", env);
-  localStorage.setItem(key, JSON.stringify(clients));
-  if ((env || getCurrentEnvironment()) === "STRESS_TEST") {
-    localStorage.setItem("ceo_librarium_crm_customers", JSON.stringify(clients));
-  }
-}
-
-// Load Aspiring Clients for active environment
-export function loadEnvironmentAspiringClients(env?: EnvironmentType): AspiringClient[] {
-  const currentEnv = env || getCurrentEnvironment();
-  const key = getStorageKey("ceo_aspiring_clients_data", currentEnv);
+  const key = "ceo_aspiring_clients_data";
 
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed)) {
+        if (parsed.length === 0 && localStorage.getItem("ceo_aspiring_clients_cleared") === "true") {
+          return [];
+        }
+        if (parsed.length > 0) return parsed;
+      }
     }
   } catch (e) {
     console.error("Error loading aspiring clients", e);
   }
 
-  if (currentEnv === "STRESS_TEST") {
-    localStorage.setItem(key, JSON.stringify(INITIAL_ASPIRING_CLIENTS));
-    return INITIAL_ASPIRING_CLIENTS;
-  }
-  return [];
+  localStorage.setItem(key, JSON.stringify(INITIAL_ASPIRING_CLIENTS));
+  return INITIAL_ASPIRING_CLIENTS;
 }
 
-// Save Aspiring Clients for active environment
-export function saveEnvironmentAspiringClients(aspiring: AspiringClient[], env?: EnvironmentType): void {
-  const key = getStorageKey("ceo_aspiring_clients_data", env);
+// Save Aspiring Clients
+export function saveEnvironmentAspiringClients(aspiring: AspiringClient[], _env?: any): void {
+  const key = "ceo_aspiring_clients_data";
   localStorage.setItem(key, JSON.stringify(aspiring));
+  localStorage.setItem("ceo_aspiring_clients", JSON.stringify(aspiring));
+  if (aspiring.length > 0) {
+    localStorage.removeItem("ceo_aspiring_clients_cleared");
+  }
 }
 
-// Load Inventory for active environment
-export function loadEnvironmentInventory(env?: EnvironmentType): LuxeBookInventoryItem[] {
-  const currentEnv = env || getCurrentEnvironment();
-  const key = getStorageKey("ceo_luxe_book_inventory", currentEnv);
+// Load Inventory
+export function loadEnvironmentInventory(_env?: any): LuxeBookInventoryItem[] {
+  if (typeof window !== "undefined" && localStorage.getItem("ceo_book_inventory_cleared") === "true") {
+    return [];
+  }
+  const key = "ceo_luxe_book_inventory";
 
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed)) {
+        if (parsed.length === 0 && localStorage.getItem("ceo_book_inventory_cleared") === "true") {
+          return [];
+        }
+        if (parsed.length > 0) return parsed;
+      }
     }
   } catch (e) {
     console.error("Error loading inventory", e);
   }
 
-  if (currentEnv === "STRESS_TEST") {
-    localStorage.setItem(key, JSON.stringify(INITIAL_INVENTORY));
-    return INITIAL_INVENTORY;
-  }
-  return [];
+  localStorage.setItem(key, JSON.stringify(INITIAL_INVENTORY));
+  return INITIAL_INVENTORY;
 }
 
-// Save Inventory for active environment
-export function saveEnvironmentInventory(inventory: LuxeBookInventoryItem[], env?: EnvironmentType): void {
-  const key = getStorageKey("ceo_luxe_book_inventory", env);
+// Save Inventory
+export function saveEnvironmentInventory(inventory: LuxeBookInventoryItem[], _env?: any): void {
+  const key = "ceo_luxe_book_inventory";
   localStorage.setItem(key, JSON.stringify(inventory));
+  localStorage.setItem("luxe_book_inventory", JSON.stringify(inventory));
+  if (inventory.length > 0) {
+    localStorage.removeItem("ceo_book_inventory_cleared");
+  }
 }
 
-// Load Quotations for active environment
-export function loadEnvironmentQuotations(env?: EnvironmentType): SavedQuotation[] {
-  const currentEnv = env || getCurrentEnvironment();
-  const key = getStorageKey("ceo_saved_quotations", currentEnv);
+// Load Quotations
+export function loadEnvironmentQuotations(_env?: any): SavedQuotation[] {
+  const key = "ceo_saved_quotations";
 
   try {
     const raw = localStorage.getItem(key);
@@ -153,23 +160,19 @@ export function loadEnvironmentQuotations(env?: EnvironmentType): SavedQuotation
     console.error("Error loading quotations", e);
   }
 
-  if (currentEnv === "STRESS_TEST") {
-    localStorage.setItem(key, JSON.stringify(INITIAL_QUOTATIONS));
-    return INITIAL_QUOTATIONS as SavedQuotation[];
-  }
-  return [];
+  localStorage.setItem(key, JSON.stringify(INITIAL_QUOTATIONS));
+  return INITIAL_QUOTATIONS as SavedQuotation[];
 }
 
-// Save Quotations for active environment
-export function saveEnvironmentQuotations(quotes: SavedQuotation[], env?: EnvironmentType): void {
-  const key = getStorageKey("ceo_saved_quotations", env);
+// Save Quotations
+export function saveEnvironmentQuotations(quotes: SavedQuotation[], _env?: any): void {
+  const key = "ceo_saved_quotations";
   localStorage.setItem(key, JSON.stringify(quotes));
 }
 
-// Load Business Events for active environment
-export function loadEnvironmentBusinessEvents(env?: EnvironmentType): BusinessEvent[] {
-  const currentEnv = env || getCurrentEnvironment();
-  const key = getStorageKey("ceo_business_events", currentEnv);
+// Load Business Events
+export function loadEnvironmentBusinessEvents(_env?: any): BusinessEvent[] {
+  const key = "ceo_business_events";
 
   try {
     const raw = localStorage.getItem(key);
@@ -181,51 +184,48 @@ export function loadEnvironmentBusinessEvents(env?: EnvironmentType): BusinessEv
     console.error("Error loading business events", e);
   }
 
-  if (currentEnv === "STRESS_TEST") {
-    localStorage.setItem(key, JSON.stringify(INITIAL_BUSINESS_EVENTS));
-    return INITIAL_BUSINESS_EVENTS as BusinessEvent[];
-  }
-  return [];
+  localStorage.setItem(key, JSON.stringify(INITIAL_BUSINESS_EVENTS));
+  return INITIAL_BUSINESS_EVENTS as BusinessEvent[];
 }
 
 // Save Business Events
-export function saveEnvironmentBusinessEvents(events: BusinessEvent[], env?: EnvironmentType): void {
-  const key = getStorageKey("ceo_business_events", env);
+export function saveEnvironmentBusinessEvents(events: BusinessEvent[], _env?: any): void {
+  const key = "ceo_business_events";
   localStorage.setItem(key, JSON.stringify(events));
 }
 
-// Load Operations Orders for active environment
-export function loadEnvironmentOperationsOrders(env?: EnvironmentType): OperationsOrder[] {
-  const currentEnv = env || getCurrentEnvironment();
-  const key = getStorageKey("ceo_operations_orders", currentEnv);
+import { normalizeOperationsOrder } from "./orderNumberUtils";
+
+// Load Operations Orders
+export function loadEnvironmentOperationsOrders(_env?: any): OperationsOrder[] {
+  const key = "ceo_operations_orders";
 
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.map((o: any) => normalizeOperationsOrder(o, parsed));
+      }
     }
   } catch (e) {
     console.error("Error loading operations orders", e);
   }
 
-  if (currentEnv === "STRESS_TEST") {
-    localStorage.setItem(key, JSON.stringify(INITIAL_OPERATIONS_ORDERS));
-    return INITIAL_OPERATIONS_ORDERS;
-  }
-  return [];
+  const normalizedInit = INITIAL_OPERATIONS_ORDERS.map(o => normalizeOperationsOrder(o, INITIAL_OPERATIONS_ORDERS));
+  localStorage.setItem(key, JSON.stringify(normalizedInit));
+  return normalizedInit;
 }
 
-// Save Operations Orders for active environment
-export function saveEnvironmentOperationsOrders(orders: OperationsOrder[], env?: EnvironmentType): void {
-  const key = getStorageKey("ceo_operations_orders", env);
+// Save Operations Orders
+export function saveEnvironmentOperationsOrders(orders: OperationsOrder[], _env?: any): void {
+  const key = "ceo_operations_orders";
   localStorage.setItem(key, JSON.stringify(orders));
 }
 
 // Load Client Tier Register
-export function loadEnvironmentClientTierRegister(env?: EnvironmentType): any[] {
-  const currentEnv = env || getCurrentEnvironment();
-  const key = getStorageKey("ceo_client_tier_register", currentEnv);
+export function loadEnvironmentClientTierRegister(_env?: any): any[] {
+  const key = "ceo_client_tier_register";
 
   try {
     const raw = localStorage.getItem(key);
@@ -237,22 +237,21 @@ export function loadEnvironmentClientTierRegister(env?: EnvironmentType): any[] 
     console.error("Error loading tier register", e);
   }
 
-  const clients = loadEnvironmentClients(currentEnv);
+  const clients = loadEnvironmentClients();
   const register = getClientTierRegister(clients);
   localStorage.setItem(key, JSON.stringify(register));
   return register;
 }
 
 // Save Client Tier Register
-export function saveEnvironmentClientTierRegister(register: any[], env?: EnvironmentType): void {
-  const key = getStorageKey("ceo_client_tier_register", env);
+export function saveEnvironmentClientTierRegister(register: any[], _env?: any): void {
+  const key = "ceo_client_tier_register";
   localStorage.setItem(key, JSON.stringify(register));
 }
 
 // Load System Settings
-export function loadEnvironmentSettings(env?: EnvironmentType): SystemSettings {
-  const currentEnv = env || getCurrentEnvironment();
-  const key = getStorageKey("librarium_system_settings", currentEnv);
+export function loadEnvironmentSettings(_env?: any): SystemSettings {
+  const key = "librarium_system_settings";
 
   try {
     const raw = localStorage.getItem(key);
@@ -268,36 +267,28 @@ export function loadEnvironmentSettings(env?: EnvironmentType): SystemSettings {
 }
 
 // Save System Settings
-export function saveEnvironmentSettings(settings: SystemSettings, env?: EnvironmentType): void {
-  const key = getStorageKey("librarium_system_settings", env);
+export function saveEnvironmentSettings(settings: SystemSettings, _env?: any): void {
+  const key = "librarium_system_settings";
   localStorage.setItem(key, JSON.stringify(settings));
 }
 
-// Re-seed Stress Test Dataset to full default test data
-export function resetStressTestDataset(): void {
-  const env: EnvironmentType = "STRESS_TEST";
-  saveEnvironmentClients(INITIAL_CLIENTS, env);
-  saveEnvironmentAspiringClients(INITIAL_ASPIRING_CLIENTS, env);
-  saveEnvironmentInventory(INITIAL_INVENTORY, env);
-  saveEnvironmentQuotations(INITIAL_QUOTATIONS as SavedQuotation[], env);
-  saveEnvironmentBusinessEvents(INITIAL_BUSINESS_EVENTS as BusinessEvent[], env);
-  saveEnvironmentOperationsOrders(INITIAL_OPERATIONS_ORDERS, env);
-  saveEnvironmentClientTierRegister(getClientTierRegister(INITIAL_CLIENTS), env);
-  saveEnvironmentSettings(getSystemSettings(), env);
+// Re-seed system dataset to baseline records
+export function resetSystemDataset(): void {
+  saveEnvironmentClients(INITIAL_CLIENTS);
+  saveEnvironmentAspiringClients(INITIAL_ASPIRING_CLIENTS);
+  saveEnvironmentInventory(INITIAL_INVENTORY);
+  saveEnvironmentQuotations(INITIAL_QUOTATIONS as SavedQuotation[]);
+  saveEnvironmentBusinessEvents(INITIAL_BUSINESS_EVENTS as BusinessEvent[]);
+  saveEnvironmentOperationsOrders(INITIAL_OPERATIONS_ORDERS);
+  saveEnvironmentClientTierRegister(getClientTierRegister(INITIAL_CLIENTS));
+  saveEnvironmentSettings(getSystemSettings());
   
-  window.dispatchEvent(new CustomEvent("ceo_environment_changed", { detail: { environment: "STRESS_TEST" } }));
+  window.dispatchEvent(new CustomEvent("ceo_environment_changed"));
 }
 
-// Clear active environment data completely
-export function clearEnvironmentData(env: EnvironmentType): void {
-  saveEnvironmentClients([], env);
-  saveEnvironmentAspiringClients([], env);
-  saveEnvironmentInventory([], env);
-  saveEnvironmentQuotations([], env);
-  saveEnvironmentBusinessEvents([], env);
-  saveEnvironmentOperationsOrders([], env);
-  saveEnvironmentClientTierRegister([], env);
-  saveEnvironmentSettings(getSystemSettings(), env);
-
-  window.dispatchEvent(new CustomEvent("ceo_environment_changed", { detail: { environment: env } }));
+// Aliases for backwards compatibility
+export const resetStressTestDataset = resetSystemDataset;
+export function clearEnvironmentData(_env?: any): void {
+  resetSystemDataset();
 }
+

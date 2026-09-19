@@ -1,6 +1,8 @@
 import { 
   Client, 
   ClientTier, 
+  ClientHome,
+  ClientPromise,
   BusinessRelationship, 
   ProfileTheme, 
   ManagementClassification, 
@@ -46,12 +48,95 @@ export const TIER_WEIGHT: Record<ClientTier, number> = {
 export const CLIENT_TIER_REGISTER_STORAGE_KEY = "ceo_client_tier_register";
 
 /**
+ * Returns normalized array of promises / client commitments for a client (checking both promises and commitments)
+ */
+export function getClientPromises(client?: Partial<Client> | null): ClientPromise[] {
+  if (!client) return [];
+  const rawList = (client.promises && Array.isArray(client.promises) && client.promises.length > 0)
+    ? client.promises
+    : (client.commitments && Array.isArray(client.commitments) && client.commitments.length > 0)
+      ? client.commitments
+      : [];
+
+  return rawList.map(p => {
+    const desc = p.promise || p.commitment || "";
+    return {
+      ...p,
+      promise: desc,
+      commitment: desc,
+      status: (p.status === "Fulfilled" ? "Completed" : p.status) || "Open"
+    };
+  });
+}
+
+export const getClientCommitments = getClientPromises;
+
+/**
+ * Returns count of open client commitments (CMTs) for a client
+ */
+export function getOpenPromisesCount(client?: Partial<Client> | null): number {
+  const promises = getClientPromises(client);
+  return promises.filter(p => p.status === "Open" || (p.status as any) === "Pending").length;
+}
+
+export const getOpenCommitmentsCount = getOpenPromisesCount;
+
+/**
  * Returns default Profile Theme based on Business Relationship
  */
 export function getProfileThemeForRelationship(relationship?: BusinessRelationship | string): ProfileTheme {
   if (relationship === "Librarium Luxe") return "Librarium Crimson";
   if (relationship === "CEO Lifestyle + Librarium Luxe") return "Dual Burgundy Blend";
   return "CEO Blue";
+}
+
+/**
+ * Derives and normalizes the Client Home value for a client profile.
+ * Single source of truth returning exactly one of the 3 Client Home options:
+ * - "CEO Lifestyle"
+ * - "Librarium Luxe"
+ * - "CEO Lifestyle | Librarium Luxe"
+ */
+export function getClientHome(client: Partial<Client>): ClientHome {
+  if (client.clientHome) {
+    const raw = String(client.clientHome).trim();
+    if (
+      raw === "CEO Lifestyle | Librarium Luxe" ||
+      raw === "CEO Lifestyle + Librarium Luxe" ||
+      raw === "Both" ||
+      raw.includes("|") ||
+      raw.includes("+") ||
+      raw.toLowerCase().includes("both") ||
+      raw.toLowerCase().includes("dual")
+    ) {
+      return "CEO Lifestyle | Librarium Luxe";
+    }
+    if (raw.toLowerCase().includes("librarium") || raw.toLowerCase().includes("luxe")) {
+      return "Librarium Luxe";
+    }
+    if (raw === "CEO Lifestyle" || raw === "CEO Printing Services" || raw === "CEO Printing") {
+      return "CEO Lifestyle";
+    }
+  }
+
+  const rel = (client.businessRelationship as string) || "";
+  const brand = (client.homeBrand as string) || "";
+
+  if (
+    rel === "CEO Lifestyle + Librarium Luxe" ||
+    rel === "CEO Lifestyle | Librarium Luxe" ||
+    rel.includes("|") ||
+    rel.includes("+") ||
+    (brand === "CEO Lifestyle" && rel.includes("Librarium"))
+  ) {
+    return "CEO Lifestyle | Librarium Luxe";
+  }
+
+  if (rel === "Librarium Luxe" || brand === "Librarium Luxe") {
+    return "Librarium Luxe";
+  }
+
+  return "CEO Lifestyle";
 }
 
 /**
@@ -247,8 +332,8 @@ export function evaluateClientPromotions(
 ): PromotionOpportunity[] {
   const regMap = new Map<string, ClientTierRecord>();
   register.forEach(r => {
-    if (r.ceoId) regMap.set(r.ceoId.toLowerCase(), r);
-    if (r.customerFullName) regMap.set(r.customerFullName.toLowerCase(), r);
+    if (r.ceoId) regMap.set(r.ceoId.trim().toLowerCase(), r);
+    if (r.customerFullName) regMap.set(r.customerFullName.trim().toLowerCase(), r);
   });
 
   const opportunities: PromotionOpportunity[] = [];
@@ -259,8 +344,8 @@ export function evaluateClientPromotions(
       return;
     }
 
-    const fullName = `${c.firstName} ${c.lastName}`.toLowerCase().trim();
-    const rec = regMap.get(c.id.toLowerCase()) || regMap.get(fullName);
+    const fullName = `${c.firstName || ''} ${c.lastName || ''}`.trim().toLowerCase();
+    const rec = regMap.get((c.id || '').trim().toLowerCase()) || regMap.get(fullName);
     const currentFinalTier = getFinalClientTier(c, rec);
 
     if (currentFinalTier === "Founders Family" || currentFinalTier === "Delinquent" || currentFinalTier === "Problematic") {
@@ -311,9 +396,11 @@ export function approveClientPromotion(
 
   let found = false;
   const updatedRegister = register.map(r => {
+    const cId = (client.id || '').trim().toLowerCase();
+    const cName = `${client.firstName || ''} ${client.lastName || ''}`.trim().toLowerCase();
     if (
-      (r.ceoId && r.ceoId.toLowerCase() === client.id.toLowerCase()) ||
-      (r.customerFullName && r.customerFullName.toLowerCase() === `${client.firstName} ${client.lastName}`.toLowerCase().trim())
+      (r.ceoId && r.ceoId.trim().toLowerCase() === cId) ||
+      (r.customerFullName && r.customerFullName.trim().toLowerCase() === cName)
     ) {
       found = true;
       return {

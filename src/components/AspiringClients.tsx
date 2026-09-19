@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { isAdventistCommunicationRestricted } from "../utils/adventistGuard";
+import AdventistWarningModal from "./AdventistWarningModal";
+import AdventistAlert from "./AdventistAlert";
 import { 
   Users, 
   UserPlus, 
@@ -35,6 +38,7 @@ import {
 import UniversalPasteModal from "./UniversalPasteModal";
 import { AspiringClient, AspiringClientStatus, Client, FollowUpRecord } from "../types";
 import { formatInstagramUsername, getAspiringContactDisplay } from "../utils/contactUtils";
+import { parseDateString } from "../utils/dateHelpers";
 import AddAspiringClientModal from "./AddAspiringClientModal";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
 
@@ -106,9 +110,12 @@ export default function AspiringClients({
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState("");
+  const [lifecycleTab, setLifecycleTab] = useState<"active" | "converted" | "not_interested" | "archived" | "all">("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [preferredContactFilter, setPreferredContactFilter] = useState<string>("all");
+  const [priorityFilter, setPriorityFilter] = useState<string>("all");
+  const [agingFilter, setAgingFilter] = useState<string>("all");
 
   // Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -133,8 +140,9 @@ export default function AspiringClients({
   const [archiveReasonSelected, setArchiveReasonSelected] = useState<string>("No Response");
 
   const [viewHistoryClient, setViewHistoryClient] = useState<AspiringClient | null>(null);
+  const [adventistModalClient, setAdventistModalClient] = useState<AspiringClient | null>(null);
 
-  const isAnyModalOpen = !!(showAddModal || editingClient || showScheduleModal || isPasteModalOpen || loggingFollowUpClient || archivingClient || viewHistoryClient);
+  const isAnyModalOpen = !!(showAddModal || editingClient || showScheduleModal || isPasteModalOpen || loggingFollowUpClient || archivingClient || viewHistoryClient || adventistModalClient);
   useBodyScrollLock(isAnyModalOpen);
 
   useEffect(() => {
@@ -188,16 +196,86 @@ export default function AspiringClients({
     }
   };
 
+  const getPriorityBadge = (priority?: string) => {
+    switch (priority) {
+      case "Urgent":
+        return "bg-rose-100 text-rose-800 border-rose-300 font-extrabold animate-pulse";
+      case "High":
+        return "bg-amber-100 text-amber-800 border-amber-300 font-bold";
+      default:
+        return "bg-slate-100 text-slate-700 border-slate-200 font-medium";
+    }
+  };
+
+  // Aspiring Client Aging Calculation (Requirement 6 & 7)
+  const calculateAgingDays = (c: AspiringClient) => {
+    const dateStr = c.dateContacted || c.lastContactDate || (c as any).createdAt;
+    if (!dateStr) return 0;
+    const start = new Date(dateStr.includes("T") ? dateStr : `${dateStr}T00:00:00`);
+    if (isNaN(start.getTime())) return 0;
+    const now = new Date();
+    const todayZero = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startZero = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime();
+    return Math.max(0, Math.floor((todayZero - startZero) / (1000 * 60 * 60 * 24)));
+  };
+
+  const getAgingTier = (days: number) => {
+    if (days <= 7) {
+      return { 
+        label: `New (${days}d)`, 
+        category: "new", 
+        badge: "bg-emerald-50 text-emerald-800 border-emerald-300 font-bold" 
+      };
+    }
+    if (days <= 30) {
+      return { 
+        label: `Aging (${days}d)`, 
+        category: "aging", 
+        badge: "bg-amber-50 text-amber-900 border-amber-300 font-extrabold" 
+      };
+    }
+    return { 
+      label: `Long Aging (${days}d)`, 
+      category: "long_aging", 
+      badge: "bg-rose-50 text-rose-950 border-rose-300 font-black" 
+    };
+  };
+
+  const getPriorityWeight = (priority?: string) => {
+    switch (priority) {
+      case "Urgent": return 3;
+      case "High": return 2;
+      case "Normal": return 1;
+      default: return 1;
+    }
+  };
+
   // Metrics
+  const activeLeads = aspiringClients.filter(c => 
+    c.status !== "Converted to Client" && 
+    c.status !== "Not Interested" && 
+    c.status !== "Archived"
+  ).length;
+
+  const convertedLeads = aspiringClients.filter(c => c.status === "Converted to Client").length;
+  const notInterestedLeads = aspiringClients.filter(c => c.status === "Not Interested").length;
+  const archivedLeads = aspiringClients.filter(c => c.status === "Archived").length;
   const totalLeads = aspiringClients.length;
+
+  const isValidFollowUpDate = (dateStr?: string): boolean => {
+    if (!dateStr || typeof dateStr !== "string" || !dateStr.trim()) return false;
+    return parseDateString(dateStr.trim()) !== null;
+  };
+
   const pendingFollowUps = aspiringClients.filter(c => 
+    isValidFollowUpDate(c.followUpDate) &&
     c.followUpDate <= realTodayStr && 
     c.status !== "Converted to Client" && 
     c.status !== "Archived" &&
     c.status !== "Not Interested"
   ).length;
+
   const interestedLeads = aspiringClients.filter(c => c.status === "Interested").length;
-  const convertedLeads = aspiringClients.filter(c => c.status === "Converted to Client").length;
 
   // Filtered List
   const filteredClients = aspiringClients.filter(c => {
@@ -211,12 +289,36 @@ export default function AspiringClients({
       (c.instagramUsername && c.instagramUsername.toLowerCase().includes(query)) ||
       c.notes.toLowerCase().includes(query);
 
+    const matchesLifecycle = (() => {
+      if (lifecycleTab === "active") {
+        return c.status !== "Converted to Client" && c.status !== "Not Interested" && c.status !== "Archived";
+      }
+      if (lifecycleTab === "converted") {
+        return c.status === "Converted to Client";
+      }
+      if (lifecycleTab === "not_interested") {
+        return c.status === "Not Interested";
+      }
+      if (lifecycleTab === "archived") {
+        return c.status === "Archived";
+      }
+      return true; // "all"
+    })();
+
     const matchesStatus = statusFilter === "all" || c.status === statusFilter;
     const matchesSource = sourceFilter === "all" || c.sourceOfInquiry === sourceFilter;
     const matchesPreferredContact = preferredContactFilter === "all" || 
       (c.preferredContactMethod || "Instagram") === preferredContactFilter;
+    const matchesPriority = priorityFilter === "all" || (c.priority || "Normal") === priorityFilter;
 
-    return matchesSearch && matchesStatus && matchesSource && matchesPreferredContact;
+    const agingDays = calculateAgingDays(c);
+    const agingCategory = getAgingTier(agingDays).category;
+    const matchesAging = agingFilter === "all" || agingCategory === agingFilter;
+
+    return matchesSearch && matchesLifecycle && matchesStatus && matchesSource && matchesPreferredContact && matchesPriority && matchesAging;
+  }).sort((a, b) => {
+    // Priority sorting: Urgent (3) -> High (2) -> Normal (1)
+    return getPriorityWeight(b.priority) - getPriorityWeight(a.priority);
   });
 
   // Handle Save (Add or Edit)
@@ -258,6 +360,23 @@ export default function AspiringClients({
       instagramUsername: formattedIg,
       contactInfo: summaryContact
     };
+
+    if (updatedPayload.status === "Converted to Client") {
+      const fullEntry: AspiringClient = editingClient
+        ? { ...editingClient, ...updatedPayload }
+        : { id: `ASP${String(Date.now()).slice(-4)}`, ...updatedPayload };
+
+      if (!editingClient) {
+        setAspiringClients(prev => [fullEntry, ...prev]);
+      } else {
+        setAspiringClients(prev => prev.map(item => item.id === editingClient.id ? fullEntry : item));
+      }
+
+      setShowAddModal(false);
+      setEditingClient(null);
+      onConvertToClient(fullEntry);
+      return;
+    }
 
     if (editingClient) {
       setAspiringClients(prev => prev.map(item => item.id === editingClient.id ? { ...editingClient, ...updatedPayload } : item));
@@ -311,6 +430,14 @@ export default function AspiringClients({
   };
 
   const handleStatusChange = (clientId: string, newStatus: AspiringClientStatus) => {
+    const target = aspiringClients.find(c => c.id === clientId);
+    if (!target) return;
+
+    if (newStatus === "Converted to Client") {
+      onConvertToClient({ ...target, status: "Converted to Client" });
+      return;
+    }
+
     setAspiringClients(prev => prev.map(c => c.id === clientId ? { ...c, status: newStatus } : c));
   };
 
@@ -521,6 +648,30 @@ export default function AspiringClients({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+          {/* Aging Filter */}
+          <select
+            value={agingFilter}
+            onChange={(e) => setAgingFilter(e.target.value)}
+            className="bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:bg-white focus:border-slate-400 focus:outline-hidden transition-all cursor-pointer"
+          >
+            <option value="all">All Aging Stages</option>
+            <option value="new">New (≤ 7 days)</option>
+            <option value="aging">Aging (8–30 days)</option>
+            <option value="long_aging">Long Aging (31+ days)</option>
+          </select>
+
+          {/* Priority Filter */}
+          <select
+            value={priorityFilter}
+            onChange={(e) => setPriorityFilter(e.target.value)}
+            className="bg-slate-50 border border-slate-200/60 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:bg-white focus:border-slate-400 focus:outline-hidden transition-all cursor-pointer"
+          >
+            <option value="all">All Priorities</option>
+            <option value="Urgent">Priority: Urgent 🔥</option>
+            <option value="High">Priority: High</option>
+            <option value="Normal">Priority: Normal</option>
+          </select>
+
           {/* Status Filter */}
           <select
             value={statusFilter}
@@ -584,12 +735,12 @@ export default function AspiringClients({
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredClients.map((client) => {
-            const isFollowUpDue = client.followUpDate <= realTodayStr && client.status !== "Converted to Client" && client.status !== "Archived";
+            const isFollowUpDue = isValidFollowUpDate(client.followUpDate) && client.followUpDate <= realTodayStr && client.status !== "Converted to Client" && client.status !== "Archived";
             const contactInfoDisp = getAspiringContactDisplay(client);
 
             return (
               <div 
-                key={client.id}
+                key={client.id} 
                 className={`bg-white border rounded-3xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-4 relative ${
                   isFollowUpDue ? "border-amber-300 ring-2 ring-amber-100" : "border-slate-200/70"
                 }`}
@@ -601,9 +752,36 @@ export default function AspiringClients({
                       <span className="text-[9px] font-black font-mono text-slate-400 uppercase tracking-widest block">
                         {client.id}
                       </span>
-                      <h3 className="text-base font-black text-slate-900 tracking-tight">
-                        {client.name}
-                      </h3>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h3 className="text-base font-black text-slate-900 tracking-tight">
+                          {client.name}
+                        </h3>
+                        {client.adventist === "Yes" && (
+                          <span className="text-[11px] font-bold text-slate-700">
+                            • Adventist ✝
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-md border inline-block ${getPriorityBadge(client.priority)}`}>
+                          Priority: {client.priority || "Normal"}
+                        </span>
+                        {(() => {
+                          const diffDays = calculateAgingDays(client);
+                          const agingInfo = getAgingTier(diffDays);
+                          const dateStr = client.dateContacted || client.lastContactDate || "N/A";
+                          return (
+                            <span 
+                              className={`text-[10px] px-2 py-0.5 rounded-md border flex items-center gap-1 shadow-2xs ${agingInfo.badge}`}
+                              title={`Entered Pipeline on ${dateStr} • Aging: ${diffDays} days`}
+                            >
+                              <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                              <span>{agingInfo.label}</span>
+                              <span className="text-[9px] opacity-75 font-normal">({diffDays} {diffDays === 1 ? "day" : "days"})</span>
+                            </span>
+                          );
+                        })()}
+                      </div>
                     </div>
 
                     <select
@@ -783,6 +961,10 @@ export default function AspiringClients({
                   <div className="grid grid-cols-2 gap-1.5 text-[11px] font-bold">
                     <button
                       onClick={() => {
+                        if (isAdventistCommunicationRestricted(client.adventist)) {
+                          setAdventistModalClient(client);
+                          return;
+                        }
                         setLoggingFollowUpClient(client);
                         setFollowUpMethod(client.preferredContactMethod || "Phone Call");
                         setFollowUpNotes("");
@@ -1229,6 +1411,13 @@ export default function AspiringClients({
         subtitle="Copy rows directly from Microsoft Excel or Google Sheets (Ctrl+C) and paste them into your opportunity pipeline"
         templateType="aspiring"
         onConfirmImport={(pastedLeads) => handleConfirmPasteLeads(pastedLeads)}
+      />
+
+      <AdventistWarningModal
+        isOpen={!!adventistModalClient}
+        onClose={() => setAdventistModalClient(null)}
+        clientName={adventistModalClient?.name || ""}
+        actionName="Aspiring Client Communication"
       />
     </div>
   );

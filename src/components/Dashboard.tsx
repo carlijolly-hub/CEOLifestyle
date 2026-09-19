@@ -1,8 +1,12 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
 import AddAspiringClientModal from "./AddAspiringClientModal";
+import AdventistWarningModal from "./AdventistWarningModal";
+import AdventistAlert from "./AdventistAlert";
+import { isAdventistCommunicationRestricted } from "../utils/adventistGuard";
+import { getClientHome, getOpenPromisesCount } from "../utils/clientTierUtils";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
-import { Client, FollowUpReminder, TimelineEvent, LuxeBookInventoryItem, BusinessEvent, SystemSettings, AspiringClient, AspiringClientStatus, PromotionOpportunity, OperationsOrder } from "../types";
+import { Client, FollowUpReminder, TimelineEvent, LuxeBookInventoryItem, BusinessEvent, SystemSettings, AspiringClient, AspiringClientStatus, PromotionOpportunity, OperationsOrder, FollowUpRecord } from "../types";
 import { 
   Users, 
   Printer, 
@@ -16,6 +20,7 @@ import {
   ChevronDown,
   ChevronUp,
   Package,
+  Archive,
   Clock,
   AlertCircle,
   Gift,
@@ -38,10 +43,11 @@ import {
   X,
   Crown,
   Star,
-  ClipboardList
+  ClipboardList,
+  CheckSquare
 } from "lucide-react";
 import { SmallCalendarWidget } from "./MilestoneCalendar";
-import { getRelationshipEventTitle, getClientMilestones } from "../utils/dateHelpers";
+import { getRelationshipEventTitle, getClientMilestones, getFollowUpActionState } from "../utils/dateHelpers";
 import { getClientTierRegister, evaluateClientPromotions, approveClientPromotion, calculateHealthScore, getTierSource } from "../utils/clientTierUtils";
 
 import BookCostCalculator from "./BookCostCalculator";
@@ -50,6 +56,7 @@ import ProductionLayoutCalculator from "./ProductionLayoutCalculator";
 import DTFPrintingCalculator from "./DTFPrintingCalculator";
 import TShirtStudioQuoteCalculator from "./TShirtStudioQuoteCalculator";
 import FavoriteQuotesWidget from "./FavoriteQuotesWidget";
+import { ExecutiveChecklist } from "./ExecutiveChecklist";
 import { formatInstagramUsername } from "../utils/contactUtils";
 
 interface DashboardProps {
@@ -200,10 +207,12 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
   const opsMetrics = useMemo(() => {
     const list = operationsOrders || [];
     const active = list.filter(o => o.productionStatus !== "Completed" && o.productionStatus !== "Cancelled");
+    const newCount = list.filter(o => o.productionStatus === "New").length;
     
     let dueTodayCount = 0;
     let overdueCount = 0;
     let readyPickupCount = 0;
+    let readyDeliveryCount = 0;
 
     active.forEach(o => {
       if (o.dueDate) {
@@ -211,14 +220,18 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
         if (diffDays === 0) dueTodayCount++;
         else if (diffDays > 0) overdueCount++;
       }
-      if (o.productionStatus === "Ready for Pickup") readyPickupCount++;
+      if (o.productionStatus === "Ready for Pickup" || o.productionStatus === "Ready for Collection" || o.productionStatus === "Ready") readyPickupCount++;
+      if (o.productionStatus === "Ready for Delivery" || o.productionStatus === "Out for Delivery") readyDeliveryCount++;
     });
 
     return {
       activeOrders: active.length,
+      newOrders: newCount,
       dueToday: dueTodayCount,
       overdue: overdueCount,
-      readyPickup: readyPickupCount
+      readyPickup: readyPickupCount,
+      readyDelivery: readyDeliveryCount,
+      completed: list.filter(o => o.productionStatus === "Completed").length
     };
   }, [operationsOrders]);
 
@@ -243,6 +256,69 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
   const aspiringOverdueCount = aspiringFollowUps.filter(f => f.isOverdue).length;
   const aspiringDueTodayCount = aspiringFollowUps.filter(f => f.isDueToday).length;
 
+  // Direct Aspiring Client Follow-Up Logging State
+  const [loggingAspiringClient, setLoggingAspiringClient] = useState<AspiringClient | null>(null);
+  const [aspiringFollowUpMethod, setAspiringFollowUpMethod] = useState<string>("WhatsApp");
+  const [aspiringFollowUpNotes, setAspiringFollowUpNotes] = useState<string>("");
+  const [aspiringFollowUpNextDate, setAspiringFollowUpNextDate] = useState<string>("");
+  const [aspiringFollowUpStatus, setAspiringFollowUpStatus] = useState<AspiringClientStatus>("Follow Up Required");
+
+  const handleOpenAspiringFollowUp = (aspClient: AspiringClient) => {
+    setLoggingAspiringClient(aspClient);
+    setAspiringFollowUpMethod(
+      aspClient.preferredContactMethod === "Instagram" ? "Instagram DM" :
+      aspClient.preferredContactMethod === "WhatsApp" ? "WhatsApp" :
+      aspClient.preferredContactMethod === "Phone" ? "Phone Call" :
+      aspClient.preferredContactMethod === "Email" ? "Email" : "WhatsApp"
+    );
+    setAspiringFollowUpNotes("");
+    setAspiringFollowUpNextDate("");
+    setAspiringFollowUpStatus(aspClient.status || "Follow Up Required");
+  };
+
+  const handleLogAspiringFollowUpSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loggingAspiringClient || !setAspiringClients) return;
+
+    const realToday = new Date();
+    const realTodayStr = `${realToday.getFullYear()}-${String(realToday.getMonth() + 1).padStart(2, "0")}-${String(realToday.getDate()).padStart(2, "0")}`;
+
+    const currentCount = loggingAspiringClient.followUpCount || 0;
+    const newCount = currentCount + 1;
+    const newRecord: FollowUpRecord = {
+      id: `FU_${Date.now()}`,
+      attemptNumber: newCount,
+      date: realTodayStr,
+      method: aspiringFollowUpMethod,
+      notes: aspiringFollowUpNotes.trim() || `Attempt ${newCount} logged via ${aspiringFollowUpMethod}.`,
+      recordedBy: "Master Administrator"
+    };
+
+    setAspiringClients(prev => prev.map(c => {
+      if (c.id === loggingAspiringClient.id) {
+        return {
+          ...c,
+          followUpCount: newCount,
+          lastContactDate: realTodayStr,
+          followUpDate: aspiringFollowUpNextDate || c.followUpDate,
+          followUpHistory: [...(c.followUpHistory || []), newRecord],
+          status: newCount >= 3 ? "Follow Up Required" : aspiringFollowUpStatus
+        };
+      }
+      return c;
+    }));
+
+    setLoggingAspiringClient(null);
+    setAspiringFollowUpNotes("");
+    setAspiringFollowUpNextDate("");
+  };
+
+  // Helper to prevent card expand/toggle when user is highlighting text
+  const isTextSelecting = () => {
+    const sel = window.getSelection()?.toString();
+    return Boolean(sel && sel.trim().length > 0);
+  };
+
   const handleQuickRescheduleAspiring = (id: string, newDate: string, newStatus?: AspiringClientStatus) => {
     if (setAspiringClients) {
       setAspiringClients(prev => prev.map(item => {
@@ -261,7 +337,8 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
   // Client Tier Register & Promotion State (Independent Tier Register & No Demotion Policy)
   const [tierRegister, setTierRegister] = useState(() => getClientTierRegister(clients));
   const [selectedDashboardPromotion, setSelectedDashboardPromotion] = useState<PromotionOpportunity | null>(null);
-  useBodyScrollLock(!!selectedDashboardPromotion);
+  const [adventistModalClientName, setAdventistModalClientName] = useState<string | null>(null);
+  useBodyScrollLock(!!selectedDashboardPromotion || !!adventistModalClientName || !!loggingAspiringClient);
 
   useEffect(() => {
     setTierRegister(getClientTierRegister(clients));
@@ -702,16 +779,13 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
   };
 
   const getBrandCardClasses = (homeBrand: string) => {
-    if (homeBrand === "CEO Printing Services") {
-      return "bg-blue-50/45 border-blue-200/85 hover:bg-blue-50/70 border-l-4 border-l-blue-600";
-    }
     if (homeBrand === "Librarium Luxe") {
       return "bg-rose-50/35 border-[#5C1A24]/30 hover:bg-rose-50/70 border-l-4 border-l-[#5C1A24]";
     }
-    if (homeBrand === "CEO Lifestyle") {
+    if (homeBrand === "CEO Lifestyle | Librarium Luxe") {
       return "bg-purple-50/35 border-purple-200/80 hover:bg-purple-50/70 border-l-4 border-l-purple-700";
     }
-    return "bg-slate-50 border-slate-200 hover:bg-slate-100 border-l-4 border-l-slate-400";
+    return "bg-blue-50/45 border-blue-200/85 hover:bg-blue-50/70 border-l-4 border-l-blue-600";
   };
 
   // 4. GENERATE INTELLIGENT RELATIONSHIP FOCUS PROFILES
@@ -730,21 +804,49 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
 
         const days = getDaysUntilNext(parsed.month, parsed.day);
         if (days >= 0 && days <= 30) {
-          const priority = isGold ? 1 : 3;
-          let reason = "";
-          if (days === 0) {
-            reason = `${m.label} is TODAY! Send immediate personalized greetings.`;
-          } else {
-            reason = `${m.label} is approaching in ${days} day${days > 1 ? 's' : ''} (${m.date}).`;
-          }
+          // Check if the corresponding milestone reminder is already completed
+          const isActCompleted = client.reminders.some(r => 
+            r.completed && 
+            r.milestone?.eventType === m.type && 
+            r.milestone?.triggerType === "actual_day" &&
+            (r.milestone?.personName || "").toLowerCase() === (m.personName || client.firstName || "").toLowerCase()
+          );
 
-          triggers.push({
-            type: m.type === "birthday" ? (m.relationship === "Child" ? "child_birthday" : "birthday") : "anniversary",
-            priority,
-            reason,
-            daysRemaining: days,
-            metadata: { date: m.date, label: m.label }
-          });
+          const isAdvCompleted = client.reminders.some(r => 
+            r.completed && 
+            r.milestone?.eventType === m.type && 
+            r.milestone?.triggerType === "advance_opportunity" &&
+            (r.milestone?.personName || "").toLowerCase() === (m.personName || client.firstName || "").toLowerCase()
+          );
+
+          // If handled for the active window, skip generic urgent trigger
+          if (days === 0 && isActCompleted) return;
+          if (days > 0 && isAdvCompleted) return;
+
+          // Check if Section D will output an actionable reminder trigger for this
+          const hasActionableReminder = client.reminders.some(r => 
+            !r.completed && 
+            r.milestone?.eventType === m.type && 
+            (r.milestone?.personName || "").toLowerCase() === (m.personName || client.firstName || "").toLowerCase()
+          );
+
+          if (!hasActionableReminder) {
+            const priority = isGold ? 1 : 3;
+            let reason = "";
+            if (days === 0) {
+              reason = `${m.label} is TODAY! Send immediate personalized greetings.`;
+            } else {
+              reason = `${m.label} is approaching in ${days} day${days > 1 ? 's' : ''} (${m.date}).`;
+            }
+
+            triggers.push({
+              type: m.type === "birthday" ? (m.relationship === "Child" ? "child_birthday" : "birthday") : "anniversary",
+              priority,
+              reason,
+              daysRemaining: days,
+              metadata: { date: m.date, label: m.label }
+            });
+          }
         }
       });
 
@@ -775,56 +877,75 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
       // D. Follow-up Reminders / Pending Tasks
       client.reminders.forEach(reminder => {
         if (!reminder.completed) {
-          const daysSince = getDaysSince(reminder.date);
-          const daysDiff = -daysSince; // Negative if overdue, 0 if today, positive if upcoming
+          const isOpp = reminder.milestone?.triggerType === "advance_opportunity";
+          const isMilestoneActualDay = reminder.milestone?.triggerType === "actual_day";
+          const actionDate = reminder.nextActionDate || reminder.date;
+          const daysSince = getDaysSince(actionDate);
+          const daysDiff = -daysSince; // Negative if past/overdue, 0 if today, positive if upcoming
 
-          // Include overdue tasks (daysSince > 0) and upcoming tasks due within 30 days (daysDiff >= 0 && daysDiff <= 30)
-          if (daysSince > 0 || (daysDiff >= 0 && daysDiff <= 30)) {
-            const isOverdue = daysSince > 0;
-            const isDueToday = daysSince === 0;
-            const priority = (isOverdue || isDueToday || isGold) ? 1 : 4;
-
-            let reason = "";
-            if (isOverdue) {
-              reason = `Overdue task: "${reminder.task}" was due ${daysSince} day${daysSince > 1 ? 's' : ''} ago! (${reminder.date})`;
-            } else if (isDueToday) {
-              reason = `Task due TODAY: "${reminder.task}"`;
-            } else {
-              reason = `Task: "${reminder.task}" is due in ${daysDiff} day${daysDiff > 1 ? 's' : ''}.`;
+          if (isOpp) {
+            // ADVANCED OPPORTUNITY DATE-SENSITIVE RULE:
+            // - Past (daysSince > 0): Missed Opportunity -> NOT in active task triggers
+            // - Future (daysSince < 0): Scheduled / Dormant -> NOT in active task triggers
+            // - Today (daysSince === 0): Active and actionable NOW
+            if (daysSince === 0 && reminder.opportunityStatus !== "Resolved" && reminder.opportunityStatus !== "Converted" && reminder.opportunityStatus !== "Closed") {
+              const followUpNum = Math.min((reminder.followUpCount || 0) + 1, 3);
+              triggers.push({
+                type: "reminder",
+                priority: 1,
+                reason: `🎁 Opportunity Action Due TODAY (Follow-Up ${followUpNum}/3): "${reminder.task}"`,
+                daysRemaining: 0,
+                metadata: reminder
+              });
             }
+            return;
+          }
 
+          if (isMilestoneActualDay) {
+            // MILESTONE ACTUAL DAY GREETING DATE-SENSITIVE RULE:
+            // - Past (daysSince > 0): Expired / Passed milestone -> NOT in active task triggers
+            // - Future (daysSince < 0): Dormant -> NOT in today's active task triggers (handled by milestone approach triggers)
+            // - Today (daysSince === 0): Active milestone greeting due TODAY
+            if (daysSince === 0) {
+              triggers.push({
+                type: "reminder",
+                priority: 1,
+                reason: `🎉 Milestone Event TODAY: "${reminder.task}"`,
+                daysRemaining: 0,
+                metadata: reminder
+              });
+            }
+            return;
+          }
+
+          // Standard tasks:
+          // Past reminders that are overdue or due today
+          // Note: Milestone-related manual reminders whose date has passed (e.g. Birthday Aug 5) should not be triggered if expired
+          const isExpiredMilestoneReminder = (reminder.task.toLowerCase().includes("birthday") || reminder.task.toLowerCase().includes("anniversary")) && daysSince > 0;
+          if (isExpiredMilestoneReminder) {
+            return; // Expired milestone task -> excluded from active triggers
+          }
+
+          if (daysSince === 0) {
             triggers.push({
               type: "reminder",
-              priority,
-              reason,
+              priority: 1,
+              reason: `Task due TODAY: "${reminder.task}"`,
+              daysRemaining: 0,
+              metadata: reminder
+            });
+          } else if (daysSince > 0) {
+            // Standard manual overdue task
+            triggers.push({
+              type: "reminder",
+              priority: isGold ? 1 : 2,
+              reason: `Overdue task: "${reminder.task}" was due ${daysSince} day${daysSince > 1 ? 's' : ''} ago! (${reminder.date})`,
               daysRemaining: daysDiff,
               metadata: reminder
             });
           }
         }
       });
-
-      // E. Gold/VIP Relationship Attention (no contact in 90 days)
-      if (isGold) {
-        const daysSinceContact = getDaysSince(client.lastContactedDate);
-        if (daysSinceContact > 90) {
-          triggers.push({
-            type: "no_contact",
-            priority: 2, // Gold client + no recent interaction
-            reason: `Elite Account Inactivity: No personal contact logged in ${daysSinceContact} days (Last touch: ${client.lastContactedDate || "Never"}).`
-          });
-        }
-
-        // F. Gold/VIP Dormant Purchaser (no orders in 180 days)
-        const daysSinceOrder = getDaysSince(client.history?.lastOrderDate);
-        if (daysSinceOrder > 180) {
-          triggers.push({
-            type: "no_order",
-            priority: 2, // Gold client + no recent interaction
-            reason: `Dormant Account: No purchase transactions recorded in ${daysSinceOrder} days (Last order: ${client.history?.lastOrderDate || "Never"}).`
-          });
-        }
-      }
 
       // If they have any active focus triggers, compile them into a profile
       if (triggers.length > 0) {
@@ -875,7 +996,8 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
             occupation: "Prospective Client",
             drive: "No",
             tier: "Silver",
-            homeBrand: "CEO Printing Services",
+            homeBrand: asp.clientHome === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle",
+            clientHome: (asp.clientHome as any) || "CEO Lifestyle",
             marketingPermission: "Yes",
             deactivated: false,
             preferredCommunication: (asp.preferredContactMethod || (asp.sourceOfInquiry === "Instagram" ? "Instagram" : "WhatsApp")) as any,
@@ -1031,7 +1153,7 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
   const milestonesCount = useMemo(() => {
     return focusProfiles.filter(p => 
       !p.isAspiring && 
-      p.triggers.some(t => ["birthday", "anniversary", "child_birthday", "order_anniversary", "no_contact", "no_order", "custom_milestone"].includes(t.type))
+      p.triggers.some(t => ["birthday", "anniversary", "child_birthday", "order_anniversary", "custom_milestone"].includes(t.type))
     ).length;
   }, [focusProfiles]);
 
@@ -1046,10 +1168,10 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
   const filteredFocusProfiles = useMemo(() => {
     return focusProfiles.filter(profile => {
       // Apply Search filter
-      const fullName = `${profile.client.firstName} ${profile.client.lastName}`.toLowerCase();
-      const serviceText = profile.aspiringClient ? profile.aspiringClient.serviceInterestedIn.toLowerCase() : "";
-      const notesText = profile.aspiringClient ? profile.aspiringClient.notes.toLowerCase() : "";
-      const q = searchQuery.toLowerCase();
+      const fullName = `${profile.client?.firstName || ""} ${profile.client?.lastName || ""}`.toLowerCase();
+      const serviceText = profile.aspiringClient?.serviceInterestedIn ? profile.aspiringClient.serviceInterestedIn.toLowerCase() : "";
+      const notesText = profile.aspiringClient?.notes ? profile.aspiringClient.notes.toLowerCase() : "";
+      const q = (searchQuery || "").toLowerCase();
       if (searchQuery && !fullName.includes(q) && !serviceText.includes(q) && !notesText.includes(q)) {
         return false;
       }
@@ -1059,7 +1181,7 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
         return profile.highestPriority === 1;
       }
       if (focusFilter === "milestones") {
-        return !profile.isAspiring && profile.triggers.some(t => ["birthday", "anniversary", "child_birthday", "order_anniversary", "no_contact", "no_order", "custom_milestone"].includes(t.type));
+        return !profile.isAspiring && profile.triggers.some(t => ["birthday", "anniversary", "child_birthday", "order_anniversary", "custom_milestone"].includes(t.type));
       }
       if (focusFilter === "operations") {
         return profile.isAspiring || profile.triggers.some(t => t.type === "reminder");
@@ -1222,7 +1344,8 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
             id: `aspiring-${asp.id}`,
             firstName: asp.name.split(" ")[0],
             lastName: asp.name.split(" ").slice(1).join(" ") || "Prospect",
-            homeBrand: "CEO Printing Services",
+            homeBrand: asp.clientHome === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle",
+            clientHome: asp.clientHome || "CEO Lifestyle",
             tier: "Silver"
           } as any,
           type: "reminder",
@@ -1363,7 +1486,8 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
             id: `aspiring-${c.id}`,
             firstName: c.name.split(" ")[0],
             lastName: c.name.split(" ").slice(1).join(" ") || "Prospect",
-            homeBrand: "CEO Printing Services",
+            homeBrand: c.clientHome === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle",
+            clientHome: c.clientHome || "CEO Lifestyle",
             tier: "Silver"
           } as any,
           reminder: {
@@ -1384,8 +1508,46 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
       ...activeAspiringRemindersToday,
       ...clients.flatMap(c => 
         c.reminders
-          .filter(r => !r.completed && getDaysSince(r.date) >= 0) // Include overdue and due today
-          .map(r => ({ client: c, reminder: r, overdueBy: getDaysSince(r.date) }))
+          .filter(r => {
+            if (r.completed) return false;
+            if (r.opportunityStatus === "Resolved" || r.opportunityStatus === "Converted" || r.opportunityStatus === "Closed" || r.opportunityStatus === "Missed" || r.opportunityStatus === "Missed Opportunity") return false;
+            
+            const isOpp = r.milestone?.triggerType === "advance_opportunity";
+            const isMilestoneActualDay = r.milestone?.triggerType === "actual_day";
+            const actionDate = r.nextActionDate || r.date;
+            const daysSince = getDaysSince(actionDate);
+
+            if (isOpp) {
+              // Opportunities only appear if strictly due TODAY (daysSince === 0)
+              // Past opportunities become Missed and are removed from active tasks
+              // Future opportunities are dormant and do not clutter today's task list
+              return daysSince === 0;
+            }
+
+            if (isMilestoneActualDay) {
+              // Milestone actual-day greeting tasks only appear if due TODAY
+              return daysSince === 0;
+            }
+
+            // For manual milestone reminders (e.g. Birthday Aug 5), if expired, exclude from today's active tasks
+            const isExpiredMilestoneReminder = (r.task.toLowerCase().includes("birthday") || r.task.toLowerCase().includes("anniversary")) && daysSince > 0;
+            if (isExpiredMilestoneReminder) {
+              return false;
+            }
+
+            return daysSince >= 0; // Standard tasks include overdue and due today
+          })
+          .map(r => {
+            const actionDate = r.nextActionDate || r.date;
+            const dateState = getFollowUpActionState(actionDate, r.completed, r.opportunityStatus);
+            return { 
+              client: c, 
+              reminder: r, 
+              overdueBy: getDaysSince(actionDate),
+              dateState,
+              isOpportunity: r.milestone?.triggerType === "advance_opportunity"
+            };
+          })
       )
     ].sort((a, b) => {
       const getPriorityVal = (item: any) => {
@@ -1410,17 +1572,55 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
     ).sort((a, b) => a.daysAgo - b.daysAgo).slice(0, 5);
 
     // THIS WEEK Computations (next 7 days)
-    const birthdaysThisWeek = focusProfiles.flatMap(p => 
-      p.triggers
-        .filter(t => t.type === "birthday" && t.daysRemaining !== undefined && t.daysRemaining >= 0 && t.daysRemaining <= 7)
-        .map(t => ({ client: p.client, trigger: t }))
-    ).sort((a, b) => (a.trigger.daysRemaining || 0) - (b.trigger.daysRemaining || 0));
+    const birthdaysThisWeek = clients.flatMap(c => {
+      const milestones = getClientMilestones(c);
+      return milestones
+        .filter(m => m.type === "birthday")
+        .map(m => {
+          const parsed = parseDateString(m.date);
+          if (!parsed) return null;
+          const days = getDaysUntilNext(parsed.month, parsed.day);
+          if (days >= 0 && days <= 7) {
+            return {
+              client: c,
+              trigger: {
+                type: "birthday" as const,
+                priority: 1,
+                reason: `${m.label} in ${days}d`,
+                daysRemaining: days,
+                metadata: { date: m.date, label: m.label }
+              }
+            };
+          }
+          return null;
+        })
+        .filter((item): item is { client: Client; trigger: any } => item !== null);
+    }).sort((a, b) => (a.trigger.daysRemaining || 0) - (b.trigger.daysRemaining || 0));
 
-    const anniversariesThisWeek = focusProfiles.flatMap(p => 
-      p.triggers
-        .filter(t => t.type === "anniversary" && t.daysRemaining !== undefined && t.daysRemaining >= 0 && t.daysRemaining <= 7)
-        .map(t => ({ client: p.client, trigger: t }))
-    ).sort((a, b) => (a.trigger.daysRemaining || 0) - (b.trigger.daysRemaining || 0));
+    const anniversariesThisWeek = clients.flatMap(c => {
+      const milestones = getClientMilestones(c);
+      return milestones
+        .filter(m => m.type === "anniversary")
+        .map(m => {
+          const parsed = parseDateString(m.date);
+          if (!parsed) return null;
+          const days = getDaysUntilNext(parsed.month, parsed.day);
+          if (days >= 0 && days <= 7) {
+            return {
+              client: c,
+              trigger: {
+                type: "anniversary" as const,
+                priority: 2,
+                reason: `${m.label} in ${days}d`,
+                daysRemaining: days,
+                metadata: { date: m.date, label: m.label }
+              }
+            };
+          }
+          return null;
+        })
+        .filter((item): item is { client: Client; trigger: any } => item !== null);
+    }).sort((a, b) => (a.trigger.daysRemaining || 0) - (b.trigger.daysRemaining || 0));
 
     const vipAttentionThisWeek = focusProfiles.filter(p => 
       (p.client.tier === "Gold" || p.client.tier === "Platinum") &&
@@ -1433,7 +1633,7 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
         .filter(r => {
           if (r.completed) return false;
           const daysDiff = -getDaysSince(r.date);
-          const hasKeyword = ["deliver", "send", "ship", "box", "apparel", "gift", "shirts"].some(kw => r.task.toLowerCase().includes(kw));
+          const hasKeyword = ["deliver", "send", "ship", "box", "apparel", "gift", "shirts"].some(kw => (r.task || "").toLowerCase().includes(kw));
           return daysDiff >= 0 && daysDiff <= 7 && hasKeyword;
         })
         .map(r => ({ client: c, reminder: r, daysLeft: -getDaysSince(r.date) }))
@@ -1446,9 +1646,9 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
     const totalCorporate = clients.filter(c => c.tier === "Platinum").length;
     const totalAbroad = clients.filter(c => c.contact.country !== "Jamaica").length;
     
-    const totalCeo = clients.filter(c => c.homeBrand === "CEO Printing Services" || c.homeBrand === "CEO Lifestyle").length;
-    const totalLibrarium = clients.filter(c => c.homeBrand === "Librarium Luxe" || c.homeBrand === "CEO Lifestyle").length;
-    const totalShared = clients.filter(c => c.homeBrand === "CEO Lifestyle").length;
+    const totalCeo = clients.filter(c => getClientHome(c) === "CEO Lifestyle").length;
+    const totalLibrarium = clients.filter(c => getClientHome(c) === "Librarium Luxe").length;
+    const totalShared = clients.filter(c => getClientHome(c) === "CEO Lifestyle | Librarium Luxe").length;
 
     return {
       today: {
@@ -1663,7 +1863,10 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                 return (
                   <div
                     key={client.id}
-                    onClick={() => setExpandedAttentionId(isExpanded ? null : client.id)}
+                    onClick={() => {
+                      if (isTextSelecting()) return;
+                      setExpandedAttentionId(isExpanded ? null : client.id);
+                    }}
                     className={`bg-white border text-left rounded-2xl cursor-pointer hover:shadow-md transition-all relative overflow-hidden flex flex-col ${
                       isExpanded 
                         ? "ring-1 ring-slate-900 border-transparent shadow-md" 
@@ -1716,11 +1919,19 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                             <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-400 font-semibold truncate flex-wrap">
                               <span className="font-bold uppercase tracking-wider">ID: {client.id}</span>
                               <span>•</span>
-                              <span className="uppercase tracking-widest">{client.homeBrand}</span>
+                              <span className="uppercase tracking-widest">{getClientHome(client)}</span>
                               <span>•</span>
                               <span className="text-indigo-600 font-bold">
                                 Avg Order: {formatCurrency(getClientHistoryAOV(client))}
                               </span>
+                              {getOpenPromisesCount(client) > 0 && (
+                                <>
+                                  <span>•</span>
+                                  <span className="text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.5 rounded text-[9px] font-extrabold">
+                                    ({getOpenPromisesCount(client)} {getOpenPromisesCount(client) === 1 ? 'CMT' : 'CMTs'})
+                                  </span>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1881,6 +2092,50 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                                   <p className="text-xs text-slate-550 pl-3 leading-relaxed font-semibold border-l border-slate-200/80">
                                     {description}
                                   </p>
+                                  {trig.type === "reminder" && trig.metadata?.id && onOpenTask && (
+                                    <div className="pl-3 pt-1 flex items-center gap-2 flex-wrap">
+                                      {trig.metadata?.milestone?.triggerType === "advance_opportunity" ? (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onOpenTask(client.id, trig.metadata.id);
+                                          }}
+                                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-700 hover:to-indigo-700 rounded-xl transition-all shadow-xs cursor-pointer"
+                                        >
+                                          <Sparkles className="w-3.5 h-3.5" />
+                                          Action Opportunity Follow-Up (Attempt {(trig.metadata.followUpCount || 0) + 1}/3)
+                                        </button>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            onOpenTask(client.id, trig.metadata.id);
+                                          }}
+                                          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/70 rounded-lg transition-colors cursor-pointer shadow-2xs"
+                                        >
+                                          <CheckSquare className="w-3.5 h-3.5 text-indigo-600" />
+                                          Review / Complete Task
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                  {profile.isAspiring && profile.aspiringClient && (
+                                    <div className="pl-3 pt-1 flex items-center gap-2 flex-wrap">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOpenAspiringFollowUp(profile.aspiringClient!);
+                                        }}
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-gradient-to-r from-pink-600 to-indigo-600 hover:from-pink-700 hover:to-indigo-700 rounded-xl transition-all shadow-xs cursor-pointer"
+                                      >
+                                        <Sparkles className="w-3.5 h-3.5" />
+                                        Action Follow-Up (Attempt {(profile.aspiringClient.followUpCount || 0) + 1}/3)
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             );
@@ -1964,6 +2219,17 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                           <div className="flex items-center gap-2 flex-wrap">
                             {profile.isAspiring && profile.aspiringClient ? (
                               <>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenAspiringFollowUp(profile.aspiringClient!);
+                                  }}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-pink-600 to-indigo-600 hover:from-pink-700 hover:to-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                                >
+                                  <Sparkles className="w-3.5 h-3.5" />
+                                  Action Follow-Up ({(profile.aspiringClient.followUpCount || 0) + 1}/3)
+                                </button>
                                 {onConvertToClient && (
                                   <button
                                     onClick={(e) => {
@@ -1988,16 +2254,46 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                                 </button>
                               </>
                             ) : (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onSelectClient(client.id);
-                                }}
-                                className="flex items-center gap-1 text-xs font-bold text-slate-900 hover:text-slate-700 transition-colors cursor-pointer hover:translate-x-1 duration-200"
-                              >
-                                Launch Client File
-                                <ChevronRight className="w-4 h-4" />
-                              </button>
+                              <>
+                                {(() => {
+                                  const activeOpportunity = client.reminders?.find(r => 
+                                    !r.completed && 
+                                    r.opportunityStatus !== "Resolved" && 
+                                    r.opportunityStatus !== "Converted" && 
+                                    r.opportunityStatus !== "Closed" && 
+                                    r.opportunityStatus !== "Missed" && 
+                                    r.opportunityStatus !== "Missed Opportunity" &&
+                                    r.milestone?.triggerType === "advance_opportunity" &&
+                                    getDaysSince(r.nextActionDate || r.date) === 0
+                                  );
+                                  if (activeOpportunity && onOpenTask) {
+                                    return (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onOpenTask(client.id, activeOpportunity.id);
+                                        }}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-700 hover:to-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                                      >
+                                        <Sparkles className="w-3.5 h-3.5" />
+                                        Action Opportunity (Follow-Up {(activeOpportunity.followUpCount || 0) + 1}/3)
+                                      </button>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSelectClient(client.id);
+                                  }}
+                                  className="flex items-center gap-1 text-xs font-bold text-slate-900 hover:text-slate-700 transition-colors cursor-pointer hover:translate-x-1 duration-200"
+                                >
+                                  Launch Client File
+                                  <ChevronRight className="w-4 h-4" />
+                                </button>
+                              </>
                             )}
                           </div>
                         </div>
@@ -2098,9 +2394,12 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
 
         </div>
 
-        {/* Right 4-columns: Interactive Carousel Command Center & Gold Clients */}
-        <div className="lg:col-span-4 space-y-8 text-left">
+        {/* Right 4-columns: Interactive Command Center & Executive Checklist */}
+        <div className="lg:col-span-4 space-y-6 text-left">
           
+          {/* Executive Priority Checklist Widget */}
+          <ExecutiveChecklist />
+
           {(() => {
             const carouselModulesMap: Record<string, { id: string; title: string; icon: React.ReactNode; render: () => React.ReactNode }> = {
               operations_board: {
@@ -2154,14 +2453,14 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
               },
               inventory: {
                 id: "inventory",
-                title: "Librarium Luxe Inventory",
-                icon: <Package className="w-4 h-4 text-amber-400" />,
+                title: "Inventory",
+                icon: <Archive className="w-4 h-4 text-amber-400" />,
                 render: () => (
                   <div className="bg-white border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-4 text-left animate-fade-in" id="dashboard-luxe-quick-glance-carousel">
                     <div className="flex items-center justify-between border-b pb-3 border-slate-100">
                       <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500 flex items-center gap-1.5">
-                        <Package className="w-4 h-4 text-slate-800" />
-                        Librarium Luxe Inventory
+                        <Archive className="w-4 h-4 text-slate-800" />
+                        Inventory
                       </span>
                       <span className="text-[9px] font-extrabold uppercase tracking-wider bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200/60">
                         Quick Glance
@@ -2293,15 +2592,15 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                         {dashboardPromotions.slice(0, 5).map(promo => (
                           <div key={promo.client.id} className="p-3 bg-gradient-to-br from-slate-50 to-amber-50/30 rounded-2xl border border-slate-200/70 flex items-center justify-between gap-3">
                             <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="font-extrabold text-xs text-slate-900 truncate">
-                                  {promo.client.firstName} {promo.client.lastName}
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-extrabold text-xs text-slate-900 break-words">
+                                    {promo.client.firstName} {promo.client.lastName}
                                 </span>
-                                <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-amber-400 text-amber-950">
+                                <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-amber-400 text-amber-950 shrink-0">
                                   Upgrade to {(promo as any).eligibleTier || (promo as any).targetTier}
                                 </span>
                               </div>
-                              <p className="text-[10px] text-slate-500 mt-0.5 font-medium line-clamp-1">
+                              <p className="text-[10px] text-slate-500 mt-0.5 font-medium break-words">
                                 {promo.reason}
                               </p>
                             </div>
@@ -2380,23 +2679,34 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                         {activeLeads.length === 0 ? (
                           <p className="text-xs text-slate-400 italic py-2">No active aspiring prospects pending.</p>
                         ) : (
-                          activeLeads.slice(0, 3).map(c => (
-                            <div key={c.id} className="flex justify-between items-center py-1.5 border-b border-slate-50 last:border-0 text-xs">
-                              <div className="min-w-0 flex-1 pr-2">
+                          activeLeads.slice(0, 4).map(c => (
+                            <div key={c.id} className="flex justify-between items-center py-1.5 border-b border-slate-50 last:border-0 text-xs gap-2">
+                              <div className="min-w-0 flex-1 pr-1">
                                 <span className="font-bold text-slate-900 truncate block">🌱 {c.name}</span>
                                 <span className="text-[10px] text-slate-500 font-medium block truncate">
                                   Preferred: {c.preferredContactMethod || "Instagram"} {c.instagramUsername ? `(${c.instagramUsername})` : ''}
                                 </span>
                               </div>
-                              <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded shrink-0 ${
-                                c.followUpDate === todayStr 
-                                  ? "bg-amber-100 text-amber-900 border border-amber-200" 
-                                  : c.followUpDate && c.followUpDate < todayStr 
-                                    ? "bg-rose-100 text-rose-900 border border-rose-200" 
-                                    : "bg-slate-100 text-slate-700"
-                              }`}>
-                                {c.followUpDate === todayStr ? "Due Today" : (c.followUpDate && c.followUpDate < todayStr ? "Overdue" : c.followUpDate || "Pending")}
-                              </span>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded ${
+                                  c.followUpDate === todayStr 
+                                    ? "bg-amber-100 text-amber-900 border border-amber-200" 
+                                    : c.followUpDate && c.followUpDate < todayStr 
+                                      ? "bg-rose-100 text-rose-900 border border-rose-200" 
+                                      : "bg-slate-100 text-slate-700"
+                                }`}>
+                                  {c.followUpDate === todayStr ? "Due Today" : (c.followUpDate && c.followUpDate < todayStr ? "Overdue" : c.followUpDate || "Pending")}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAspiringFollowUp(c)}
+                                  className="px-2 py-0.5 bg-pink-600 hover:bg-pink-700 text-white font-bold text-[9px] rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                                  title="Action Follow-Up"
+                                >
+                                  <Sparkles className="w-2.5 h-2.5" />
+                                  Follow-Up ({(c.followUpCount || 0) + 1}/3)
+                                </button>
+                              </div>
                             </div>
                           ))
                         )}
@@ -2893,7 +3203,14 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                       onClick={() => onSelectClient(p.client.id)}
                       className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 ${getBrandCardClasses(p.client.homeBrand)}`}
                     >
-                      <p className="font-bold text-xs text-slate-800">{p.client.firstName} {p.client.lastName}</p>
+                      <div className="font-bold text-xs text-slate-800 flex items-center gap-1.5 flex-wrap">
+                        <span>{p.client.firstName} {p.client.lastName}</span>
+                        {p.client.adventist === "Yes" && (
+                          <span className="text-[10px] font-bold text-slate-700">
+                            • Adventist ✝
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center justify-between gap-1.5 mt-1 flex-wrap">
                         <div className="flex items-center gap-1.5">
                           <span className={`px-1 rounded text-[7px] font-black uppercase tracking-wider ${
@@ -2967,13 +3284,16 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                       return (
                         <div 
                           key={`today-asp-${item.reminder.id}-${idx}`}
-                          onClick={() => onNavigateToTab("aspiring")}
-                          className="p-3 border border-amber-200/80 bg-amber-50/40 hover:bg-amber-50/90 rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 text-left shadow-xs border-l-4 border-l-amber-500"
+                          onClick={() => {
+                            if (isTextSelecting()) return;
+                            onNavigateToTab("aspiring");
+                          }}
+                          className="p-3 border border-pink-200/80 bg-gradient-to-br from-pink-50/50 to-amber-50/40 hover:from-pink-50/80 hover:to-amber-50/70 rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 text-left shadow-xs border-l-4 border-l-pink-500"
                         >
                           <div className="flex justify-between items-start gap-2">
                             <div>
                               <div className="flex items-center gap-1.5">
-                                <span className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200">
+                                <span className="px-1.5 py-0.5 rounded text-[7px] font-black uppercase tracking-wider bg-pink-100 text-pink-800 border border-pink-200">
                                   Aspiring Client
                                 </span>
                                 <span className="font-extrabold text-xs text-slate-900">{asp?.name || item.client.firstName}</span>
@@ -2995,9 +3315,21 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                               "{asp.notes}"
                             </p>
                           )}
-                          <div className="flex items-center justify-between text-[9px] text-slate-400 font-semibold pt-0.5">
+                          <div className="flex items-center justify-between text-[9px] text-slate-400 font-semibold pt-1 border-t border-pink-100/60">
                             {asp?.assignedUser ? <span>Assigned: {asp.assignedUser}</span> : <span>Opportunity</span>}
-                            <span className="text-amber-700 font-bold">{asp?.status || "Follow Up"}</span>
+                            {asp && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenAspiringFollowUp(asp);
+                                }}
+                                className="px-2 py-0.5 bg-pink-600 hover:bg-pink-700 text-white font-bold text-[9px] rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                              >
+                                <Sparkles className="w-2.5 h-2.5" />
+                                Action Follow-Up ({(asp.followUpCount || 0) + 1}/3)
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -3113,10 +3445,17 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                       }
                     }
 
+                    const isOpportunity = (item as any).isOpportunity;
+                    const dateState = (item as any).dateState;
+                    const followUpCount = item.reminder.followUpCount || 0;
+
                     return (
                       <div 
                         key={`today-rem-${item.reminder.id}-${idx}`}
-                        onClick={() => onOpenTask ? onOpenTask(item.client.id, item.reminder.id) : onSelectClient(item.client.id)}
+                        onClick={() => {
+                          if (isTextSelecting()) return;
+                          onOpenTask ? onOpenTask(item.client.id, item.reminder.id) : onSelectClient(item.client.id);
+                        }}
                         className={`p-3 border rounded-xl transition-all cursor-pointer hover:-translate-y-0.5 space-y-1.5 text-left ${getBrandCardClasses(item.client.homeBrand)}`}
                       >
                         <div className="flex justify-between items-start gap-2">
@@ -3132,18 +3471,48 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                               }`}>
                                 {item.client.tier}
                               </span>
-                              <span className="text-[10px] text-indigo-600 font-mono font-bold">AOV: {formatCurrency(getClientHistoryAOV(item.client))}</span>
+                              {isOpportunity ? (
+                                <span className="px-1 bg-amber-100 text-amber-900 rounded text-[7px] font-black uppercase tracking-wider border border-amber-200">
+                                  🎁 Opportunity • Follow-Up {Math.min(followUpCount + 1, 3)}/3
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-indigo-600 font-mono font-bold">AOV: {formatCurrency(getClientHistoryAOV(item.client))}</span>
+                              )}
                             </div>
                           </div>
-                          <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border ${
-                            item.overdueBy > 0 
-                              ? "bg-red-600 text-white border-red-600 shadow-[0_0_8px_rgba(220,38,38,0.3)] animate-pulse" 
-                              : "bg-slate-100 text-slate-700 border-slate-200"
-                          }`}>
-                            {item.overdueBy > 0 ? `URGENT Overdue ${item.overdueBy}d` : "Today"}
-                          </span>
+                          {isOpportunity && dateState?.status === "Missed" ? (
+                            <span className="text-[8px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border bg-rose-600 text-white border-rose-600 shadow-[0_0_8px_rgba(220,38,38,0.3)] animate-pulse">
+                              Missed ({dateState.daysDiff}d)
+                            </span>
+                          ) : (
+                            <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded whitespace-nowrap border ${
+                              item.overdueBy > 0 
+                                ? "bg-red-600 text-white border-red-600 shadow-[0_0_8px_rgba(220,38,38,0.3)] animate-pulse" 
+                                : "bg-slate-100 text-slate-700 border-slate-200"
+                            }`}>
+                              {item.overdueBy > 0 ? `URGENT Overdue ${item.overdueBy}d` : "Today"}
+                            </span>
+                          )}
                         </div>
                         <p className="text-[11px] text-slate-500 italic leading-snug">"{item.reminder.task}"</p>
+                        {isOpportunity && onOpenTask && (
+                          <div className="pt-1.5 border-t border-amber-100/70 flex items-center justify-between gap-2">
+                            <span className="text-[9px] font-semibold text-slate-400">
+                              Attempt {Math.min(followUpCount + 1, 3)} of 3
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenTask(item.client.id, item.reminder.id);
+                              }}
+                              className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[9px] rounded-lg transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                            >
+                              <Sparkles className="w-2.5 h-2.5" />
+                              Action Opportunity
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -3373,7 +3742,7 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
                   <div className="space-y-2">
                     <div>
                       <div className="flex justify-between items-center text-xs text-slate-600 font-semibold mb-1">
-                        <span>CEO Printing Services Only</span>
+                        <span>CEO Lifestyle Only</span>
                         <span>{summaries.overview.totalCeo - summaries.overview.totalShared}</span>
                       </div>
                       <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
@@ -3594,6 +3963,203 @@ export default function Dashboard({ clients, aspiringClients, setAspiringClients
           setShowAddAspiringModal(false);
         }}
       />
+
+      <AdventistWarningModal
+        isOpen={!!adventistModalClientName}
+        onClose={() => setAdventistModalClientName(null)}
+        clientName={adventistModalClientName || ""}
+        actionName="Client Communication"
+      />
+
+      {/* Aspiring Client Direct Follow-Up Action Modal */}
+      {loggingAspiringClient && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-lg shadow-2xl p-6 space-y-5 text-left relative max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start border-b border-slate-100 pb-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-pink-500 animate-ping" />
+                  <h3 className="text-base font-black text-slate-950 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-pink-600" />
+                    Action Aspiring Client Follow-Up
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500 mt-1 font-medium">
+                  {loggingAspiringClient.name} • Attempt {(loggingAspiringClient.followUpCount || 0) + 1} of 3
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLoggingAspiringClient(null)}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Client Context Banner */}
+            <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3.5 space-y-2 text-xs">
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div>
+                  <span className="text-slate-400 uppercase font-bold text-[9px] block">Service Interest:</span>
+                  <span className="font-semibold text-slate-900">{loggingAspiringClient.serviceInterestedIn || "General Inquiry"}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 uppercase font-bold text-[9px] block">Source of Inquiry:</span>
+                  <span className="font-semibold text-slate-900">{loggingAspiringClient.sourceOfInquiry || "Social Media"}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 uppercase font-bold text-[9px] block">Preferred Contact:</span>
+                  <span className="font-semibold text-slate-900">{loggingAspiringClient.preferredContactMethod || "Instagram"}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 uppercase font-bold text-[9px] block">Contact Details:</span>
+                  <span className="font-semibold text-pink-700 font-mono">
+                    {loggingAspiringClient.instagramUsername || loggingAspiringClient.phoneNumber || loggingAspiringClient.email || loggingAspiringClient.contactInfo || "None"}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* 3-Follow-Up Progression Track */}
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400 block">
+                Follow-Up Protocol Status (Max 3 Standard Attempts)
+              </span>
+              <div className="grid grid-cols-3 gap-2">
+                {[1, 2, 3].map((step) => {
+                  const currentAttempt = (loggingAspiringClient.followUpCount || 0) + 1;
+                  const isDone = (loggingAspiringClient.followUpCount || 0) >= step;
+                  const isCurrent = currentAttempt === step;
+                  return (
+                    <div
+                      key={step}
+                      className={`p-2.5 rounded-xl border text-center transition-all ${
+                        isDone
+                          ? "bg-emerald-50 border-emerald-300 text-emerald-900"
+                          : isCurrent
+                            ? "bg-pink-50 border-pink-400 text-pink-900 ring-2 ring-pink-500/20"
+                            : "bg-slate-50 border-slate-200 text-slate-400"
+                      }`}
+                    >
+                      <span className="text-[9px] font-bold uppercase tracking-wider block">
+                        Attempt #{step}
+                      </span>
+                      <span className="text-[10px] font-black mt-0.5 block">
+                        {isDone ? "✓ Completed" : isCurrent ? "Active Now" : "Pending"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Follow-Up Form */}
+            <form onSubmit={handleLogAspiringFollowUpSubmit} className="space-y-4 pt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                    Contact Method
+                  </label>
+                  <select
+                    value={aspiringFollowUpMethod}
+                    onChange={(e) => setAspiringFollowUpMethod(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500"
+                  >
+                    <option value="Instagram DM">Instagram DM</option>
+                    <option value="WhatsApp">WhatsApp</option>
+                    <option value="Phone Call">Phone Call</option>
+                    <option value="Email">Email</option>
+                    <option value="In Person">In Person</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                    Relationship Status
+                  </label>
+                  <select
+                    value={aspiringFollowUpStatus}
+                    onChange={(e) => setAspiringFollowUpStatus(e.target.value as AspiringClientStatus)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500"
+                  >
+                    <option value="Follow Up Required">Follow Up Required</option>
+                    <option value="Interested">Interested</option>
+                    <option value="Awaiting Response">Awaiting Response</option>
+                    <option value="Quote Sent">Quote Sent</option>
+                    <option value="Not Interested">Not Interested</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                  Next Scheduled Action Date (Optional)
+                </label>
+                <input
+                  type="date"
+                  value={aspiringFollowUpNextDate}
+                  onChange={(e) => setAspiringFollowUpNextDate(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                  Follow-Up Notes & Discussion Outcome <span className="text-pink-600">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  required
+                  placeholder="Record conversation summary, client requirements, pricing discussed, or next steps..."
+                  value={aspiringFollowUpNotes}
+                  onChange={(e) => setAspiringFollowUpNotes(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-normal text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 leading-relaxed"
+                />
+              </div>
+
+              {/* Previous History List */}
+              {loggingAspiringClient.followUpHistory && loggingAspiringClient.followUpHistory.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
+                    Logged Follow-Up History
+                  </span>
+                  <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+                    {loggingAspiringClient.followUpHistory.map((rec) => (
+                      <div key={rec.id} className="bg-slate-50 border border-slate-100 rounded-lg p-2 text-left">
+                        <div className="flex justify-between items-center text-[10px]">
+                          <span className="font-extrabold text-slate-900">Attempt #{rec.attemptNumber} ({rec.method})</span>
+                          <span className="font-mono text-slate-500">{rec.date}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 mt-0.5 leading-snug">{rec.notes}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setLoggingAspiringClient(null)}
+                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-gradient-to-r from-pink-600 to-indigo-600 hover:from-pink-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-md flex items-center justify-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Log Attempt #{(loggingAspiringClient.followUpCount || 0) + 1}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
 
     </div>
   );

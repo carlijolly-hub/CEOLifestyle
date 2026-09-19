@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from "react";
-import { Client, LuxeBookInventoryItem, SystemSettings, AspiringClient, OperationsOrder } from "./types";
-import { INITIAL_CLIENTS, INITIAL_INVENTORY, INITIAL_ASPIRING_CLIENTS, INITIAL_OPERATIONS_ORDERS } from "./data/mockData";
-import { syncFamilyBirthdayReminders } from "./utils/dateHelpers";
+import React, { useState, useEffect, useMemo } from "react";
+import { Client, ClientHome, LuxeBookInventoryItem, SystemSettings, AspiringClient, OperationsOrder, TimelineEvent, FollowUpRecord, FollowUpReminder, OpportunityStatus, AppUser, UserRole, UserStatus } from "./types";
+import { INITIAL_CLIENTS, INITIAL_INVENTORY, INITIAL_ASPIRING_CLIENTS, INITIAL_OPERATIONS_ORDERS, INITIAL_USERS } from "./data/mockData";
+import { syncFamilyBirthdayReminders, getFollowUpActionState } from "./utils/dateHelpers";
+import { safeMergeClient } from "./utils/clientMergeUtils";
 import { getSystemSettings, saveSystemSettings } from "./utils/settingsHelper";
+import { getOpenPromisesCount, getClientPromises } from "./utils/clientTierUtils";
 import Dashboard from "./components/Dashboard";
 import OperationsHub from "./components/OperationsHub";
 import ClientList from "./components/ClientList";
@@ -11,12 +13,15 @@ import ClientForm from "./components/ClientForm";
 import ExcelManager from "./components/ExcelManager";
 import MilestoneCalendar from "./components/MilestoneCalendar";
 import LuxeInventory from "./components/LuxeInventory";
+import InventoryHub from "./components/InventoryHub";
 import UserManagement from "./components/UserManagement";
 import ProductionTools from "./components/ProductionTools";
 import AspiringClients from "./components/AspiringClients";
 import AddAspiringClientModal from "./components/AddAspiringClientModal";
+import ConvertDuplicateModal from "./components/ConvertDuplicateModal";
 import EndSessionBackupModal from "./components/EndSessionBackupModal";
 import SystemReferenceClock from "./components/SystemReferenceClock";
+import { CmtManagementModal } from "./components/CmtManagementModal";
 import { 
   getCurrentEnvironment, 
   loadEnvironmentClients, 
@@ -36,6 +41,7 @@ import {
   FileSpreadsheet, 
   Printer, 
   BookOpen,
+  Archive,
   ArrowLeft,
   ArrowRight,
   Sparkles,
@@ -48,12 +54,20 @@ import {
   Wrench,
   UserPlus,
   ClipboardList,
-  Crown
+  Crown,
+  HeartHandshake,
+  CheckCircle2,
+  MessageSquare,
+  Clock,
+  AlertCircle,
+  Award,
+  ChevronRight
 } from "lucide-react";
 // @ts-ignore
 import spaceBg from "./assets/images/space_background_1783612418079.jpg";
 import LoginScreen from "./components/LoginScreen";
 import BrandingSettings from "./components/BrandingSettings";
+import UndoToast, { UndoAction } from "./components/UndoToast";
 
 const LOCAL_STORAGE_KEY = "ceo_librarium_crm_customers";
 
@@ -127,6 +141,36 @@ const TOURS: Record<string, { name: string; steps: TourStep[] }> = {
 };
 
 export default function App() {
+  // System-Wide Fix for Numeric Input Fields (Auto-Select on Focus to allow direct replacement)
+  useEffect(() => {
+    const handleFocus = (e: FocusEvent) => {
+      const target = e.target;
+      if (target instanceof HTMLInputElement) {
+        const isNumeric =
+          target.type === "number" ||
+          target.inputMode === "numeric" ||
+          target.inputMode === "decimal" ||
+          target.dataset.numeric === "true" ||
+          /price|cost|qty|quantity|amount|rate|markup|deposit|fee|shipping|total|threshold|stock|tier/i.test(
+            target.name || target.id || target.placeholder || ""
+          );
+
+        if (isNumeric) {
+          setTimeout(() => {
+            if (document.activeElement === target) {
+              target.select();
+            }
+          }, 20);
+        }
+      }
+    };
+
+    document.addEventListener("focus", handleFocus, true);
+    return () => {
+      document.removeEventListener("focus", handleFocus, true);
+    };
+  }, []);
+
   // State for client list
   const [clients, setClients] = useState<Client[]>([]);
 
@@ -139,29 +183,162 @@ export default function App() {
     return loadEnvironmentOperationsOrders(activeEnv);
   });
 
+  // State for Universal Undo
+  const [undoAction, setUndoAction] = useState<UndoAction | null>(null);
+
   const handleSaveOperationsOrder = (order: OperationsOrder) => {
+    const oldOrder = operationsOrders.find(o => (order.id && o.id === order.id) || (order.orderNumber && o.orderNumber === order.orderNumber));
+    const isNew = !oldOrder;
+    const statusChanged = oldOrder && oldOrder.productionStatus !== order.productionStatus;
+
+    // Terminal state guard: once an order is Completed, it cannot be reopened to an active or earlier status
+    const isCompletedTerminal = oldOrder && oldOrder.productionStatus === "Completed" && order.productionStatus !== "Completed";
+    const finalProductionStatus = isCompletedTerminal ? "Completed" : order.productionStatus;
+
+    const safeOrder: OperationsOrder = {
+      ...order,
+      productionStatus: finalProductionStatus,
+      orderNumber: oldOrder ? oldOrder.orderNumber : order.orderNumber,
+      createdDate: oldOrder?.createdDate || oldOrder?.dateOrderCreated || order.createdDate || order.dateOrderCreated || new Date().toISOString().split("T")[0],
+      dateOrderCreated: oldOrder?.dateOrderCreated || oldOrder?.createdDate || order.dateOrderCreated || order.createdDate || new Date().toISOString().split("T")[0],
+      updatedDate: new Date().toISOString().split("T")[0]
+    };
+
     setOperationsOrders(prev => {
-      const existingIdx = prev.findIndex(o => o.id === order.id);
+      const existingIdx = prev.findIndex(o => (safeOrder.id && o.id === safeOrder.id) || (safeOrder.orderNumber && o.orderNumber === safeOrder.orderNumber));
       let updated: OperationsOrder[];
       if (existingIdx !== -1) {
         updated = [...prev];
-        updated[existingIdx] = order;
+        updated[existingIdx] = {
+          ...prev[existingIdx],
+          ...safeOrder
+        };
       } else {
-        updated = [order, ...prev];
+        updated = [safeOrder, ...prev];
       }
       const activeEnv = getCurrentEnvironment();
       saveEnvironmentOperationsOrders(updated, activeEnv);
       return updated;
     });
+
+    // Register Undo Action for Order Changes
+    if (oldOrder) {
+      setUndoAction({
+        id: `undo_ord_${Date.now()}`,
+        message: statusChanged 
+          ? `Order ${order.orderNumber} status changed to ${order.productionStatus}.`
+          : `Order ${order.orderNumber} updated.`,
+        onUndo: () => {
+          setOperationsOrders(prev => {
+            const updated = prev.map(o => o.id === oldOrder.id ? oldOrder : o);
+            saveEnvironmentOperationsOrders(updated, getCurrentEnvironment());
+            return updated;
+          });
+        }
+      });
+    } else if (isNew) {
+      setUndoAction({
+        id: `undo_new_ord_${Date.now()}`,
+        message: `New Order ${order.orderNumber} created.`,
+        onUndo: () => {
+          setOperationsOrders(prev => {
+            const updated = prev.filter(o => o.id !== order.id && o.orderNumber !== order.orderNumber);
+            saveEnvironmentOperationsOrders(updated, getCurrentEnvironment());
+            return updated;
+          });
+        }
+      });
+    }
+
+    // Automatically log Interaction & Activity Timeline event for the client
+    if (isNew || statusChanged) {
+      setClients(prevClients => {
+        const clientIndex = prevClients.findIndex(
+          c => {
+            const cid = (c.id || "").trim();
+            const ordCid = (order.clientId || "").trim();
+            if (ordCid && cid === ordCid) return true;
+
+            const cName = `${c.firstName || ""} ${c.lastName || ""}`.trim().toLowerCase();
+            const oName = (order.clientName || "").trim().toLowerCase();
+            if (oName && cName && cName === oName) return true;
+
+            const cFull = `${c.firstName || ""} ${c.lastName || ""}`.trim().toLowerCase();
+            if (oName && cFull && cFull === oName) return true;
+
+            return false;
+          }
+        );
+
+        if (clientIndex === -1) return prevClients;
+
+        const targetClient = prevClients[clientIndex];
+        const todayStr = new Date().toISOString().split("T")[0];
+
+        let eventType = "Order Created";
+        let content = "";
+
+        if (isNew) {
+          const itemText = typeof order.items === "string" 
+            ? (order.items || "") 
+            : (order.items || []).map(i => `${i.quantity || 1}x ${i.productName || "Product"}`).join(", ");
+          content = `Order Created — ${order.orderNumber || ""} (${itemText || "Custom Order"})${order.expressOrder === "Yes" ? " [⚡ EXPRESS]" : ""}`;
+        } else if (statusChanged) {
+          eventType = order.productionStatus === "Completed" ? "Order Completed" : "Order Status Changed";
+          content = `Order ${order.orderNumber || ""} Status → ${order.productionStatus || "Updated"}`;
+        }
+
+        const newTimelineEvent: TimelineEvent = {
+          id: `evt_ord_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          type: eventType,
+          date: todayStr,
+          content: content || "Order Activity Recorded",
+          amount: order.totalAmount,
+          orderId: order.id,
+          orderNumber: order.orderNumber || ""
+        };
+
+        const updatedTimeline = [newTimelineEvent, ...(targetClient.timeline || [])];
+        const updatedClient = {
+          ...targetClient,
+          timeline: updatedTimeline,
+          lastContactedDate: todayStr
+        };
+
+        const updatedClientsList = [...prevClients];
+        updatedClientsList[clientIndex] = updatedClient;
+
+        const activeEnv = getCurrentEnvironment();
+        saveEnvironmentClients(updatedClientsList, activeEnv);
+
+        return updatedClientsList;
+      });
+    }
   };
 
   const handleDeleteOperationsOrder = (orderId: string) => {
+    const targetOrder = operationsOrders.find(o => o.id === orderId);
     setOperationsOrders(prev => {
       const updated = prev.filter(o => o.id !== orderId);
       const activeEnv = getCurrentEnvironment();
       saveEnvironmentOperationsOrders(updated, activeEnv);
       return updated;
     });
+
+    if (targetOrder) {
+      setUndoAction({
+        id: `undo_del_ord_${Date.now()}`,
+        message: `Order ${targetOrder.orderNumber} deleted.`,
+        onUndo: () => {
+          setOperationsOrders(prev => {
+            const updated = [targetOrder, ...prev];
+            const activeEnv = getCurrentEnvironment();
+            saveEnvironmentOperationsOrders(updated, activeEnv);
+            return updated;
+          });
+        }
+      });
+    }
   };
   
   // Tab state: "dashboard" | "operations" | "directory" | "aspiring" | "excel" | "calendar" | "inventory" | "production" | "branding" | "users"
@@ -181,22 +358,174 @@ export default function App() {
   // Settings dropdown state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  // Authentication states
+  // ---------------------------------------------------------------------------
+  // CRITICAL-003: Safe Role Resolution
+  // Missing, invalid, corrupted, or unavailable role data must NEVER result in administrative privileges.
+  // Authenticated role must be authoritatively resolved from existing user records.
+  // ---------------------------------------------------------------------------
+  interface SafeUserSession {
+    isAuthenticated: boolean;
+    role: string;
+    fullName: string;
+    username: string;
+  }
+
+  const resolveSafeUserSession = (): SafeUserSession => {
+    const isAuth = localStorage.getItem("ceo_admin_authenticated") === "true";
+    if (!isAuth) {
+      return {
+        isAuthenticated: false,
+        role: "Staff",
+        fullName: "",
+        username: ""
+      };
+    }
+
+    const storedRole = (localStorage.getItem("ceo_user_role") || "").trim();
+    const storedUsername = (localStorage.getItem("ceo_user_username") || "").trim();
+    const storedFullName = (localStorage.getItem("ceo_user_fullname") || "").trim();
+
+    // Load authoritative application user records
+    let appUsers: AppUser[] = [];
+    try {
+      const raw = localStorage.getItem("ceo_application_users");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          appUsers = parsed;
+        }
+      }
+    } catch (e) {
+      console.error("Failed to parse application users during role resolution:", e);
+    }
+    if (appUsers.length === 0) {
+      appUsers = INITIAL_USERS;
+    }
+
+    // 1. Check against authoritative application user records
+    if (storedUsername) {
+      const matchedUser = appUsers.find(
+        u => u.username.toLowerCase() === storedUsername.toLowerCase()
+      );
+
+      if (matchedUser) {
+        if (matchedUser.status === UserStatus.DEACTIVATED) {
+          localStorage.removeItem("ceo_admin_authenticated");
+          localStorage.removeItem("ceo_user_role");
+          localStorage.removeItem("ceo_user_fullname");
+          localStorage.removeItem("ceo_user_username");
+          return {
+            isAuthenticated: false,
+            role: "Staff",
+            fullName: "",
+            username: ""
+          };
+        }
+
+        // For non-privileged roles (Staff, Manager, Read-Only User), enforce authoritative role
+        if (
+          matchedUser.role !== UserRole.MASTER_ADMINISTRATOR &&
+          matchedUser.role !== UserRole.ADMINISTRATOR
+        ) {
+          if (storedRole !== matchedUser.role) {
+            localStorage.setItem("ceo_user_role", matchedUser.role);
+          }
+          return {
+            isAuthenticated: true,
+            role: matchedUser.role,
+            fullName: matchedUser.fullName || storedFullName || matchedUser.username,
+            username: matchedUser.username
+          };
+        }
+
+        // For Master Administrator in directory: require legitimate matching role
+        if (storedRole === matchedUser.role) {
+          return {
+            isAuthenticated: true,
+            role: matchedUser.role,
+            fullName: matchedUser.fullName || storedFullName || "Master Administrator",
+            username: matchedUser.username
+          };
+        } else {
+          // Missing, tampered, or invalid role for an admin record -> fail safely
+          localStorage.removeItem("ceo_admin_authenticated");
+          localStorage.removeItem("ceo_user_role");
+          localStorage.removeItem("ceo_user_fullname");
+          localStorage.removeItem("ceo_user_username");
+          return {
+            isAuthenticated: false,
+            role: "Staff",
+            fullName: "",
+            username: ""
+          };
+        }
+      }
+    }
+
+    // 2. Custom Master Administrator credentials check
+    const masterUser = (localStorage.getItem("ceo_admin_username") || "admin").trim().toLowerCase();
+    if (storedUsername && (storedUsername.toLowerCase() === masterUser || storedUsername.toLowerCase() === "admin")) {
+      if (storedRole === "Master Administrator") {
+        return {
+          isAuthenticated: true,
+          role: "Master Administrator",
+          fullName: storedFullName || "Master Administrator",
+          username: storedUsername
+        };
+      } else {
+        // Missing, corrupted, or tampered role for master account -> fail safely, require re-authentication
+        localStorage.removeItem("ceo_admin_authenticated");
+        localStorage.removeItem("ceo_user_role");
+        localStorage.removeItem("ceo_user_fullname");
+        localStorage.removeItem("ceo_user_username");
+        return {
+          isAuthenticated: false,
+          role: "Staff",
+          fullName: "",
+          username: ""
+        };
+      }
+    }
+
+    // 3. Fallback for valid non-privileged roles
+    if (storedRole === "Staff" || storedRole === "Read-Only User" || storedRole === "Manager") {
+      return {
+        isAuthenticated: true,
+        role: storedRole,
+        fullName: storedFullName || "Staff User",
+        username: storedUsername || "staff"
+      };
+    }
+
+    // 4. Missing, invalid, empty, or corrupted role data -> NEVER escalate!
+    localStorage.removeItem("ceo_admin_authenticated");
+    localStorage.removeItem("ceo_user_role");
+    localStorage.removeItem("ceo_user_fullname");
+    localStorage.removeItem("ceo_user_username");
+    return {
+      isAuthenticated: false,
+      role: "Staff",
+      fullName: "",
+      username: ""
+    };
+  };
+
+  // Authentication states with safe role resolution
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem("ceo_admin_authenticated") === "true";
+    return resolveSafeUserSession().isAuthenticated;
   });
 
   // Current Logged-in User Info
   const [userRole, setUserRole] = useState(() => {
-    return localStorage.getItem("ceo_user_role") || "Master Administrator";
+    return resolveSafeUserSession().role;
   });
 
   const [userFullName, setUserFullName] = useState(() => {
-    return localStorage.getItem("ceo_user_fullname") || "Master Administrator";
+    return resolveSafeUserSession().fullName;
   });
 
   const [userUsername, setUserUsername] = useState(() => {
-    return localStorage.getItem("ceo_user_username") || "admin";
+    return resolveSafeUserSession().username;
   });
 
   // Master Admin Credentials
@@ -215,14 +544,21 @@ export default function App() {
   };
 
   const handleLoginSuccess = () => {
-    setIsAuthenticated(true);
-    setUserRole(localStorage.getItem("ceo_user_role") || "Master Administrator");
-    setUserFullName(localStorage.getItem("ceo_user_fullname") || "Master Administrator");
-    setUserUsername(localStorage.getItem("ceo_user_username") || "admin");
+    const session = resolveSafeUserSession();
+    setIsAuthenticated(session.isAuthenticated);
+    setUserRole(session.role);
+    setUserFullName(session.fullName);
+    setUserUsername(session.username);
   };
   
   // System Settings state
   const [settings, setSettings] = useState<SystemSettings>(() => getSystemSettings());
+  const [isAllOpenCmtsModalOpen, setIsAllOpenCmtsModalOpen] = useState(false);
+
+  const totalOpenCmtsCount = useMemo(() => {
+    if (!clients || !Array.isArray(clients)) return 0;
+    return clients.reduce((sum, c) => sum + getOpenPromisesCount(c), 0);
+  }, [clients]);
 
   const handleUpdateSettings = (newSettings: SystemSettings) => {
     setSettings(newSettings);
@@ -299,9 +635,9 @@ export default function App() {
     localStorage.removeItem("ceo_user_fullname");
     localStorage.removeItem("ceo_user_username");
     setIsAuthenticated(false);
-    setUserRole("Master Administrator");
-    setUserFullName("Master Administrator");
-    setUserUsername("admin");
+    setUserRole("Staff");
+    setUserFullName("");
+    setUserUsername("");
     setActiveTab("dashboard");
   };
   
@@ -311,11 +647,14 @@ export default function App() {
 
   // Aspiring Clients state
   const [aspiringClients, setAspiringClients] = useState<AspiringClient[]>(() => {
-    const stored = localStorage.getItem("ceo_aspiring_clients");
+    if (localStorage.getItem("ceo_aspiring_clients_cleared") === "true") {
+      return [];
+    }
+    const stored = localStorage.getItem("ceo_aspiring_clients") || localStorage.getItem("ceo_aspiring_clients_data");
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length >= INITIAL_ASPIRING_CLIENTS.length) {
+        if (Array.isArray(parsed)) {
           return parsed;
         }
       } catch (err) {
@@ -325,11 +664,58 @@ export default function App() {
     return INITIAL_ASPIRING_CLIENTS;
   });
 
+  const saveAspiringClients = (updatedList: AspiringClient[]) => {
+    if (updatedList.length > 0) {
+      localStorage.removeItem("ceo_aspiring_clients_cleared");
+    }
+    setAspiringClients(updatedList);
+    localStorage.setItem("ceo_aspiring_clients", JSON.stringify(updatedList));
+    localStorage.setItem("ceo_aspiring_clients_data", JSON.stringify(updatedList));
+    saveEnvironmentAspiringClients(updatedList);
+  };
+
   useEffect(() => {
+    if (aspiringClients.length > 0) {
+      localStorage.removeItem("ceo_aspiring_clients_cleared");
+    }
     localStorage.setItem("ceo_aspiring_clients", JSON.stringify(aspiringClients));
   }, [aspiringClients]);
 
-  const handleConvertToClient = (asp: AspiringClient) => {
+  const [duplicateModalData, setDuplicateModalData] = useState<{ aspiringClient: AspiringClient; matchedClients: Client[] } | null>(null);
+
+  const findMatchingClients = (asp: AspiringClient, allClients: Client[]): Client[] => {
+    const normName = (asp.name || "").trim().toLowerCase();
+    const phone = (asp.phoneNumber || "").replace(/\D/g, "");
+    const email = (asp.email || "").trim().toLowerCase();
+    const ig = (asp.instagramUsername || "").replace("@", "").trim().toLowerCase();
+
+    return allClients.filter(c => {
+      const cFullName = `${c.firstName || ""} ${c.lastName || ""}`.trim().toLowerCase();
+      const cPhone = (c.contact?.phoneNumber || "").replace(/\D/g, "");
+      const cEmail = (c.contact?.email || "").trim().toLowerCase();
+      const cIg = (c.contact?.instagramUsername || "").replace("@", "").trim().toLowerCase();
+
+      // Name match
+      if (normName && cFullName && (normName === cFullName || cFullName.includes(normName) || normName.includes(cFullName))) {
+        return true;
+      }
+      // Phone match (7+ digits)
+      if (phone.length >= 7 && cPhone.length >= 7 && (phone.includes(cPhone) || cPhone.includes(phone))) {
+        return true;
+      }
+      // Email match
+      if (email && cEmail && email === cEmail) {
+        return true;
+      }
+      // IG match
+      if (ig && cIg && ig === cIg) {
+        return true;
+      }
+      return false;
+    });
+  };
+
+  const executeConversionNewClient = (asp: AspiringClient) => {
     const nameParts = asp.name.trim().split(" ");
     const firstName = nameParts[0] || "Prospect";
     const lastName = nameParts.slice(1).join(" ") || "Client";
@@ -352,6 +738,21 @@ export default function App() {
 
     const newClientId = `CLI-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    const initialTimeline: TimelineEvent[] = [
+      {
+        id: `TL-CONV-${Date.now()}`,
+        type: "Conversation",
+        date: new Date().toISOString().split("T")[0],
+        content: `Account converted from Aspiring Client Lead (${asp.serviceInterestedIn}). Priority: ${asp.priority || "Normal"}. Notes: ${asp.notes}`
+      },
+      ...(asp.followUpHistory || []).map((f, idx) => ({
+        id: f.id || `TL-FU-${Date.now()}-${idx}`,
+        type: f.method === "Phone Call" ? "Phone Call" : f.method === "WhatsApp" ? "WhatsApp" : "Follow-up",
+        date: f.date,
+        content: `[Follow-Up #${f.attemptNumber}] ${f.notes} (Recorded by ${f.recordedBy})`
+      }))
+    ];
+
     const newClient: Client = {
       id: newClientId,
       firstName,
@@ -360,11 +761,13 @@ export default function App() {
       occupation: "Executive Prospect",
       drive: "Yes",
       tier: "Silver",
-      homeBrand: "CEO Printing Services",
+      homeBrand: asp.clientHome === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle",
+      clientHome: (asp.clientHome as ClientHome) || "CEO Lifestyle",
+      adventist: asp.adventist || "No",
       marketingPermission: "Yes",
       deactivated: false,
       preferredCommunication: (asp.preferredContactMethod || "Phone") as any,
-      lastContactedDate: new Date().toISOString().split("T")[0],
+      lastContactedDate: asp.lastContactDate || asp.dateContacted || new Date().toISOString().split("T")[0],
       contact: {
         phoneNumber: phone || "+1 (876) 555-0000",
         email: email || `${firstName.toLowerCase()}@client.jm`,
@@ -382,11 +785,11 @@ export default function App() {
         husbandName: "",
         children: [],
         pets: "",
-        personalNotes: `Converted from Aspiring Client Lead on ${new Date().toLocaleDateString()}.\nSource: ${asp.sourceOfInquiry}\nInterest: ${asp.serviceInterestedIn}\nNotes: ${asp.notes}`
+        personalNotes: `Converted from Aspiring Client Lead on ${new Date().toLocaleDateString()}.\nSource: ${asp.sourceOfInquiry}\nInterest: ${asp.serviceInterestedIn}\nPriority: ${asp.priority || "Normal"}\nNotes: ${asp.notes}`
       },
       importantDates: [],
       history: {
-        firstOrderDate: new Date().toISOString().split("T")[0],
+        firstOrderDate: asp.dateContacted || new Date().toISOString().split("T")[0],
         lastOrderDate: new Date().toISOString().split("T")[0],
         totalOrders: 0,
         productsPurchased: [asp.serviceInterestedIn],
@@ -409,20 +812,80 @@ export default function App() {
         giftPreferences: []
       },
       reminders: [],
-      timeline: [
-        {
-          id: `TL-${Date.now()}`,
-          type: "Conversation",
-          date: new Date().toISOString().split("T")[0],
-          content: `Account converted from Aspiring Client Lead (${asp.serviceInterestedIn}). Notes: ${asp.notes}`
-        }
-      ]
+      timeline: initialTimeline
     };
 
     saveClients([newClient, ...clients]);
-    setAspiringClients(prev => prev.map(item => item.id === asp.id ? { ...item, status: "Converted to Client" } : item));
+    setAspiringClients(prev => {
+      const updated = prev.map(item => item.id === asp.id ? { ...item, status: "Converted to Client" as const } : item);
+      const activeEnv = getCurrentEnvironment();
+      saveEnvironmentAspiringClients(updated, activeEnv);
+      return updated;
+    });
     setSelectedClientId(newClientId);
     setActiveTab("directory");
+    setDuplicateModalData(null);
+  };
+
+  const executeConversionLinkToExisting = (asp: AspiringClient, targetClient: Client) => {
+    const today = new Date().toISOString().split("T")[0];
+
+    const conversionEvents: TimelineEvent[] = [
+      {
+        id: `TL-LINK-${Date.now()}`,
+        type: "Customer Response",
+        date: today,
+        content: `Linked Aspiring Lead (${asp.serviceInterestedIn}). Source: ${asp.sourceOfInquiry}. Priority: ${asp.priority || "Normal"}. Notes: ${asp.notes}`
+      },
+      ...(asp.followUpHistory || []).map((f, idx) => ({
+        id: f.id || `TL-FU-${Date.now()}-${idx}`,
+        type: f.method === "Phone Call" ? "Phone Call" : f.method === "WhatsApp" ? "WhatsApp" : "Follow-up",
+        date: f.date,
+        content: `[Follow-Up #${f.attemptNumber}] ${f.notes} (Recorded by ${f.recordedBy})`
+      }))
+    ];
+
+    const updatedClient: Client = {
+      ...targetClient,
+      lastContactedDate: asp.lastContactDate || today,
+      clientHome: targetClient.clientHome || asp.clientHome,
+      adventist: targetClient.adventist || asp.adventist,
+      contact: {
+        ...targetClient.contact,
+        phoneNumber: targetClient.contact?.phoneNumber || asp.phoneNumber || targetClient.contact?.phoneNumber,
+        email: targetClient.contact?.email || asp.email || targetClient.contact?.email,
+        instagramUsername: targetClient.contact?.instagramUsername || asp.instagramUsername || targetClient.contact?.instagramUsername
+      },
+      profile: {
+        ...targetClient.profile,
+        personalNotes: `${targetClient.profile?.personalNotes || ""}\n\n[Linked Aspiring Lead (${today})]: ${asp.notes}`.trim()
+      },
+      history: {
+        ...targetClient.history,
+        productsPurchased: Array.from(new Set([...(targetClient.history?.productsPurchased || []), asp.serviceInterestedIn]))
+      },
+      timeline: [...conversionEvents, ...(targetClient.timeline || [])]
+    };
+
+    saveClients(clients.map(c => c.id === targetClient.id ? updatedClient : c));
+    setAspiringClients(prev => {
+      const updated = prev.map(item => item.id === asp.id ? { ...item, status: "Converted to Client" as const } : item);
+      const activeEnv = getCurrentEnvironment();
+      saveEnvironmentAspiringClients(updated, activeEnv);
+      return updated;
+    });
+    setSelectedClientId(targetClient.id);
+    setActiveTab("directory");
+    setDuplicateModalData(null);
+  };
+
+  const handleConvertToClient = (asp: AspiringClient) => {
+    const matches = findMatchingClients(asp, clients);
+    if (matches.length > 0) {
+      setDuplicateModalData({ aspiringClient: asp, matchedClients: matches });
+    } else {
+      executeConversionNewClient(asp);
+    }
   };
   
   // Walkthrough tour state
@@ -456,6 +919,12 @@ export default function App() {
   const [taskEditText, setTaskEditText] = useState("");
   const [taskEditDate, setTaskEditDate] = useState("");
 
+  // Opportunity Follow-Up Logging State
+  const [isLoggingOpportunityFollowUp, setIsLoggingOpportunityFollowUp] = useState(false);
+  const [oppFollowUpMethod, setOppFollowUpMethod] = useState("Phone Call");
+  const [oppFollowUpNotes, setOppFollowUpNotes] = useState("");
+  const [oppFollowUpNextDate, setOppFollowUpNextDate] = useState("");
+
   useEffect(() => {
     if (activeTaskInfo) {
       const client = clients.find(c => c.id === activeTaskInfo.clientId);
@@ -463,12 +932,95 @@ export default function App() {
       if (reminder) {
         setTaskEditText(reminder.task);
         setTaskEditDate(reminder.date);
+        setIsLoggingOpportunityFollowUp(false);
+        setOppFollowUpNotes("");
+        setOppFollowUpNextDate("");
       }
     } else {
       setTaskEditText("");
       setTaskEditDate("");
+      setIsLoggingOpportunityFollowUp(false);
+      setOppFollowUpNotes("");
+      setOppFollowUpNextDate("");
     }
   }, [activeTaskInfo, clients]);
+
+  const handleLogOpportunityFollowUpSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeTaskInfo) return;
+
+    const realToday = new Date().toISOString().split("T")[0];
+
+    const updated = clients.map(c => {
+      if (c.id === activeTaskInfo.clientId) {
+        return {
+          ...c,
+          reminders: c.reminders.map(r => {
+            if (r.id === activeTaskInfo.reminderId) {
+              const currentCount = r.followUpCount || 0;
+              const newCount = Math.min(currentCount + 1, 3);
+              const newRecord: FollowUpRecord = {
+                id: `OPPFU_${Date.now()}`,
+                attemptNumber: newCount,
+                date: realToday,
+                method: oppFollowUpMethod,
+                notes: oppFollowUpNotes.trim() || `Follow-up attempt ${newCount} logged via ${oppFollowUpMethod}.`,
+                recordedBy: "Master Administrator",
+                nextFollowUpDate: oppFollowUpNextDate || r.nextActionDate || r.date
+              };
+
+              const newHistory = [...(r.followUpHistory || []), newRecord];
+              const isFinal = newCount >= 3;
+
+              const newStatus: OpportunityStatus = isFinal ? "Follow Up Required" : "Open";
+
+              return {
+                ...r,
+                followUpCount: newCount,
+                followUpHistory: newHistory,
+                nextActionDate: oppFollowUpNextDate || r.nextActionDate,
+                date: oppFollowUpNextDate || r.date,
+                opportunityStatus: newStatus
+              };
+            }
+            return r;
+          })
+        };
+      }
+      return c;
+    });
+
+    saveClients(updated);
+    setIsLoggingOpportunityFollowUp(false);
+    setOppFollowUpNotes("");
+    setOppFollowUpNextDate("");
+  };
+
+  const handleSetOpportunityResolution = (resolution: "Resolved" | "Converted" | "Closed") => {
+    if (!activeTaskInfo) return;
+
+    const updated = clients.map(c => {
+      if (c.id === activeTaskInfo.clientId) {
+        return {
+          ...c,
+          reminders: c.reminders.map(r => {
+            if (r.id === activeTaskInfo.reminderId) {
+              return {
+                ...r,
+                completed: true,
+                completedAt: new Date().toISOString(),
+                opportunityStatus: resolution
+              };
+            }
+            return r;
+          })
+        };
+      }
+      return c;
+    });
+
+    saveClients(updated);
+  };
 
   const handleUpdateTaskDetails = () => {
     if (!activeTaskInfo) return;
@@ -498,7 +1050,12 @@ export default function App() {
           ...c,
           reminders: c.reminders.map(r => {
             if (r.id === activeTaskInfo.reminderId) {
-              return { ...r, completed: !r.completed };
+              const newCompleted = !r.completed;
+              return { 
+                ...r, 
+                completed: newCompleted,
+                completedAt: newCompleted ? new Date().toISOString() : undefined 
+              };
             }
             return r;
           })
@@ -528,84 +1085,92 @@ export default function App() {
 
   // Initialize clients from localStorage or initial dummy data
   useEffect(() => {
-    const stored = localStorage.getItem(LOCAL_STORAGE_KEY) || localStorage.getItem("ceo_client_management_data");
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length >= INITIAL_CLIENTS.length) {
-          const synced = parsed.map((c: Client) => syncFamilyBirthdayReminders(c, settings));
-          setClients(synced);
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(synced));
-          localStorage.setItem("ceo_client_management_data", JSON.stringify(synced));
-        } else {
-          // Upgrade or populate with full 45 profiles
+    if (localStorage.getItem("ceo_clients_cleared") === "true") {
+      setClients([]);
+    } else {
+      const stored = localStorage.getItem(LOCAL_STORAGE_KEY) || localStorage.getItem("ceo_client_management_data");
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length >= INITIAL_CLIENTS.length) {
+            const synced = parsed.map((c: Client) => syncFamilyBirthdayReminders(c, settings));
+            setClients(synced);
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(synced));
+            localStorage.setItem("ceo_client_management_data", JSON.stringify(synced));
+          } else {
+            // Upgrade or populate with full 45 profiles
+            const synced = INITIAL_CLIENTS.map(c => syncFamilyBirthdayReminders(c, settings));
+            setClients(synced);
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(synced));
+            localStorage.setItem("ceo_client_management_data", JSON.stringify(synced));
+          }
+        } catch (err) {
+          console.error("Failed to parse stored clients, using fallback mock dataset:", err);
           const synced = INITIAL_CLIENTS.map(c => syncFamilyBirthdayReminders(c, settings));
           setClients(synced);
           localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(synced));
           localStorage.setItem("ceo_client_management_data", JSON.stringify(synced));
         }
-      } catch (err) {
-        console.error("Failed to parse stored clients, using fallback mock dataset:", err);
+      } else {
         const synced = INITIAL_CLIENTS.map(c => syncFamilyBirthdayReminders(c, settings));
         setClients(synced);
         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(synced));
         localStorage.setItem("ceo_client_management_data", JSON.stringify(synced));
       }
-    } else {
-      const synced = INITIAL_CLIENTS.map(c => syncFamilyBirthdayReminders(c, settings));
-      setClients(synced);
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(synced));
-      localStorage.setItem("ceo_client_management_data", JSON.stringify(synced));
     }
 
     // Initialize Luxe Inventory
-    const storedInv = localStorage.getItem("luxe_book_inventory");
-    if (storedInv) {
-      try {
-        const parsed = JSON.parse(storedInv);
-        if (Array.isArray(parsed) && parsed.length >= INITIAL_INVENTORY.length) {
-          const dummyIds = ["LUX-001", "LUX-002", "LUX-003", "LUX-004", "LUX-005", "LUX-006"];
-          const filtered = parsed.filter((item: LuxeBookInventoryItem) => !dummyIds.includes(item.id));
-          
-          const seenIds = new Set<string>();
-          const deduped: LuxeBookInventoryItem[] = [];
-          filtered.forEach((item: LuxeBookInventoryItem) => {
-            if (!item.id) return;
-            if (!seenIds.has(item.id)) {
-              seenIds.add(item.id);
-              deduped.push(item);
-            } else {
-              let newId = item.id;
-              while (seenIds.has(newId)) {
-                newId = `LUX-${Math.floor(100 + Math.random() * 900)}`;
+    if (localStorage.getItem("ceo_book_inventory_cleared") === "true") {
+      setInventory([]);
+    } else {
+      const storedInv = localStorage.getItem("luxe_book_inventory");
+      if (storedInv) {
+        try {
+          const parsed = JSON.parse(storedInv);
+          if (Array.isArray(parsed) && parsed.length >= INITIAL_INVENTORY.length) {
+            const dummyIds = ["LUX-001", "LUX-002", "LUX-003", "LUX-004", "LUX-005", "LUX-006"];
+            const filtered = parsed.filter((item: LuxeBookInventoryItem) => !dummyIds.includes(item.id));
+            
+            const seenIds = new Set<string>();
+            const deduped: LuxeBookInventoryItem[] = [];
+            filtered.forEach((item: LuxeBookInventoryItem) => {
+              if (!item.id) return;
+              if (!seenIds.has(item.id)) {
+                seenIds.add(item.id);
+                deduped.push(item);
+              } else {
+                let newId = item.id;
+                while (seenIds.has(newId)) {
+                  newId = `LUX-${Math.floor(100 + Math.random() * 900)}`;
+                }
+                seenIds.add(newId);
+                deduped.push({ ...item, id: newId });
               }
-              seenIds.add(newId);
-              deduped.push({ ...item, id: newId });
-            }
-          });
+            });
 
-          if (deduped.length >= INITIAL_INVENTORY.length) {
-            setInventory(deduped);
+            if (deduped.length >= INITIAL_INVENTORY.length) {
+              setInventory(deduped);
+            } else {
+              setInventory(INITIAL_INVENTORY);
+              localStorage.setItem("luxe_book_inventory", JSON.stringify(INITIAL_INVENTORY));
+            }
           } else {
             setInventory(INITIAL_INVENTORY);
             localStorage.setItem("luxe_book_inventory", JSON.stringify(INITIAL_INVENTORY));
           }
-        } else {
+        } catch (err) {
+          console.error("Failed to parse stored inventory, using fallback:", err);
           setInventory(INITIAL_INVENTORY);
           localStorage.setItem("luxe_book_inventory", JSON.stringify(INITIAL_INVENTORY));
         }
-      } catch (err) {
-        console.error("Failed to parse stored inventory, using fallback:", err);
+      } else {
         setInventory(INITIAL_INVENTORY);
         localStorage.setItem("luxe_book_inventory", JSON.stringify(INITIAL_INVENTORY));
       }
-    } else {
-      setInventory(INITIAL_INVENTORY);
-      localStorage.setItem("luxe_book_inventory", JSON.stringify(INITIAL_INVENTORY));
     }
   }, []);
 
-  // Listen for environment changes (LIVE vs STRESS_TEST vs Reset)
+  // Listen for database changes and reloads
   useEffect(() => {
     const handleEnvChange = () => {
       const activeEnv = getCurrentEnvironment();
@@ -635,8 +1200,14 @@ export default function App() {
 
   // Save Luxe Inventory helper
   const saveInventory = (updatedList: LuxeBookInventoryItem[]) => {
+    if (updatedList.length === 0) {
+      localStorage.setItem("ceo_book_inventory_cleared", "true");
+    } else {
+      localStorage.removeItem("ceo_book_inventory_cleared");
+    }
     setInventory(updatedList);
     localStorage.setItem("luxe_book_inventory", JSON.stringify(updatedList));
+    localStorage.setItem("ceo_luxe_book_inventory", JSON.stringify(updatedList));
     saveEnvironmentInventory(updatedList);
   };
 
@@ -645,6 +1216,7 @@ export default function App() {
     clients?: Client[];
     aspiringClients?: AspiringClient[];
     inventory?: LuxeBookInventoryItem[];
+    operationsOrders?: OperationsOrder[];
     settings?: SystemSettings;
     users?: any[];
     masterUsername?: string;
@@ -665,6 +1237,11 @@ export default function App() {
     }
     if (backupData.inventory) {
       saveInventory(backupData.inventory);
+    }
+    if (backupData.operationsOrders) {
+      setOperationsOrders(backupData.operationsOrders);
+      localStorage.setItem("ceo_operations_orders", JSON.stringify(backupData.operationsOrders));
+      saveEnvironmentOperationsOrders(backupData.operationsOrders, getCurrentEnvironment());
     }
     if (backupData.settings) {
       handleUpdateSettings(backupData.settings);
@@ -700,10 +1277,20 @@ export default function App() {
 
   // Save clients to localStorage whenever changed
   const saveClients = (updatedList: Client[]) => {
+    if (updatedList.length === 0) {
+      localStorage.setItem("ceo_clients_cleared", "true");
+    } else {
+      localStorage.removeItem("ceo_clients_cleared");
+    }
     setClients(updatedList);
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedList));
     localStorage.setItem("ceo_client_management_data", JSON.stringify(updatedList));
     saveEnvironmentClients(updatedList);
+  };
+
+  const handleToggleClientCheckIn = (clientId: string, checkedIn: boolean) => {
+    const updated = clients.map(c => c.id === clientId ? { ...c, checkedIn } : c);
+    saveClients(updated);
   };
 
   // Select client and force directory tab open
@@ -729,9 +1316,16 @@ export default function App() {
 
   // Save / Update a client
   const handleSaveClient = (savedClient: Client) => {
-    const syncedClient = syncFamilyBirthdayReminders(savedClient, settings);
+    let clientToSave = savedClient;
+    // CRITICAL-006: Client ID is immutable after creation.
+    // If editing an existing active client, enforce authoritative client id to prevent silent mutation or identity duplication.
+    if (activeClient && isEditing && clientToSave.id !== activeClient.id) {
+      clientToSave = { ...clientToSave, id: activeClient.id };
+    }
+    const syncedClient = syncFamilyBirthdayReminders(clientToSave, settings);
     let updatedList = [...clients];
     const index = clients.findIndex(c => c.id === syncedClient.id);
+    const oldClient = index !== -1 ? clients[index] : null;
     
     if (index !== -1) {
       // Overwrite/update existing
@@ -745,10 +1339,28 @@ export default function App() {
     setSelectedClientId(syncedClient.id);
     setIsEditing(false);
     setIsAdding(false);
+
+    if (oldClient) {
+      const tierChanged = oldClient.tier !== syncedClient.tier;
+      setUndoAction({
+        id: `undo_cli_${Date.now()}`,
+        message: tierChanged 
+          ? `Client ${syncedClient.firstName} ${syncedClient.lastName} tier updated to ${syncedClient.tier}.`
+          : `Client profile for ${syncedClient.firstName} ${syncedClient.lastName} saved.`,
+        onUndo: () => {
+          setClients(prev => {
+            const restored = prev.map(c => c.id === oldClient.id ? oldClient : c);
+            saveClients(restored);
+            return restored;
+          });
+        }
+      });
+    }
   };
 
   // Deactivate a client profile (no permanent deletion to protect historical records)
   const handleDeleteClient = (clientId: string) => {
+    const targetClient = clients.find(c => c.id === clientId);
     const updatedList = clients.map(c => {
       if (c.id === clientId) {
         return { ...c, deactivated: true };
@@ -759,6 +1371,20 @@ export default function App() {
     setSelectedClientId(null);
     setIsEditing(false);
     setIsAdding(false);
+
+    if (targetClient) {
+      setUndoAction({
+        id: `undo_del_cli_${Date.now()}`,
+        message: `Client ${targetClient.firstName} ${targetClient.lastName} deactivated.`,
+        onUndo: () => {
+          setClients(prev => {
+            const restored = prev.map(c => c.id === clientId ? { ...targetClient, deactivated: false } : c);
+            saveClients(restored);
+            return restored;
+          });
+        }
+      });
+    }
   };
 
   // Import clients from XLSX Spreadsheet
@@ -766,37 +1392,33 @@ export default function App() {
     let updatedList = [...clients];
     
     importedList.forEach(imported => {
-      const checkId = imported.id.trim().toLowerCase();
-      const checkName = `${imported.firstName.trim()} ${imported.lastName.trim()}`.toLowerCase();
-      const checkPhone = imported.contact.phoneNumber.trim().replace(/\D/g, "");
-      const checkEmail = imported.contact.email.trim().toLowerCase();
+      const checkId = (imported.id || "").trim().toLowerCase();
+      const checkName = `${(imported.firstName || "").trim()} ${(imported.lastName || "").trim()}`.toLowerCase();
+      const checkPhone = (imported.contact?.phoneNumber || "").trim().replace(/\D/g, "");
+      const checkEmail = (imported.contact?.email || "").trim().toLowerCase();
 
       // Find index by ID, Name, Phone, or Email to prevent any duplicate creation
       const index = updatedList.findIndex(existing => {
-        const existingId = existing.id.toLowerCase();
-        const existingName = `${existing.firstName.trim()} ${existing.lastName.trim()}`.toLowerCase();
-        const existingPhone = existing.contact.phoneNumber.trim().replace(/\D/g, "");
-        const existingEmail = existing.contact.email.trim().toLowerCase();
+        const existingId = (existing.id || "").toLowerCase();
+        const existingName = `${(existing.firstName || "").trim()} ${(existing.lastName || "").trim()}`.toLowerCase();
+        const existingPhone = (existing.contact?.phoneNumber || "").trim().replace(/\D/g, "");
+        const existingEmail = (existing.contact?.email || "").trim().toLowerCase();
 
         return (
-          existingId === checkId ||
-          existingName === checkName ||
-          (checkPhone && existingPhone === checkPhone) ||
-          (checkEmail && existingEmail === checkEmail)
+          (existingId && checkId && existingId === checkId) ||
+          (existingName && checkName && existingName === checkName) ||
+          (checkPhone && existingPhone && existingPhone === checkPhone) ||
+          (checkEmail && existingEmail && existingEmail === checkEmail)
         );
       });
 
       if (index !== -1) {
-        // Merge timeline history if possible, keep old reminders or append
+        // CRITICAL-002 FIX: Safe deep merge protecting existing CRM profile, commitments, notes, and collections
         const existing = updatedList[index];
-        updatedList[index] = {
-          ...imported,
-          id: existing.id, // Preserve existing ID
-          timeline: [...imported.timeline, ...existing.timeline].slice(0, 15),
-          reminders: [...imported.reminders, ...existing.reminders]
-        };
+        const mergedClient = safeMergeClient(existing, imported);
+        updatedList[index] = syncFamilyBirthdayReminders(mergedClient, settings);
       } else {
-        updatedList.push(imported);
+        updatedList.push(syncFamilyBirthdayReminders(imported, settings));
       }
     });
 
@@ -836,7 +1458,7 @@ export default function App() {
       `}</style>
 
       {/* Main Top Header Navigation */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200/70 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.06)]">
+      <header className="sticky top-0 z-50 glass-header border-b border-slate-200/80 shadow-[0_2px_10px_-2px_rgba(0,0,0,0.04)]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2">
           
           {/* Left Executive Logo Wordmark */}
@@ -849,8 +1471,8 @@ export default function App() {
             </div>
           </div>
 
-          {/* Middle Navigation Tabs (3D-Style Premium Icons & Exact Order) */}
-          <nav className="hidden md:flex items-center gap-1 bg-slate-100/90 p-1 rounded-2xl border border-slate-200/60 shadow-inner">
+          {/* Middle Navigation Tabs (Sleek Apple-inspired Pills) */}
+          <nav className="hidden md:flex items-center gap-1 bg-slate-100/80 p-1 rounded-2xl border border-slate-200/60 shadow-inner">
             {/* 1. Dashboard */}
             <button
               onClick={() => {
@@ -858,16 +1480,16 @@ export default function App() {
                 setIsAdding(false);
                 setIsEditing(false);
               }}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-200 cursor-pointer ${
                 activeTab === "dashboard" 
-                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
-                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
+                  ? "bg-white text-slate-900 font-bold shadow-[0_1px_3px_rgba(0,0,0,0.08)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
               }`}
             >
               <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
                 activeTab === "dashboard"
-                  ? "bg-gradient-to-b from-indigo-500 to-indigo-600 text-white shadow-[0_2px_4px_rgba(99,102,241,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
-                  : "bg-gradient-to-b from-white to-slate-100 text-indigo-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "bg-white text-indigo-600 border border-slate-200/80 shadow-2xs"
               }`}>
                 <LayoutDashboard className="w-3.5 h-3.5" />
               </div>
@@ -881,154 +1503,131 @@ export default function App() {
                 setIsAdding(false);
                 setIsEditing(false);
               }}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-200 cursor-pointer ${
                 activeTab === "operations" 
-                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
-                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
+                  ? "bg-white text-slate-900 font-bold shadow-[0_1px_3px_rgba(0,0,0,0.08)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
               }`}
             >
               <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
                 activeTab === "operations"
-                  ? "bg-gradient-to-b from-emerald-500 to-emerald-600 text-white shadow-[0_2px_4px_rgba(16,185,129,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
-                  : "bg-gradient-to-b from-white to-slate-100 text-emerald-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+                  ? "bg-emerald-600 text-white shadow-xs"
+                  : "bg-white text-emerald-600 border border-slate-200/80 shadow-2xs"
               }`}>
                 <ClipboardList className="w-3.5 h-3.5" />
               </div>
               Operations Board
             </button>
 
-            {/* 3. Client Directory */}
-            <button
-              onClick={() => {
-                setActiveTab("directory");
-                setIsAdding(false);
-                setIsEditing(false);
-              }}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
-                activeTab === "directory" 
-                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
-                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
-              }`}
-            >
-              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
-                activeTab === "directory"
-                  ? "bg-gradient-to-b from-blue-500 to-blue-600 text-white shadow-[0_2px_4px_rgba(59,130,246,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
-                  : "bg-gradient-to-b from-white to-slate-100 text-blue-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
-              }`}>
-                <Users className="w-3.5 h-3.5" />
-              </div>
-              Client Directory
-            </button>
-
-            {/* 4. Production Tools */}
-            <button
-              onClick={() => {
-                setActiveTab("production");
-                setIsAdding(false);
-                setIsEditing(false);
-              }}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
-                activeTab === "production" 
-                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
-                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
-              }`}
-            >
-              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
-                activeTab === "production"
-                  ? "bg-gradient-to-b from-amber-500 to-amber-600 text-white shadow-[0_2px_4px_rgba(245,158,11,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
-                  : "bg-gradient-to-b from-white to-slate-100 text-amber-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
-              }`}>
-                <Wrench className="w-3.5 h-3.5" />
-              </div>
-              Production Tools
-            </button>
-
-            {/* 5. Luxe Inventory */}
-            <button
-              onClick={() => {
-                setActiveTab("inventory");
-                setIsAdding(false);
-                setIsEditing(false);
-              }}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
-                activeTab === "inventory" 
-                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
-                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
-              }`}
-            >
-              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
-                activeTab === "inventory"
-                  ? "bg-gradient-to-b from-purple-500 to-purple-600 text-white shadow-[0_2px_4px_rgba(168,85,247,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
-                  : "bg-gradient-to-b from-white to-slate-100 text-purple-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
-              }`}>
-                <BookOpen className="w-3.5 h-3.5" />
-              </div>
-              Luxe Inventory
-            </button>
-
-            {/* 6. Milestone Hub */}
-            <button
-              onClick={() => {
-                setActiveTab("calendar");
-                setIsAdding(false);
-                setIsEditing(false);
-              }}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
-                activeTab === "calendar" 
-                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
-                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
-              }`}
-            >
-              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
-                activeTab === "calendar"
-                  ? "bg-gradient-to-b from-rose-500 to-rose-600 text-white shadow-[0_2px_4px_rgba(244,63,94,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
-                  : "bg-gradient-to-b from-white to-slate-100 text-rose-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
-              }`}>
-                <Calendar className="w-3.5 h-3.5" />
-              </div>
-              Milestone Hub
-            </button>
-
-            {/* 7. Aspiring Clients */}
+            {/* 3. Aspiring Clients */}
             <button
               onClick={() => {
                 setActiveTab("aspiring");
                 setIsAdding(false);
                 setIsEditing(false);
               }}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-200 cursor-pointer ${
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-200 cursor-pointer ${
                 activeTab === "aspiring" 
-                  ? "bg-white text-slate-950 shadow-[0_2px_6px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-slate-200/80" 
-                  : "text-slate-600 hover:text-slate-950 hover:bg-slate-200/50"
+                  ? "bg-white text-slate-900 font-bold shadow-[0_1px_3px_rgba(0,0,0,0.08)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
               }`}
             >
               <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
                 activeTab === "aspiring"
-                  ? "bg-gradient-to-b from-pink-500 to-pink-600 text-white shadow-[0_2px_4px_rgba(236,72,153,0.4),inset_0_1px_0_rgba(255,255,255,0.3)]"
-                  : "bg-gradient-to-b from-white to-slate-100 text-pink-600 border border-slate-200/80 shadow-[0_1px_2px_rgba(0,0,0,0.05)]"
+                  ? "bg-pink-600 text-white shadow-xs"
+                  : "bg-white text-pink-600 border border-slate-200/80 shadow-2xs"
               }`}>
                 <UserPlus className="w-3.5 h-3.5" />
               </div>
               Aspiring Clients
             </button>
+
+            {/* 4. Client Directory */}
+            <button
+              onClick={() => {
+                setActiveTab("directory");
+                setIsAdding(false);
+                setIsEditing(false);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-200 cursor-pointer ${
+                activeTab === "directory" 
+                  ? "bg-white text-slate-900 font-bold shadow-[0_1px_3px_rgba(0,0,0,0.08)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
+              }`}
+            >
+              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                activeTab === "directory"
+                  ? "bg-blue-600 text-white shadow-xs"
+                  : "bg-white text-blue-600 border border-slate-200/80 shadow-2xs"
+              }`}>
+                <Users className="w-3.5 h-3.5" />
+              </div>
+              Client Directory
+            </button>
+
+            {/* 5. Production Tools */}
+            <button
+              onClick={() => {
+                setActiveTab("production");
+                setIsAdding(false);
+                setIsEditing(false);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-200 cursor-pointer ${
+                activeTab === "production" 
+                  ? "bg-white text-slate-900 font-bold shadow-[0_1px_3px_rgba(0,0,0,0.08)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
+              }`}
+            >
+              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                activeTab === "production"
+                  ? "bg-amber-600 text-white shadow-xs"
+                  : "bg-white text-amber-600 border border-slate-200/80 shadow-2xs"
+              }`}>
+                <Wrench className="w-3.5 h-3.5" />
+              </div>
+              Production Tools
+            </button>
+
+            {/* 6. Inventory */}
+            <button
+              onClick={() => {
+                setActiveTab("inventory");
+                setIsAdding(false);
+                setIsEditing(false);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-xl transition-all duration-200 cursor-pointer ${
+                activeTab === "inventory" 
+                  ? "bg-white text-slate-900 font-bold shadow-[0_1px_3px_rgba(0,0,0,0.08)] border border-slate-200/80" 
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
+              }`}
+            >
+              <div className={`p-1 rounded-lg flex items-center justify-center transition-all ${
+                activeTab === "inventory"
+                  ? "bg-purple-600 text-white shadow-xs"
+                  : "bg-white text-purple-600 border border-slate-200/80 shadow-2xs"
+              }`}>
+                <Archive className="w-3.5 h-3.5" />
+              </div>
+              Inventory
+            </button>
           </nav>
 
           {/* Right Status Indicator & Settings dropdown */}
-          <div className="flex items-center gap-2.5 relative">
-            
+          <div className="flex items-center gap-2 relative">
+
             {/* Settings Dropdown Button */}
             <div className="relative">
               <button
                 onClick={() => setIsSettingsOpen(!isSettingsOpen)}
                 className={`p-2 rounded-xl border transition-all flex items-center gap-1.5 ${
                   isSettingsOpen || activeTab === "excel" || activeTab === "branding" || activeTab === "users"
-                    ? "bg-slate-950 border-slate-950 text-white"
-                    : "bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-200/40"
+                    ? "bg-slate-900 border-slate-900 text-white shadow-xs"
+                    : "bg-slate-100 hover:bg-slate-200/70 text-slate-600 border-slate-200/60"
                 }`}
                 title="Settings Control Center"
               >
                 <Settings className="w-4 h-4" />
-                <span className="hidden md:inline text-xs font-bold">Settings</span>
+                <span className="hidden md:inline text-xs font-semibold">Settings</span>
               </button>
 
               {isSettingsOpen && (
@@ -1040,10 +1639,44 @@ export default function App() {
                   />
                   
                   {/* Dropdown Content */}
-                  <div className="absolute right-0 mt-2 w-48 bg-white border border-slate-200/80 rounded-2xl shadow-xl py-2 z-50 text-left animate-fade-in">
-                    <div className="px-3.5 py-1.5 border-b border-slate-100 mb-1">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Administration</span>
+                  <div className="absolute right-0 mt-2 w-52 bg-white border border-slate-200/80 rounded-2xl shadow-xl py-2 z-50 text-left animate-fade-in">
+                    <div className="px-3.5 py-1.5 border-b border-slate-100 mb-1 flex items-center justify-between">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block font-mono">Tools & Administration</span>
                     </div>
+
+                    {/* Open CMTs Quick Link in Settings */}
+                    <button
+                      onClick={() => {
+                        setIsSettingsOpen(false);
+                        setIsAllOpenCmtsModalOpen(true);
+                      }}
+                      className="w-full px-3.5 py-2 my-1 bg-amber-50 hover:bg-amber-100/90 border-y border-amber-200/80 text-amber-900 flex items-center justify-between transition-all cursor-pointer text-xs font-bold"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <HeartHandshake className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>Open CMTs</span>
+                      </div>
+                      <span className="bg-amber-200 text-amber-950 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+                        {totalOpenCmtsCount}
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setActiveTab("calendar");
+                        setIsAdding(false);
+                        setIsEditing(false);
+                        setIsSettingsOpen(false);
+                      }}
+                      className={`flex items-center gap-2.5 w-full px-4 py-2.5 text-xs font-semibold transition-all ${
+                        activeTab === "calendar"
+                          ? "bg-rose-50 text-rose-800 font-bold border-l-2 border-rose-600"
+                          : "text-slate-600 hover:text-slate-950 hover:bg-slate-50"
+                      }`}
+                    >
+                      <Calendar className="w-3.5 h-3.5 text-rose-600" />
+                      Milestone Hub
+                    </button>
                     
                     <button
                       onClick={() => {
@@ -1054,11 +1687,11 @@ export default function App() {
                       }}
                       className={`flex items-center gap-2.5 w-full px-4 py-2.5 text-xs font-semibold transition-all ${
                         activeTab === "excel"
-                          ? "bg-rose-50 text-rose-800 font-bold border-l-2 border-rose-600"
+                          ? "bg-indigo-50 text-indigo-800 font-bold border-l-2 border-indigo-600"
                           : "text-slate-600 hover:text-slate-950 hover:bg-slate-50"
                       }`}
                     >
-                      <FileSpreadsheet className="w-3.5 h-3.5 text-rose-700" />
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-indigo-700" />
                       Excel Exchange
                     </button>
                     
@@ -1138,16 +1771,16 @@ export default function App() {
           </button>
           <button
             onClick={() => {
-              setActiveTab("directory");
+              setActiveTab("operations");
               setIsAdding(false);
               setIsEditing(false);
             }}
             className={`flex flex-col items-center gap-0.5 p-1 text-[10px] font-bold ${
-              activeTab === "directory" ? "text-neutral-900" : "text-neutral-400"
+              activeTab === "operations" ? "text-neutral-900" : "text-neutral-400"
             }`}
           >
-            <Users className="w-4 h-4" />
-            Directory
+            <ClipboardList className="w-4 h-4" />
+            Ops Board
           </button>
           <button
             onClick={() => {
@@ -1164,16 +1797,16 @@ export default function App() {
           </button>
           <button
             onClick={() => {
-              setActiveTab("calendar");
+              setActiveTab("directory");
               setIsAdding(false);
               setIsEditing(false);
             }}
             className={`flex flex-col items-center gap-0.5 p-1 text-[10px] font-bold ${
-              activeTab === "calendar" ? "text-neutral-900" : "text-neutral-400"
+              activeTab === "directory" ? "text-neutral-900" : "text-neutral-400"
             }`}
           >
-            <Calendar className="w-4 h-4" />
-            Milestone Hub
+            <Users className="w-4 h-4" />
+            Directory
           </button>
           <button
             onClick={() => {
@@ -1185,7 +1818,7 @@ export default function App() {
               activeTab === "inventory" ? "text-neutral-900" : "text-neutral-400"
             }`}
           >
-            <BookOpen className="w-4 h-4" />
+            <Archive className="w-4 h-4" />
             Inventory
           </button>
           <button
@@ -1205,38 +1838,32 @@ export default function App() {
       </header>
 
       {/* Main Page Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10 min-w-0">
         
         {/* Phase Two - Consistent User Identity Header */}
         <div className="text-left pb-6 mb-8 border-b border-slate-200/20 animate-fade-in">
           <div className="flex flex-col md:flex-row justify-between items-start gap-6">
             {/* Left Column: User Identity, Page Title & Description */}
-            <div className="space-y-1.5 flex-1">
+            <div className="space-y-1.5 flex-1 min-w-0">
               <div className="flex flex-wrap items-center gap-2.5 mb-2">
                 <span className="text-xs sm:text-sm font-black uppercase tracking-widest text-emerald-400 block drop-shadow-sm font-mono leading-none">
                   {userRole === "Staff" ? "Staff User" : userRole}
                 </span>
-                <div className="flex items-center gap-1.5 bg-slate-900/50 backdrop-blur-md px-2.5 py-1 rounded border border-slate-700/50">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] font-mono tracking-wider uppercase text-slate-300">
-                    System Active
-                  </span>
-                </div>
               </div>
 
-              <h1 className="text-3xl md:text-4xl font-normal tracking-tight text-white drop-shadow-sm">
+              <h1 className="text-3xl md:text-4xl font-normal tracking-tight text-white drop-shadow-sm break-words">
                 {activeTab === "dashboard" && "Client Watchtower"}
                 {activeTab === "operations" && "Operations Board & Production Management"}
                 {activeTab === "directory" && (isAdding ? "Create Client Profile" : isEditing ? "Modify Client Profile" : "Client Directory")}
                 {activeTab === "aspiring" && "Aspiring Clients & Lead Management"}
                 {activeTab === "excel" && "Excel Exchange"}
                 {activeTab === "calendar" && "Milestone Calendar"}
-                {activeTab === "inventory" && "Librarium Luxe Inventory"}
+                {activeTab === "inventory" && "Inventory"}
                 {activeTab === "production" && "Production Tools Workspace"}
                 {activeTab === "branding" && "Centralized System Settings"}
                 {activeTab === "users" && "User Access & Governance"}
               </h1>
-              <p className="text-slate-300 text-xs md:text-sm leading-relaxed max-w-2xl font-medium pt-1">
+              <p className="text-slate-300 text-xs md:text-sm leading-relaxed max-w-2xl font-medium pt-1 break-words">
                 {activeTab === "dashboard" && `Welcome, ${userFullName}. Let's look at who needs your personal attention today to foster authentic, high-value client experiences.`}
                 {activeTab === "operations" && "Real-time production workflow manager tracking active customer orders from deposit confirmation through artwork, production, quality control, and delivery."}
                 {activeTab === "directory" && "A centralized database for managing client relationships, profiles, history, important dates, and lifestyle touchpoints."}
@@ -1254,10 +1881,6 @@ export default function App() {
             <SystemReferenceClock 
               clientsCount={clients.length}
               showDirectoryStatusWidgets={activeTab === "directory"}
-              onOpenEnvironmentManagement={() => {
-                setActiveTab("branding");
-                setIsSettingsOpen(false);
-              }}
             />
           </div>
         </div>
@@ -1284,9 +1907,13 @@ export default function App() {
           <OperationsHub 
             operationsOrders={operationsOrders}
             clients={clients}
+            inventory={inventory}
             onSaveOrder={handleSaveOperationsOrder}
             onDeleteOrder={handleDeleteOperationsOrder}
             onNavigateToTab={(tab) => setActiveTab(tab as any)}
+            onNavigateToClient={handleSelectClient}
+            settings={settings}
+            onUpdateSettings={handleUpdateSettings}
           />
         )}
 
@@ -1319,6 +1946,7 @@ export default function App() {
                   onSelectClient={setSelectedClientId}
                   onAddNewClient={handleAddNewClientTrigger}
                   onDeleteClient={handleDeleteClient}
+                  onToggleCheckIn={handleToggleClientCheckIn}
                 />
               </div>
 
@@ -1358,6 +1986,7 @@ export default function App() {
                 ) : activeClient ? (
                   <ClientDetail 
                     customer={activeClient}
+                    operationsOrders={operationsOrders}
                     onEdit={handleEditClientTrigger}
                     onDelete={handleDeleteClient}
                     onUpdateCustomer={handleSaveClient}
@@ -1407,12 +2036,14 @@ export default function App() {
           />
         )}
 
-        {/* Tab 5: Luxe Inventory */}
+        {/* Tab 5: Inventory Hub (Librarium Luxe, Regular Goods, Fulfillment Materials) */}
         {activeTab === "inventory" && (
-          <LuxeInventory 
+          <InventoryHub 
             inventory={inventory}
             onUpdateInventory={saveInventory}
             settings={settings}
+            onUpdateSettings={(newSettings) => setSettings(newSettings)}
+            operationsOrders={operationsOrders}
           />
         )}
 
@@ -1421,38 +2052,59 @@ export default function App() {
           <ProductionTools 
             settings={settings}
             inventory={inventory}
+            onUpdateSettings={handleUpdateSettings}
           />
         )}
 
         {/* Tab 6: Centralized Settings */}
         {activeTab === "branding" && (
-          <BrandingSettings 
-            appBg={appBg}
-            authBg={authBg}
-            onUpdateAppBg={handleUpdateAppBg}
-            onUpdateAuthBg={handleUpdateAuthBg}
-            onResetAppBg={handleResetAppBg}
-            onResetAuthBg={handleResetAuthBg}
-            defaultBg={spaceBg}
-            settings={settings}
-            onUpdateSettings={handleUpdateSettings}
-            userRole={userRole}
-            userFullName={userFullName}
-            onRestoreBackup={handleRestoreBackup}
-            onStartTour={handleStartTour}
-            onNavigateToTab={setActiveTab}
-            clients={clients}
-            onUpdateClients={saveClients}
-            onNavigateToClient={handleSelectClient}
-          />
+          userRole === "Master Administrator" ? (
+            <BrandingSettings 
+              appBg={appBg}
+              authBg={authBg}
+              onUpdateAppBg={handleUpdateAppBg}
+              onUpdateAuthBg={handleUpdateAuthBg}
+              onResetAppBg={handleResetAppBg}
+              onResetAuthBg={handleResetAuthBg}
+              defaultBg={spaceBg}
+              settings={settings}
+              onUpdateSettings={handleUpdateSettings}
+              userRole={userRole}
+              userFullName={userFullName}
+              onRestoreBackup={handleRestoreBackup}
+              onStartTour={handleStartTour}
+              onNavigateToTab={setActiveTab}
+              clients={clients}
+              onUpdateClients={saveClients}
+              onNavigateToClient={handleSelectClient}
+              aspiringClients={aspiringClients}
+              onUpdateAspiringClients={saveAspiringClients}
+              inventory={inventory}
+              onUpdateInventory={saveInventory}
+            />
+          ) : (
+            <div className="max-w-2xl mx-auto my-12 p-8 bg-white/90 border border-slate-200 rounded-3xl shadow-xl text-center space-y-4">
+              <Shield className="w-12 h-12 text-rose-500 mx-auto" />
+              <h3 className="text-lg font-bold text-slate-900">Access Restricted</h3>
+              <p className="text-sm text-slate-600">Master Administrator privileges are required to access System Settings.</p>
+            </div>
+          )
         )}
 
         {/* Tab 7: User Access & Governance */}
-        {activeTab === "users" && userRole === "Master Administrator" && (
-          <UserManagement 
-            onUpdateMasterCredentials={handleUpdateMasterCredentials}
-            masterUsername={masterUsername}
-          />
+        {activeTab === "users" && (
+          userRole === "Master Administrator" ? (
+            <UserManagement 
+              onUpdateMasterCredentials={handleUpdateMasterCredentials}
+              masterUsername={masterUsername}
+            />
+          ) : (
+            <div className="max-w-2xl mx-auto my-12 p-8 bg-white/90 border border-slate-200 rounded-3xl shadow-xl text-center space-y-4">
+              <Shield className="w-12 h-12 text-rose-500 mx-auto" />
+              <h3 className="text-lg font-bold text-slate-900">Access Restricted</h3>
+              <p className="text-sm text-slate-600">Master Administrator privileges are required to access User Governance.</p>
+            </div>
+          )
         )}
 
       </main>
@@ -1476,94 +2128,363 @@ export default function App() {
         </div>
       </footer>
 
-      {/* TASK DETAILS MODAL */}
+      {/* TASK / OPPORTUNITY DETAILS MODAL */}
       {activeTaskInfo && (() => {
         const client = clients.find(c => c.id === activeTaskInfo.clientId);
         const reminder = client?.reminders.find(r => r.id === activeTaskInfo.reminderId);
         if (!client || !reminder) return null;
 
+        const isAdvanceOpportunity = reminder.milestone?.triggerType === "advance_opportunity";
+        const followUpCount = reminder.followUpCount || 0;
+        const history = reminder.followUpHistory || [];
+        const isResolved = reminder.completed || reminder.opportunityStatus === "Resolved" || reminder.opportunityStatus === "Converted" || reminder.opportunityStatus === "Closed";
+        
+        // Date evaluation
+        const currentActionDate = reminder.nextActionDate || reminder.date;
+        const dateState = getFollowUpActionState(currentActionDate, isResolved, reminder.opportunityStatus);
+
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50 backdrop-blur-sm animate-fade-in">
-            <div className="bg-white rounded-3xl border border-slate-100 shadow-2xl max-w-md w-full p-6 space-y-4 text-left relative">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50 backdrop-blur-sm animate-fade-in overflow-y-auto">
+            <div className="bg-white rounded-3xl border border-slate-100 shadow-2xl max-w-lg w-full p-6 space-y-4 text-left relative max-h-[90vh] overflow-y-auto my-auto">
               <button 
-                onClick={() => setActiveTaskInfo(null)}
+                onClick={() => {
+                  setActiveTaskInfo(null);
+                  setIsLoggingOpportunityFollowUp(false);
+                }}
                 className="absolute top-4 right-4 p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
 
+              {/* Header */}
               <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
-                <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600">
-                  <CheckSquare className="w-4 h-4" />
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${isAdvanceOpportunity ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"}`}>
+                  {isAdvanceOpportunity ? <Sparkles className="w-4 h-4" /> : <CheckSquare className="w-4 h-4" />}
                 </div>
                 <div>
-                  <h3 className="text-sm font-extrabold text-slate-800">Task Details</h3>
-                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">{client.firstName} {client.lastName} ({client.tier} Account)</p>
+                  <h3 className="text-sm font-extrabold text-slate-800">
+                    {isAdvanceOpportunity ? "Advanced Opportunity" : "Task Details"}
+                  </h3>
+                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                    {client.firstName} {client.lastName} ({client.tier} Account)
+                  </p>
                 </div>
               </div>
 
-              <div className="space-y-3 text-xs">
-                <div className="space-y-1">
-                  <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Task/Follow-up Details</label>
-                  <textarea
-                    value={taskEditText}
-                    onChange={(e) => setTaskEditText(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-3 text-xs font-semibold text-slate-800 resize-none h-24 transition-colors"
-                    placeholder="Enter details here..."
-                  />
-                </div>
+              {/* Advanced Opportunity Architecture */}
+              {isAdvanceOpportunity ? (
+                <div className="space-y-4">
+                  {/* Opportunity Details Card */}
+                  <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-3.5 space-y-2 text-slate-700">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="font-black text-amber-900 uppercase tracking-wider flex items-center gap-1">
+                        🎁 {reminder.milestone?.eventType === "birthday" ? "Birthday Opportunity" : reminder.milestone?.eventType === "anniversary" ? "Anniversary Opportunity" : "Milestone Opportunity"}
+                      </span>
+                      <span className="font-mono text-amber-900 font-bold bg-white/90 px-2 py-0.5 rounded border border-amber-200 shadow-2xs">
+                        Event Date: {reminder.milestone?.eventDate}
+                      </span>
+                    </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                    <p className="text-xs font-semibold text-slate-800">
+                      Target: <span className="font-bold text-amber-950">{reminder.milestone?.personName}</span> ({reminder.milestone?.relationship})
+                    </p>
+
+                    <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-amber-200/60 text-[11px]">
+                      <span className="text-slate-500 font-medium">Scheduled Action Date:</span>
+                      <span className="font-mono font-bold text-slate-800">{currentActionDate}</span>
+                      
+                      {/* Date Status Badge */}
+                      {dateState.status === "Due" && (
+                        <span className="bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full text-[10px] flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                          Due Today
+                        </span>
+                      )}
+                      {dateState.status === "Missed" && (
+                        <span className="bg-rose-100 text-rose-800 font-bold px-2 py-0.5 rounded-full text-[10px] flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3 text-rose-600" />
+                          Missed Opportunity ({dateState.daysDiff}d ago)
+                        </span>
+                      )}
+                      {dateState.status === "Upcoming" && (
+                        <span className="bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded-full text-[10px] flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-blue-600" />
+                          {dateState.label}
+                        </span>
+                      )}
+                      {dateState.status === "Completed" && (
+                        <span className="bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full text-[10px]">
+                          ✓ {reminder.opportunityStatus || "Completed"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 1 -> 2 -> 3 Visual Progression */}
+                  <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-3">
+                    <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-slate-500">
+                      <span>Follow-Up Progression</span>
+                      <span className="text-indigo-600 font-bold">
+                        {isResolved ? "Resolved" : `Attempt ${Math.min(followUpCount + 1, 3)} of 3`}
+                      </span>
+                    </div>
+
+                    {/* Step Indicators */}
+                    <div className="grid grid-cols-3 gap-2">
+                      {[1, 2, 3].map((step) => {
+                        const isCompletedStep = followUpCount >= step;
+                        const isCurrentStep = followUpCount === step - 1 && !isResolved;
+                        return (
+                          <div 
+                            key={step}
+                            className={`p-2.5 rounded-xl border text-center transition-all ${
+                              isCompletedStep 
+                                ? "bg-emerald-50/80 border-emerald-200 text-emerald-900" 
+                                : isCurrentStep 
+                                  ? "bg-indigo-50 border-indigo-300 text-indigo-950 ring-1 ring-indigo-400" 
+                                  : "bg-white border-slate-200 text-slate-400 opacity-60"
+                            }`}
+                          >
+                            <div className="text-[10px] font-black uppercase">Follow-Up {step}</div>
+                            <div className="text-[11px] font-bold mt-0.5">
+                              {isCompletedStep ? "✓ Actioned" : isCurrentStep ? "Available" : "Pending"}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Action Button for Current Attempt */}
+                    {!isResolved && followUpCount < 3 && !isLoggingOpportunityFollowUp && (
+                      <button
+                        type="button"
+                        onClick={() => setIsLoggingOpportunityFollowUp(true)}
+                        className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        Action Follow-Up {followUpCount + 1}
+                      </button>
+                    )}
+
+                    {/* Inline Form to Log Follow-Up Attempt */}
+                    {isLoggingOpportunityFollowUp && (
+                      <form onSubmit={handleLogOpportunityFollowUpSubmit} className="space-y-3 pt-2 border-t border-slate-200 animate-fade-in">
+                        <div className="flex items-center justify-between text-[11px] font-black text-indigo-900">
+                          <span>Log Follow-Up Attempt #{followUpCount + 1}</span>
+                          <button
+                            type="button"
+                            onClick={() => setIsLoggingOpportunityFollowUp(false)}
+                            className="text-slate-400 hover:text-slate-600 text-[10px]"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Contact Method</label>
+                            <select
+                              value={oppFollowUpMethod}
+                              onChange={(e) => setOppFollowUpMethod(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none"
+                            >
+                              <option value="Phone Call">Phone Call</option>
+                              <option value="WhatsApp">WhatsApp</option>
+                              <option value="Instagram">Instagram DM</option>
+                              <option value="Email">Email</option>
+                              <option value="In Person">In Person</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Next Action Date</label>
+                            <input
+                              type="date"
+                              value={oppFollowUpNextDate}
+                              onChange={(e) => setOppFollowUpNextDate(e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Action Notes</label>
+                          <textarea
+                            value={oppFollowUpNotes}
+                            onChange={(e) => setOppFollowUpNotes(e.target.value)}
+                            placeholder="Record client response or next steps..."
+                            className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-xs font-semibold text-slate-800 resize-none h-16 focus:outline-none"
+                            required
+                          />
+                        </div>
+
+                        <button
+                          type="submit"
+                          className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer"
+                        >
+                          Complete Attempt #{followUpCount + 1}
+                        </button>
+                      </form>
+                    )}
+
+                    {/* Disposition / Resolution Options */}
+                    {(followUpCount >= 3 || isResolved) && (
+                      <div className="pt-2 border-t border-slate-200 space-y-2">
+                        <div className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                          Opportunity Disposition
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleSetOpportunityResolution("Converted")}
+                            className={`py-2 px-2 text-[11px] font-bold rounded-xl border transition-all cursor-pointer ${
+                              reminder.opportunityStatus === "Converted" 
+                                ? "bg-emerald-600 text-white border-emerald-600" 
+                                : "bg-white hover:bg-emerald-50 text-emerald-800 border-emerald-200"
+                            }`}
+                          >
+                            ✓ Converted
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSetOpportunityResolution("Resolved")}
+                            className={`py-2 px-2 text-[11px] font-bold rounded-xl border transition-all cursor-pointer ${
+                              reminder.opportunityStatus === "Resolved" 
+                                ? "bg-indigo-600 text-white border-indigo-600" 
+                                : "bg-white hover:bg-indigo-50 text-indigo-800 border-indigo-200"
+                            }`}
+                          >
+                            ✓ Resolved
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSetOpportunityResolution("Closed")}
+                            className={`py-2 px-2 text-[11px] font-bold rounded-xl border transition-all cursor-pointer ${
+                              reminder.opportunityStatus === "Closed" 
+                                ? "bg-slate-700 text-white border-slate-700" 
+                                : "bg-white hover:bg-slate-100 text-slate-700 border-slate-200"
+                            }`}
+                          >
+                            Closed
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Follow-Up History Log */}
+                  {history.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center justify-between">
+                        <span>Opportunity Follow-Up History</span>
+                        <span>{history.length} Attempt{history.length > 1 ? "s" : ""}</span>
+                      </div>
+                      <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                        {history.map((item, idx) => (
+                          <div key={item.id || idx} className="bg-slate-50 border border-slate-200/70 rounded-xl p-2.5 text-xs space-y-1">
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="font-black text-indigo-900">
+                                Follow-Up {item.attemptNumber || idx + 1} ({item.method || "Contact"})
+                              </span>
+                              <span className="font-mono text-slate-400 font-bold">{item.date}</span>
+                            </div>
+                            <p className="text-slate-700 text-[11px] font-medium leading-relaxed">
+                              {item.notes}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Standard Task View */
+                <div className="space-y-3 text-xs">
+                  {reminder.milestone && (
+                    <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-3 space-y-1 text-slate-700">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="font-extrabold text-amber-900 uppercase tracking-wider flex items-center gap-1">
+                          🎂 Milestone Occurrence Reminder
+                        </span>
+                        <span className="font-mono text-amber-800 font-bold bg-white/80 px-2 py-0.5 rounded border border-amber-200/50">{reminder.milestone.eventDate}</span>
+                      </div>
+                      <p className="text-[11px] font-medium text-slate-700">
+                        {reminder.milestone.relationship}: <span className="font-bold text-slate-900">{reminder.milestone.personName}</span> ({reminder.milestone.eventType})
+                      </p>
+                      {reminder.completedAt && (
+                        <p className="text-[10px] text-emerald-700 font-semibold pt-0.5">
+                          ✓ Handled on {new Date(reminder.completedAt).toLocaleDateString()}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   <div className="space-y-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Follow-up Date</label>
-                    <input
-                      type="date"
-                      value={taskEditDate}
-                      onChange={(e) => setTaskEditDate(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-3 text-xs font-semibold text-slate-800 transition-colors"
+                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Task/Follow-up Details</label>
+                    <textarea
+                      value={taskEditText}
+                      onChange={(e) => setTaskEditText(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-3 text-xs font-semibold text-slate-800 resize-none h-24 transition-colors"
+                      placeholder="Enter details here..."
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Status</label>
-                    <button
-                      type="button"
-                      onClick={handleToggleTaskCompleted}
-                      className={`w-full flex items-center justify-center gap-1.5 p-3 rounded-xl border text-xs font-bold transition-all ${
-                        reminder.completed 
-                          ? "bg-emerald-50 border-emerald-100 text-emerald-800" 
-                          : "bg-amber-50 border-amber-100 text-amber-800"
-                      }`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${reminder.completed ? "bg-emerald-500" : "bg-amber-500 animate-pulse"}`} />
-                      {reminder.completed ? "Completed" : "Pending Action"}
-                    </button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Follow-up Date</label>
+                      <input
+                        type="date"
+                        value={taskEditDate}
+                        onChange={(e) => setTaskEditDate(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-3 text-xs font-semibold text-slate-800 transition-colors"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block">Status</label>
+                      <button
+                        type="button"
+                        onClick={handleToggleTaskCompleted}
+                        className={`w-full flex items-center justify-center gap-1.5 p-3 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                          reminder.completed 
+                            ? "bg-emerald-50 border-emerald-100 text-emerald-800" 
+                            : "bg-amber-50 border-amber-100 text-amber-800"
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${reminder.completed ? "bg-emerald-500" : "bg-amber-500 animate-pulse"}`} />
+                        {reminder.completed ? "Completed" : "Pending Action"}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
+              {/* Modal Footer Controls */}
               <div className="flex flex-col sm:flex-row gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={handleUpdateTaskDetails}
-                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold p-2.5 rounded-xl transition-all shadow-sm text-center"
-                >
-                  Save Changes
-                </button>
+                {!isAdvanceOpportunity && (
+                  <button
+                    type="button"
+                    onClick={handleUpdateTaskDetails}
+                    className="flex-1 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold p-2.5 rounded-xl transition-all shadow-sm text-center cursor-pointer"
+                  >
+                    Save Changes
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
                     setActiveTaskInfo(null);
                     handleSelectClient(client.id);
                   }}
-                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold p-2.5 rounded-xl transition-all text-center"
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold p-2.5 rounded-xl transition-all text-center cursor-pointer"
                 >
                   Open Client Profile
                 </button>
                 <button
                   type="button"
                   onClick={handleDeleteTaskFromModal}
-                  className="bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold p-2.5 rounded-xl transition-all text-center"
+                  className="bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold p-2.5 rounded-xl transition-all text-center cursor-pointer"
                 >
                   Delete
                 </button>
@@ -1710,6 +2631,41 @@ export default function App() {
           });
         }}
       />
+
+      {/* Lightweight Universal Undo Toast */}
+      <UndoToast
+        action={undoAction}
+        onDismiss={() => setUndoAction(null)}
+      />
+
+      {/* Convert Duplicate Confirmation Modal */}
+      <ConvertDuplicateModal
+        isOpen={!!duplicateModalData}
+        aspiringClient={duplicateModalData?.aspiringClient || null}
+        matchedClients={duplicateModalData?.matchedClients || []}
+        onClose={() => setDuplicateModalData(null)}
+        onLinkToExisting={(targetClient) => {
+          if (duplicateModalData?.aspiringClient) {
+            executeConversionLinkToExisting(duplicateModalData.aspiringClient, targetClient);
+          }
+        }}
+        onCreateNew={() => {
+          if (duplicateModalData?.aspiringClient) {
+            executeConversionNewClient(duplicateModalData.aspiringClient);
+          }
+        }}
+      />
+
+      {/* Back-Office Master Open CMTs Review Modal */}
+      {isAllOpenCmtsModalOpen && (
+        <CmtManagementModal
+          isOpen={isAllOpenCmtsModalOpen}
+          onClose={() => setIsAllOpenCmtsModalOpen(false)}
+          clients={clients}
+          onUpdateClients={setClients}
+          onNavigateToClient={handleSelectClient}
+        />
+      )}
 
     </div>
   );

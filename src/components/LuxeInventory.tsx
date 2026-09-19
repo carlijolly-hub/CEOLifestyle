@@ -2,7 +2,7 @@ import React, { useState, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import * as XLSX from "xlsx";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
-import { LuxeBookInventoryItem, InventorySalesMovement, SystemSettings } from "../types";
+import { LuxeBookInventoryItem, InventorySalesMovement, SystemSettings, PrimaryBookClassification, DEFAULT_BOOK_CLASSIFICATIONS, BookRank } from "../types";
 import { 
   BookOpen, 
   FileSpreadsheet, 
@@ -38,7 +38,7 @@ export function calculateRestockQuantity(
   if (!rankingStatus) return 0;
   
   const status = rankingStatus.trim();
-  const rank = bookRank?.trim() || "Standard";
+  const rank = bookRank?.trim() || "Unknown";
 
   if (
     status === "Never Sell" ||
@@ -56,16 +56,16 @@ export function calculateRestockQuantity(
   }
 
   if (status === "Restock") {
-    if (rank === "Top Seller") return Math.max(0, 10 - quantity);
-    if (rank === "Best Seller" || rank === "High Performer") return Math.max(0, 8 - quantity);
-    if (rank === "Standard" || rank === "Slow Moving" || rank === "New Release") return Math.max(0, 5 - quantity);
+    if (rank === "Top Seller" || rank === "TS") return Math.max(0, 10 - quantity);
+    if (rank === "Medium Seller" || rank === "MS" || rank === "Best Seller" || rank === "High Performer") return Math.max(0, 8 - quantity);
+    if (rank === "Slow Mover" || rank === "SM" || rank === "Standard" || rank === "Slow Moving" || rank === "New Release") return Math.max(0, 5 - quantity);
     return Math.max(0, 5 - quantity);
   }
 
   if (status === "Urgent Restock") {
-    if (rank === "Top Seller") return Math.max(0, 15 - quantity);
-    if (rank === "Best Seller" || rank === "High Performer") return Math.max(0, 10 - quantity);
-    if (rank === "Standard" || rank === "Slow Moving" || rank === "New Release") return Math.max(0, 6 - quantity);
+    if (rank === "Top Seller" || rank === "TS") return Math.max(0, 15 - quantity);
+    if (rank === "Medium Seller" || rank === "MS" || rank === "Best Seller" || rank === "High Performer") return Math.max(0, 10 - quantity);
+    if (rank === "Slow Mover" || rank === "SM" || rank === "Standard" || rank === "Slow Moving" || rank === "New Release") return Math.max(0, 6 - quantity);
     return Math.max(0, 6 - quantity);
   }
 
@@ -93,10 +93,19 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
   const [newOffice, setNewOffice] = useState<number>(5);
   const [newDateAdded, setNewDateAdded] = useState(new Date().toISOString().slice(0, 10));
   const [newRankingStatus, setNewRankingStatus] = useState<LuxeBookInventoryItem["rankingStatus"]>("Healthy");
-  const [newBookRank, setNewBookRank] = useState<string>("Standard");
+  const [newBookRank, setNewBookRank] = useState<BookRank>("Top Seller");
   const [newBookId, setNewBookId] = useState("");
   const [newSellingPrice, setNewSellingPrice] = useState<string>("4000");
   const [newArchived, setNewArchived] = useState<boolean>(false);
+  const bookClassifications = useMemo(() => {
+    if (settings?.bookClassifications && Array.isArray(settings.bookClassifications) && settings.bookClassifications.length > 0) {
+      return settings.bookClassifications;
+    }
+    return DEFAULT_BOOK_CLASSIFICATIONS;
+  }, [settings?.bookClassifications]);
+
+  const [classificationFilter, setClassificationFilter] = useState<string>("All");
+  const [newPrimaryClassification, setNewPrimaryClassification] = useState<PrimaryBookClassification>("Mindset & Personal Development");
 
   // Manual quantity adjust state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -135,16 +144,22 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
       const existingIdx = updatedList.findIndex(i => (pasted.id && i.id.toLowerCase() === pasted.id.toLowerCase()) || i.title.toLowerCase() === pasted.title.toLowerCase());
       if (existingIdx >= 0) {
         updatedCount++;
+        const importedRank = (pasted.bookRank !== undefined && pasted.bookRank !== null && String(pasted.bookRank).trim() !== "")
+          ? String(pasted.bookRank).trim()
+          : undefined;
+
         updatedList[existingIdx] = {
           ...updatedList[existingIdx],
           quantity: pasted.totalStock || pasted.quantity || updatedList[existingIdx].quantity,
           sellingPrice: pasted.price || pasted.sellingPrice || updatedList[existingIdx].sellingPrice,
-          category: pasted.category || updatedList[existingIdx].category
+          category: pasted.category || updatedList[existingIdx].category,
+          bookRank: importedRank ?? updatedList[existingIdx].bookRank
         };
       } else {
         addedCount++;
         updatedList.push({
           ...pasted,
+          bookRank: pasted.bookRank || "Unknown",
           quantity: pasted.totalStock || pasted.quantity || 1,
           office: pasted.totalStock || pasted.quantity || 1,
           inStore: 0
@@ -156,20 +171,14 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
     setSuccessMsg(`Universal Excel Paste Sync Complete! Ingested ${pastedItems.length} records (${addedCount} new, ${updatedCount} updated).`);
   };
 
-  const [currentCarouselIndex, setCurrentCarouselIndex] = useState(() => {
-    const stored = localStorage.getItem("luxe_inventory_carousel_index");
-    if (stored !== null) return parseInt(stored, 10);
-    return settings?.luxeInventoryCarouselDefaultIndex ?? 0;
-  });
-
-  const showArchived = currentCarouselIndex === 3;
-  const [showIntelligence, setShowIntelligence] = useState<boolean>(false);
+  // Secondary navigation inside Book Inventory: "catalog" (Active) | "archive" (Archived) | "analytics" (Intelligence)
+  const [activeView, setActiveView] = useState<"catalog" | "archive" | "analytics">("catalog");
+  const [isOverviewExpanded, setIsOverviewExpanded] = useState<boolean>(true);
+  const showArchived = activeView === "archive";
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
 
-  const handleCarouselChange = (index: number) => {
-    setCurrentCarouselIndex(index);
-    localStorage.setItem("luxe_inventory_carousel_index", index.toString());
-  };
+  const activeCount = useMemo(() => inventory.filter(i => !i.archived).length, [inventory]);
+  const archivedCount = useMemo(() => inventory.filter(i => i.archived).length, [inventory]);
 
   // Unique categories for filtering
   const categories = useMemo(() => {
@@ -296,7 +305,8 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
       archived: newArchived,
       inStore: newInStore,
       office: newOffice,
-      sellingPrice: parseFloat(newSellingPrice) || 0
+      sellingPrice: parseFloat(newSellingPrice) || 0,
+      primaryClassification: newPrimaryClassification
     };
 
     onUpdateInventory([...inventory, newItem]);
@@ -307,7 +317,7 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
     setNewInStore(0);
     setNewOffice(5);
     setNewRankingStatus("Healthy");
-    setNewBookRank("Standard");
+    setNewBookRank("Top Seller");
     setNewSellingPrice("4000");
     setNewArchived(false);
     setShowAddForm(false);
@@ -516,9 +526,11 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
 
       const matchesSearch = item.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                             item.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            item.id.toLowerCase().includes(searchQuery.toLowerCase());
+                            item.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            (item.bookRank ? item.bookRank.toLowerCase().includes(searchQuery.toLowerCase()) : false);
       
       const matchesCategory = categoryFilter === "All" || item.category === categoryFilter;
+      const matchesClassification = classificationFilter === "All" || (item.primaryClassification || "Mindset & Personal Development") === classificationFilter;
 
       let matchesAlert = true;
       if (alertFilter === "out") {
@@ -529,9 +541,9 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
         matchesAlert = item.quantity <= 5 || item.rankingStatus === "Urgent Restock";
       }
 
-      return matchesSearch && matchesCategory && matchesAlert;
+      return matchesSearch && matchesCategory && matchesClassification && matchesAlert;
     });
-  }, [inventory, searchQuery, categoryFilter, alertFilter, showArchived]);
+  }, [inventory, searchQuery, categoryFilter, classificationFilter, alertFilter, showArchived]);
 
   return (
     <div className="space-y-6 text-left animate-fade-in">
@@ -557,63 +569,119 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
         </div>
       )}
 
-      {/* APPLE-INSPIRED LUXE INVENTORY CAROUSEL CONTROLLER */}
-      <div className="flex items-center justify-center py-2">
-        <div className="flex items-center gap-4 bg-slate-900/90 border border-slate-800/85 rounded-full px-4 py-2 shadow-md">
-          {/* Left Arrow */}
-          <button 
-            onClick={() => handleCarouselChange((currentCarouselIndex - 1 + 4) % 4)}
-            className="p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
-            title="Previous Section"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
+      {/* Top Banner & Title: BOOK INVENTORY */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-amber-950 rounded-3xl p-6 text-white shadow-xl flex flex-wrap items-center justify-between gap-4">
+        <div className="space-y-1 max-w-xl text-left">
+          <div className="flex items-center gap-2">
+            <span className="p-2 bg-amber-500/20 border border-amber-400/30 rounded-xl text-amber-300">
+              <Archive className="w-5 h-5" />
+            </span>
+            <span className="text-xs font-bold uppercase tracking-widest text-amber-300">LIBRARIUM LUXE BOOKS &amp; EDITIONS</span>
+          </div>
+          <h2 className="text-2xl font-black tracking-tight">BOOK INVENTORY</h2>
+          <p className="text-xs text-slate-300">
+            Books and Librarium Luxe inventory. Answers: &ldquo;What books do we have?&rdquo; Track exquisite private catalog items, physical stock allocations, and editions.
+          </p>
+        </div>
 
-          {/* Dot indicators only */}
-          <div className="flex justify-center items-center gap-2">
-            {[0, 1, 2, 3].map((idx) => (
-              <button
-                key={idx}
-                onClick={() => handleCarouselChange(idx)}
-                className={`w-2 h-2 rounded-full transition-all duration-300 cursor-pointer ${
-                  currentCarouselIndex === idx ? "bg-indigo-400 scale-110" : "bg-slate-700 hover:bg-slate-600"
-                }`}
-                title={
-                  idx === 0 ? "Inventory Health & Summary" :
-                  idx === 1 ? "Performance & Analytics" :
-                  idx === 2 ? "Premium Book Catalog" :
-                  "Inactive Archives"
-                }
-              />
-            ))}
+        {/* Secondary View Selectors: ACTIVE CATALOG | ARCHIVE and Separated ANALYTICS */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div className="flex items-center gap-1 bg-slate-800/90 border border-slate-700/80 p-1 rounded-2xl">
+            <button
+              type="button"
+              onClick={() => setActiveView("catalog")}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                activeView === "catalog"
+                  ? "bg-amber-400 text-slate-950 font-black shadow-xs"
+                  : "text-slate-300 hover:text-white"
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>ACTIVE CATALOG</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                activeView === "catalog" ? "bg-slate-950/20 text-slate-950" : "bg-slate-700 text-slate-300"
+              }`}>
+                {activeCount}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveView("archive")}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                activeView === "archive"
+                  ? "bg-amber-400 text-slate-950 font-black shadow-xs"
+                  : "text-slate-300 hover:text-white"
+              }`}
+            >
+              <Archive className="w-3.5 h-3.5" />
+              <span>ARCHIVE</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                activeView === "archive" ? "bg-slate-950/20 text-slate-950" : "bg-slate-700 text-slate-300"
+              }`}>
+                {archivedCount}
+              </span>
+            </button>
           </div>
 
-          {/* Right Arrow */}
-          <button 
-            onClick={() => handleCarouselChange((currentCarouselIndex + 1) % 4)}
-            className="p-1 text-slate-400 hover:text-white transition-colors cursor-pointer flex items-center justify-center"
-            title="Next Section"
+          <button
+            type="button"
+            onClick={() => setActiveView(activeView === "analytics" ? "catalog" : "analytics")}
+            className={`px-4 py-2 rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 border ${
+              activeView === "analytics"
+                ? "bg-indigo-600 text-white border-indigo-400 shadow-md"
+                : "bg-slate-800/80 text-indigo-300 border-indigo-500/30 hover:bg-slate-700/80 hover:text-white"
+            }`}
           >
-            <ChevronRight className="w-4 h-4" />
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>{activeView === "analytics" ? "Back to Catalog" : "Librarium Luxe Analytics"}</span>
+            <span className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-md tracking-wider ${
+              activeView === "analytics" ? "bg-white/20 text-white" : "bg-indigo-500/30 text-indigo-200"
+            }`}>
+              Intelligence
+            </span>
           </button>
         </div>
       </div>
 
-      {/* Slide 0: Master Inventory Summary & Health Overview */}
-      {currentCarouselIndex === 0 && (
-        <div className="bg-slate-50/70 border border-slate-200/50 rounded-3xl p-6 md:p-8 space-y-8 shadow-3xs text-left animate-fade-in">
-          {/* Slide Header */}
-          <div className="flex items-center gap-2.5 pb-4 border-b border-slate-200/60">
-            <Sparkles className="w-5 h-5 text-rose-800 animate-pulse" />
-            <div>
-              <h3 className="text-sm font-extrabold text-slate-900 uppercase tracking-wider">
-                Librarium Luxe Master Inventory Summary & Health Overview
-              </h3>
-              <p className="text-[10px] text-slate-450 font-bold uppercase tracking-wider mt-0.5">
-                Primary inventory health overview, real-time metrics, active stock level monitors, and database integrity validation report
-              </p>
+      {/* 1. MASTER INVENTORY SUMMARY & HEALTH OVERVIEW (Overview Section within Book Inventory) */}
+      {activeView !== "analytics" && (
+        <div className="bg-slate-50/70 border border-slate-200/50 rounded-3xl p-6 md:p-8 space-y-6 shadow-3xs text-left animate-fade-in">
+          {/* Overview Section Header with Collapsible Toggle */}
+          <div className="flex items-center justify-between pb-4 border-b border-slate-200/60">
+            <div className="flex items-center gap-2.5">
+              <Sparkles className="w-5 h-5 text-rose-800 animate-pulse" />
+              <div>
+                <h3 className="text-sm font-extrabold text-slate-900 uppercase tracking-wider">
+                  Master Inventory Summary &amp; Health Overview
+                </h3>
+                <p className="text-[10px] text-slate-450 font-bold uppercase tracking-wider mt-0.5">
+                  Primary inventory health overview, real-time metrics, active stock level monitors, and database integrity validation report
+                </p>
+              </div>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setIsOverviewExpanded(!isOverviewExpanded)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 transition-all cursor-pointer shadow-2xs"
+            >
+              {isOverviewExpanded ? (
+                <>
+                  <ChevronUp className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Hide Overview</span>
+                </>
+              ) : (
+                <>
+                  <ChevronDown className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Show Overview</span>
+                </>
+              )}
+            </button>
           </div>
+
+          {isOverviewExpanded && (
+            <div className="space-y-8 animate-fade-in">
 
           {/* 1. Key Metrics row */}
           <div className="space-y-3">
@@ -659,13 +727,13 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                 </div>
                 <div className="flex gap-1.5 mt-2 flex-wrap">
                   <span className="text-[8px] font-bold uppercase tracking-wider bg-amber-50 text-amber-700 px-1 py-0.5 rounded border border-amber-100" title="Top Sellers">
-                    Top: {inventory.filter(i => !i.archived && (i.bookRank || "Standard") === "Top Seller").length}
+                    Top: {inventory.filter(i => !i.archived && ((i.bookRank || "Unknown") === "Top Seller" || i.bookRank === "TS")).length}
                   </span>
-                  <span className="text-[8px] font-bold uppercase tracking-wider bg-orange-50 text-orange-700 px-1 py-0.5 rounded border border-orange-100" title="Best Sellers">
-                    Best: {inventory.filter(i => !i.archived && i.bookRank === "Best Seller").length}
+                  <span className="text-[8px] font-bold uppercase tracking-wider bg-orange-50 text-orange-700 px-1 py-0.5 rounded border border-orange-100" title="Medium Sellers">
+                    Med: {inventory.filter(i => !i.archived && (i.bookRank === "Medium Seller" || i.bookRank === "MS" || i.bookRank === "Best Seller" || i.bookRank === "High Performer")).length}
                   </span>
-                  <span className="text-[8px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 px-1 py-0.5 rounded border border-emerald-100" title="High Performers">
-                    HP: {inventory.filter(i => !i.archived && i.bookRank === "High Performer").length}
+                  <span className="text-[8px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 px-1 py-0.5 rounded border border-indigo-100" title="Slow Movers">
+                    Slow: {inventory.filter(i => !i.archived && (i.bookRank === "Slow Mover" || i.bookRank === "SM" || i.bookRank === "Slow Moving")).length}
                   </span>
                 </div>
               </div>
@@ -694,7 +762,7 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
               <button
                 onClick={() => {
                   setAlertFilter("out");
-                  handleCarouselChange(2); // Seamless slide transition to active book catalog list
+                  setActiveView("catalog");
                 }}
                 className={`group relative overflow-hidden border rounded-2xl p-5 flex flex-col justify-between transition-all duration-305 text-left cursor-pointer shadow-3xs ${
                   stats.outOfStockCount > 0
@@ -724,7 +792,7 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
               <button
                 onClick={() => {
                   setAlertFilter("low");
-                  handleCarouselChange(2); // Seamless slide transition to active book catalog list
+                  setActiveView("catalog");
                 }}
                 className={`group relative overflow-hidden border rounded-2xl p-5 flex flex-col justify-between transition-all duration-305 text-left cursor-pointer shadow-3xs ${
                   stats.lowStockCount > 0
@@ -754,7 +822,7 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
               <button
                 onClick={() => {
                   setAlertFilter("need_action");
-                  handleCarouselChange(2); // Seamless slide transition to active book catalog list
+                  setActiveView("catalog");
                 }}
                 className={`group relative overflow-hidden border rounded-2xl p-5 flex flex-col justify-between transition-all duration-305 text-left cursor-pointer shadow-3xs ${
                   stats.needsAttention > 0
@@ -845,24 +913,36 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
               )}
             </div>
           </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Slide 1: Book Performance & Intelligence Analytics */}
-      {currentCarouselIndex === 1 && (
+      {/* ANALYTICS WORKSPACE: Book Performance & Intelligence Analytics */}
+      {activeView === "analytics" && (
         <div className="bg-white border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-4 animate-fade-in text-left">
-          <div className="flex items-center gap-3 pb-3 border-b border-slate-100">
-            <div className="w-9 h-9 rounded-full bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-700">
-              <Sparkles className="w-5 h-5" />
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-700 shadow-2xs">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                  Librarium Luxe Intelligence &amp; Performance Analytics
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5 font-semibold">
+                  Analyze active stock velocity, total stocked units, historical copies sold, and commercial ranking.
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-                Librarium Luxe Intelligence & Performance Analytics
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5 font-semibold">
-                Analyze active stock velocity, total stocked units, historical copies sold, and commercial ranking.
-              </p>
-            </div>
+
+            <button
+              type="button"
+              onClick={() => setActiveView("catalog")}
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-2xs shrink-0 self-start sm:self-auto"
+            >
+              <span>← Back to Operational Catalog</span>
+            </button>
           </div>
 
           <div className="pt-2 space-y-4">
@@ -889,15 +969,15 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                     inventory.filter(item => !item.archived).map(item => {
                       const unitsSold = item.salesHistory ? item.salesHistory.reduce((sum, sh) => sum + sh.quantitySold, 0) : 0;
                       const unitsStocked = item.quantity + unitsSold;
-                      const bookRank = item.bookRank || "Standard";
+                      const bookRank = item.bookRank || "Unknown";
                       const rank = item.rankingStatus || "Healthy";
 
                       return (
                         <tr key={item.id} className="border-b border-slate-100 hover:bg-white transition-colors bg-white/40">
                           <td className="p-3 pl-5">
                             <div>
-                              <span className="font-bold text-slate-900 block">{item.title}</span>
-                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mt-0.5">{item.category}</span>
+                              <span className="font-bold text-slate-900 block break-words">{item.title}</span>
+                              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block mt-0.5 break-words">{item.category}</span>
                             </div>
                           </td>
                           <td className="p-3 text-center font-mono font-bold text-slate-900">
@@ -911,17 +991,21 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                           </td>
                           <td className="p-3 text-center">
                             <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider inline-block ${
-                              bookRank === "Top Seller" 
+                              bookRank === "Top Seller" || bookRank === "TS"
                                 ? "bg-amber-100 text-amber-950 border border-amber-200/60" 
-                                : bookRank === "Best Seller"
+                                : bookRank === "Medium Seller" || bookRank === "MS" || bookRank === "Best Seller"
                                   ? "bg-orange-100 text-orange-950 border border-orange-200/60"
                                   : bookRank === "High Performer"
                                     ? "bg-emerald-50 text-emerald-950 border border-emerald-200/50"
-                                    : bookRank === "Slow Moving"
+                                    : bookRank === "Slow Mover" || bookRank === "SM" || bookRank === "Slow Moving"
                                       ? "bg-indigo-50 text-indigo-950 border border-indigo-100"
-                                      : bookRank === "New Release"
-                                        ? "bg-blue-50 text-blue-950 border border-blue-100"
-                                        : "bg-slate-100 text-slate-800 border border-slate-200"
+                                      : bookRank === "Never Sell" || bookRank === "NS"
+                                        ? "bg-rose-100 text-rose-950 border border-rose-200"
+                                        : bookRank === "Unknown" || bookRank === "UNK"
+                                          ? "bg-slate-100 text-slate-600 border border-slate-200"
+                                          : bookRank === "New Release"
+                                            ? "bg-blue-50 text-blue-950 border border-blue-100"
+                                            : "bg-slate-100 text-slate-800 border border-slate-200"
                             }`}>
                               {bookRank}
                             </span>
@@ -948,8 +1032,8 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
         </div>
       )}
 
-      {/* Slide 2 & Slide 3: Catalog Listing and Archives */}
-      {(currentCarouselIndex === 2 || currentCarouselIndex === 3) && (
+      {/* OPERATIONAL WORKSPACE: Catalog Listing (Active) and Archives */}
+      {activeView !== "analytics" && (
         <div className="bg-white border border-slate-200/60 rounded-3xl p-6 shadow-sm space-y-6">
         
         {/* FILTERS & SEARCH ROW */}
@@ -978,6 +1062,18 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
               ))}
             </select>
 
+            {/* Classification Filter */}
+            <select
+              value={classificationFilter}
+              onChange={(e) => setClassificationFilter(e.target.value)}
+              className="bg-slate-50 border border-slate-200 text-xs font-semibold rounded-xl py-2 px-3 text-slate-700 focus:outline-none hover:border-slate-300"
+            >
+              <option value="All">All Classifications</option>
+              {bookClassifications.map(clf => (
+                <option key={clf} value={clf}>{clf}</option>
+              ))}
+            </select>
+
             {/* Archive State Badge */}
             <div
               className={`px-3 py-2 rounded-xl text-xs font-bold border flex items-center gap-1.5 transition-all ${
@@ -990,10 +1086,11 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
             </div>
 
             {/* Clear Filters indicator */}
-            {(categoryFilter !== "All" || alertFilter !== "all" || searchQuery !== "") && (
+            {(categoryFilter !== "All" || classificationFilter !== "All" || alertFilter !== "all" || searchQuery !== "") && (
               <button 
                 onClick={() => {
                   setCategoryFilter("All");
+                  setClassificationFilter("All");
                   setAlertFilter("all");
                   setSearchQuery("");
                 }}
@@ -1096,8 +1193,8 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                 <label className="text-[10px] font-bold text-slate-400 uppercase">Initial Copies</label>
                 <input 
                   type="number" 
-                  value={newQuantity}
-                  onChange={(e) => setNewQuantity(Number(e.target.value))}
+                  value={newQuantity === 0 ? 0 : (newQuantity || "")}
+                  onChange={(e) => setNewQuantity(e.target.value === "" ? 0 : Number(e.target.value))}
                   min="0"
                   className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-slate-800"
                 />
@@ -1106,8 +1203,8 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                 <label className="text-[10px] font-bold text-slate-400 uppercase">In Store Allocation</label>
                 <input 
                   type="number" 
-                  value={newInStore}
-                  onChange={(e) => setNewInStore(Math.max(0, Number(e.target.value)))}
+                  value={newInStore === 0 ? 0 : (newInStore || "")}
+                  onChange={(e) => setNewInStore(e.target.value === "" ? 0 : Math.max(0, Number(e.target.value)))}
                   min="0"
                   className={`w-full bg-white border rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-slate-800 ${
                     newInStore + newOffice !== newQuantity ? "border-red-500 bg-red-50 text-red-900" : "border-slate-200"
@@ -1118,8 +1215,8 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                 <label className="text-[10px] font-bold text-slate-400 uppercase">Office Allocation</label>
                 <input 
                   type="number" 
-                  value={newOffice}
-                  onChange={(e) => setNewOffice(Math.max(0, Number(e.target.value)))}
+                  value={newOffice === 0 ? 0 : (newOffice || "")}
+                  onChange={(e) => setNewOffice(e.target.value === "" ? 0 : Math.max(0, Number(e.target.value)))}
                   min="0"
                   className={`w-full bg-white border rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-slate-800 ${
                     newInStore + newOffice !== newQuantity ? "border-red-500 bg-red-50 text-red-900" : "border-slate-200"
@@ -1157,15 +1254,14 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                 <label className="text-[10px] font-bold text-slate-400 uppercase">Book Rank</label>
                 <select 
                   value={newBookRank}
-                  onChange={(e) => setNewBookRank(e.target.value)}
+                  onChange={(e) => setNewBookRank(e.target.value as BookRank)}
                   className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-slate-800 text-slate-800"
                 >
-                  <option value="Top Seller">Top Seller</option>
-                  <option value="Best Seller">Best Seller</option>
-                  <option value="High Performer">High Performer</option>
-                  <option value="Standard">Standard</option>
-                  <option value="Slow Moving">Slow Moving</option>
-                  <option value="New Release">New Release</option>
+                  <option value="Top Seller">Top Seller (TS)</option>
+                  <option value="Medium Seller">Medium Seller (MS)</option>
+                  <option value="Slow Mover">Slow Mover (SM)</option>
+                  <option value="Never Sell">Never Sell (NS)</option>
+                  <option value="Unknown">Unknown (UNK)</option>
                 </select>
               </div>
               <div className="space-y-1">
@@ -1193,6 +1289,18 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                     className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-2.5 py-2 text-xs font-semibold focus:outline-none focus:border-slate-800 text-slate-800"
                   />
                 </div>
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Primary Classification</label>
+                <select 
+                  value={newPrimaryClassification}
+                  onChange={(e) => setNewPrimaryClassification(e.target.value as PrimaryBookClassification)}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold focus:outline-none focus:border-slate-800 text-slate-800"
+                >
+                  {bookClassifications.map(clf => (
+                    <option key={clf} value={clf}>{clf}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -1274,8 +1382,8 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                 <label className="text-[10px] font-bold text-slate-400 uppercase">Copies In Stock</label>
                 <input 
                   type="number" 
-                  value={editingItem.quantity}
-                  onChange={(e) => setEditingItem({ ...editingItem, quantity: Math.max(0, Number(e.target.value)) })}
+                  value={editingItem.quantity === 0 ? 0 : (editingItem.quantity || "")}
+                  onChange={(e) => setEditingItem({ ...editingItem, quantity: e.target.value === "" ? 0 : Math.max(0, Number(e.target.value)) })}
                   min="0"
                   className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-slate-800"
                 />
@@ -1284,8 +1392,8 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                 <label className="text-[10px] font-bold text-slate-400 uppercase">In Store Allocation</label>
                 <input 
                   type="number" 
-                  value={editingItem.inStore ?? 0}
-                  onChange={(e) => setEditingItem({ ...editingItem, inStore: Math.max(0, Number(e.target.value)) })}
+                  value={editingItem.inStore === 0 ? 0 : (editingItem.inStore || "")}
+                  onChange={(e) => setEditingItem({ ...editingItem, inStore: e.target.value === "" ? 0 : Math.max(0, Number(e.target.value)) })}
                   min="0"
                   className={`w-full bg-white border rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-slate-800 ${
                     (editingItem.inStore ?? 0) + (editingItem.office ?? 0) !== editingItem.quantity ? "border-red-500 bg-red-50 text-red-900" : "border-slate-200"
@@ -1296,8 +1404,8 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                 <label className="text-[10px] font-bold text-slate-400 uppercase">Office Allocation</label>
                 <input 
                   type="number" 
-                  value={editingItem.office ?? 0}
-                  onChange={(e) => setEditingItem({ ...editingItem, office: Math.max(0, Number(e.target.value)) })}
+                  value={editingItem.office === 0 ? 0 : (editingItem.office || "")}
+                  onChange={(e) => setEditingItem({ ...editingItem, office: e.target.value === "" ? 0 : Math.max(0, Number(e.target.value)) })}
                   min="0"
                   className={`w-full bg-white border rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-slate-800 ${
                     (editingItem.inStore ?? 0) + (editingItem.office ?? 0) !== editingItem.quantity ? "border-red-500 bg-red-50 text-red-900" : "border-slate-200"
@@ -1334,16 +1442,19 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-slate-400 uppercase">Book Rank</label>
                 <select 
-                  value={editingItem.bookRank || "Standard"}
+                  value={editingItem.bookRank || "Unknown"}
                   onChange={(e) => setEditingItem({ ...editingItem, bookRank: e.target.value })}
                   className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold focus:outline-none focus:border-slate-800 text-slate-800"
                 >
-                  <option value="Top Seller">Top Seller</option>
-                  <option value="Best Seller">Best Seller</option>
-                  <option value="High Performer">High Performer</option>
-                  <option value="Standard">Standard</option>
-                  <option value="Slow Moving">Slow Moving</option>
-                  <option value="New Release">New Release</option>
+                  <option value="Top Seller">Top Seller (TS)</option>
+                  <option value="Medium Seller">Medium Seller (MS)</option>
+                  <option value="Slow Mover">Slow Mover (SM)</option>
+                  <option value="Never Sell">Never Sell (NS)</option>
+                  <option value="Unknown">Unknown (UNK)</option>
+                  {/* Preserve legacy value display if existing item has legacy rank */}
+                  {editingItem.bookRank && !["Top Seller", "Medium Seller", "Slow Mover", "Never Sell", "Unknown"].includes(editingItem.bookRank) && (
+                    <option value={editingItem.bookRank}>{editingItem.bookRank} (Legacy)</option>
+                  )}
                 </select>
               </div>
               <div className="space-y-1">
@@ -1371,6 +1482,18 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                     className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-2.5 py-2 text-xs font-semibold focus:outline-none focus:border-slate-800 text-slate-800"
                   />
                 </div>
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Primary Classification</label>
+                <select 
+                  value={editingItem.primaryClassification || bookClassifications[0] || "Mindset & Personal Development"}
+                  onChange={(e) => setEditingItem({ ...editingItem, primaryClassification: e.target.value as PrimaryBookClassification })}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold focus:outline-none focus:border-slate-800 text-slate-800"
+                >
+                  {bookClassifications.map(clf => (
+                    <option key={clf} value={clf}>{clf}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -1581,7 +1704,14 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                             <div>
                               <span className="text-slate-400 block font-bold uppercase text-[8px] tracking-tight mb-0.5">Book Rank</span>
                               <span className="font-extrabold text-slate-800 block uppercase">
-                                {item.bookRank || "Standard"}
+                                {item.bookRank || "Unknown"}
+                              </span>
+                            </div>
+
+                            <div className="col-span-2 pt-1 border-t border-slate-100/70">
+                              <span className="text-slate-400 block font-bold uppercase text-[8px] tracking-tight mb-0.5">Primary Classification</span>
+                              <span className="px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider inline-block bg-purple-50 text-purple-900 border border-purple-200">
+                                {item.primaryClassification || "Mainstream"}
                               </span>
                             </div>
                           </div>
@@ -1636,8 +1766,8 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                                 <label className="text-[9px] font-bold text-slate-400 uppercase block">In Store</label>
                                 <input 
                                   type="number"
-                                  value={item.inStore ?? 0}
-                                  onChange={(e) => handleLocationUpdate(item.id, Number(e.target.value), item.office ?? 0)}
+                                  value={item.inStore === 0 ? 0 : (item.inStore || "")}
+                                  onChange={(e) => handleLocationUpdate(item.id, e.target.value === "" ? 0 : Math.max(0, Number(e.target.value)), item.office ?? 0)}
                                   min="0"
                                   className={`w-full bg-slate-50 border rounded-lg p-1.5 text-xs font-mono font-bold focus:outline-none focus:border-slate-800 ${
                                     (item.inStore ?? 0) + (item.office ?? 0) !== item.quantity ? "border-red-500 bg-red-50 text-red-900" : "border-slate-200"
@@ -1649,8 +1779,8 @@ export default function LuxeInventory({ inventory, onUpdateInventory, settings }
                                 <label className="text-[9px] font-bold text-slate-400 uppercase block">Office</label>
                                 <input 
                                   type="number"
-                                  value={item.office ?? 0}
-                                  onChange={(e) => handleLocationUpdate(item.id, item.inStore ?? 0, Number(e.target.value))}
+                                  value={item.office === 0 ? 0 : (item.office || "")}
+                                  onChange={(e) => handleLocationUpdate(item.id, item.inStore ?? 0, e.target.value === "" ? 0 : Math.max(0, Number(e.target.value)))}
                                   min="0"
                                   className={`w-full bg-slate-50 border rounded-lg p-1.5 text-xs font-mono font-bold focus:outline-none focus:border-slate-800 ${
                                     (item.inStore ?? 0) + (item.office ?? 0) !== item.quantity ? "border-red-500 bg-red-50 text-red-900" : "border-slate-200"

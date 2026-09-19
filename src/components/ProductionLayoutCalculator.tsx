@@ -11,12 +11,14 @@ import {
   Grid, 
   Maximize2, 
   Info,
-  FileText
+  FileText,
+  User
 } from "lucide-react";
 import { SystemSettings, SavedQuotation } from "../types";
 import { DEFAULT_QUOTE_TEMPLATES, formatQuoteTemplate } from "../utils/settingsHelper";
 import { normalizeQuotation } from "../utils/quotationUtils";
 import { loadEnvironmentQuotations, saveEnvironmentQuotations } from "../utils/environmentUtils";
+import { formatDimensionPair } from "../utils/measurementUtils";
 
 interface AdditionalCharge {
   id: string;
@@ -107,6 +109,14 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
     return localStorage.getItem("calc_prod_discount") || "0";
   });
 
+  // Optional Order & Client Information
+  const [clientName, setClientName] = useState(() => {
+    return localStorage.getItem("calc_prod_client_name") || "";
+  });
+  const [customizationNotes, setCustomizationNotes] = useState(() => {
+    return localStorage.getItem("calc_prod_customization") || "";
+  });
+
   // UI state
   const [showAdditional, setShowAdditional] = useState(true);
   const [newChargeName, setNewChargeName] = useState("");
@@ -127,11 +137,13 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
     localStorage.setItem("calc_prod_customer_qty", customerQty);
     localStorage.setItem("calc_prod_margin", productionMargin);
     localStorage.setItem("calc_prod_discount", discountPercent);
+    localStorage.setItem("calc_prod_client_name", clientName);
+    localStorage.setItem("calc_prod_customization", customizationNotes);
     localStorage.setItem("calc_prod_additional_charges", JSON.stringify(additionalCharges));
   }, [
     productType, customProductType, materialId, materialName,
     sheetWidth, sheetHeight, costPerSheet, prodWidth, prodHeight,
-    customerQty, productionMargin, discountPercent, additionalCharges
+    customerQty, productionMargin, discountPercent, clientName, customizationNotes, additionalCharges
   ]);
 
   // Dynamic Materials list based on Centralized System Settings
@@ -259,6 +271,8 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
     setAdditionalCharges([{ id: "1", name: "Design Fee", amount: "1000" }]);
     setIsQuoteOverridden(false);
     setManualQuote("");
+    setClientName("");
+    setCustomizationNotes("");
   };
 
   // Formatted display text for copying quote
@@ -290,8 +304,12 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
     if (prodTemplate) {
       return formatQuoteTemplate(prodTemplate.content, {
         CustomerResponse: customerResponseStr,
+        CustomerName: clientName.trim(),
+        ClientName: clientName.trim(),
+        Customization: customizationNotes.trim(),
+        CustomizationNotes: customizationNotes.trim(),
         MaterialName: materialName,
-        SheetSpecs: `${pw}" × ${ph}"`,
+        SheetSpecs: formatDimensionPair(pw, ph, "in", 2, true),
         Quantity: isItemValid ? reqQty : "",
         UnitPrice: isItemValid ? `JMD $${(finalQuote / reqQty).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "",
         Subtotal: isItemValid ? `JMD $${baseQuoteBeforeDiscount.toLocaleString()}` : "",
@@ -307,10 +325,21 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
     }
 
     const sections: string[] = [];
-    sections.push("Thank you so much for providing those details. Here is your personalized quote based on your request:");
+    const greeting = clientName.trim()
+      ? `Hi ${clientName.trim()},\n\nThank you so much for providing those details. Here is your personalized quotation based on your request:`
+      : "Thank you so much for providing those details. Here is your personalized quotation based on your request:";
+    sections.push(greeting);
+
+    if (clientName.trim()) {
+      sections.push(`Client: ${clientName.trim()}`);
+    }
+
+    if (customizationNotes.trim()) {
+      sections.push(`Customization / Reference: ${customizationNotes.trim()}`);
+    }
 
     if (isItemValid) {
-      sections.push(`Production Details:\n* Item: ${reqQty} ${displayProductTitle} (${pw}" × ${ph}")\n* Material: ${materialName}`);
+      sections.push(`Production Details:\n* Item: ${reqQty} ${displayProductTitle} (${formatDimensionPair(pw, ph, "in", 2, true)})\n* Material: ${materialName}`);
     }
 
     if (addChargesStr) {
@@ -345,7 +374,7 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
     const newQuote: SavedQuotation = normalizeQuotation({
       id: "quote_" + Date.now(),
       quoteNumber: `LAY-QT-${Math.floor(1000 + Math.random() * 9000)}`,
-      clientName: "Layout Print Order",
+      clientName: clientName.trim() || "Layout Print Order",
       toolType: "layout",
       title: `${reqQty} Units ${prodName} (${materialName})`,
       date: new Date().toISOString().split("T")[0],
@@ -381,7 +410,6 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
           </div>
           <div>
             <h3 className="text-sm font-extrabold text-slate-900 tracking-tight">Production Layout Calculator</h3>
-            <p className="text-[10px] font-medium text-slate-500">Calculate print sheet layout efficiency, production yield, &amp; customer quote</p>
           </div>
         </div>
 
@@ -400,6 +428,42 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
         
         {/* LEFT COLUMN: Inputs (7 cols) */}
         <div className="lg:col-span-7 space-y-5">
+
+          {/* Order & Client Information — Optional */}
+          <div className="bg-slate-50/70 border border-slate-200/60 rounded-2xl p-4 space-y-3">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+              <User className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Order &amp; Client Information <span className="text-[10px] font-normal text-slate-400">— Optional</span></span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 block">
+                  Client / Customer Name
+                </label>
+                <input
+                  type="text"
+                  value={clientName}
+                  onChange={(e) => setClientName(e.target.value)}
+                  placeholder="e.g. John Smith"
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-hidden focus:border-indigo-500 transition-all"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 block">
+                  Customization / Reference
+                </label>
+                <input
+                  type="text"
+                  value={customizationNotes}
+                  onChange={(e) => setCustomizationNotes(e.target.value)}
+                  placeholder="e.g. Gloss finish / Job #102"
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-hidden focus:border-indigo-500 transition-all"
+                />
+              </div>
+            </div>
+          </div>
           
           {/* Section 1: Product Type & Material Selection */}
           <div className="bg-slate-50/70 border border-slate-200/60 rounded-2xl p-4 space-y-3.5">
@@ -453,7 +517,7 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
                   >
                     {materialsList.map(m => (
                       <option key={m.id} value={m.id}>
-                        {m.name} ({m.width}"×{m.height}" @ ${m.cost})
+                        {m.name} ({formatDimensionPair(m.width, m.height, "in")} @ ${m.cost})
                       </option>
                     ))}
                   </select>
@@ -474,7 +538,7 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
                 >
                   {materialsList.map(m => (
                     <option key={m.id} value={m.id}>
-                      {m.name} ({m.width}"×{m.height}" @ ${m.cost})
+                      {m.name} ({formatDimensionPair(m.width, m.height, "in")} @ ${m.cost})
                     </option>
                   ))}
                 </select>
@@ -701,7 +765,7 @@ export default function ProductionLayoutCalculator({ settings }: ProductionLayou
                 <Grid className="w-4 h-4" /> Visual Sheet Layout
               </span>
               <span className="text-[10px] text-slate-400 font-mono">
-                {sw}" × {sh}" Sheet
+                {formatDimensionPair(sw, sh, "in")} Sheet
               </span>
             </div>
 

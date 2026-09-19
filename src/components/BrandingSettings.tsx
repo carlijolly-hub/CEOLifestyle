@@ -37,6 +37,7 @@ import {
   Truck,
   MapPin,
   Package,
+  Archive,
   MessageSquareQuote,
   MessageSquare,
   Copy,
@@ -46,10 +47,13 @@ import {
   Tag,
   Filter,
   Plus,
-  Crown
+  Crown,
+  X,
+  HeartHandshake
 } from "lucide-react";
-import { SystemSettings, Client, LuxeBookInventoryItem, ProductionMaterialPreset, BackupRecord, DTFSupplier, DTFPricingPreset, DeliveryMethod, SystemQuoteTemplate } from "../types";
-import { DEFAULT_PRODUCTION_MATERIALS, DEFAULT_DTF_SUPPLIERS, DEFAULT_DTF_PRICING, DEFAULT_DELIVERY_METHODS, DEFAULT_QUOTE_TEMPLATES, formatQuoteTemplate } from "../utils/settingsHelper";
+import { CmtManagementModal } from "./CmtManagementModal";
+import { SystemSettings, Client, AspiringClient, LuxeBookInventoryItem, ProductionMaterialPreset, BackupRecord, DTFSupplier, DTFPricingPreset, DeliveryMethod, SystemQuoteTemplate, FulfillmentTemplate, FulfillmentTemplateItem, SupplierRecord, ContactRecord } from "../types";
+import { DEFAULT_PRODUCTION_MATERIALS, DEFAULT_DTF_SUPPLIERS, DEFAULT_DTF_PRICING, DEFAULT_DELIVERY_METHODS, DEFAULT_QUOTE_TEMPLATES, DEFAULT_FULFILLMENT_TEMPLATES, DEFAULT_SUPPLIER_DIRECTORY, DEFAULT_CONTACT_DIRECTORY, DEFAULT_CONTACT_SUPPLIER_DIRECTORY, formatQuoteTemplate, calculateBulkPurchaseQty } from "../utils/settingsHelper";
 import { 
   exportExcelBackup, 
   exportJsonBackup, 
@@ -61,7 +65,13 @@ import {
 } from "../utils/backupUtils";
 import ClientExportModal from "./ClientExportModal";
 import ClientTierManagement from "./ClientTierManagement";
-import EnvironmentManagement from "./EnvironmentManagement";
+import { ClientManagementSettings } from "./ClientManagementSettings";
+import PeakPlannerManager from "./PeakPlannerManager";
+import { ContactSupplierDirectoryManager } from "./ContactSupplierDirectoryManager";
+import { CommunicationsLibrary } from "./CommunicationsLibrary";
+import { ClientSettingsHub } from "./ClientSettingsHub";
+import { ProductManagementHub } from "./ProductManagementHub";
+import { RemoveRecordsHub } from "./RemoveRecordsHub";
 
 interface BrandingSettingsProps {
   appBg: string;
@@ -81,6 +91,10 @@ interface BrandingSettingsProps {
   clients?: Client[];
   onUpdateClients?: (updatedClients: Client[]) => void;
   onNavigateToClient?: (clientId: string) => void;
+  aspiringClients?: AspiringClient[];
+  onUpdateAspiringClients?: (updatedAspiring: AspiringClient[]) => void;
+  inventory?: LuxeBookInventoryItem[];
+  onUpdateInventory?: (updatedInventory: LuxeBookInventoryItem[]) => void;
 }
 
 const GUIDE_MODULES = [
@@ -257,13 +271,49 @@ export default function BrandingSettings({
   onNavigateToTab,
   clients = [],
   onUpdateClients,
-  onNavigateToClient
+  onNavigateToClient,
+  aspiringClients = [],
+  onUpdateAspiringClients,
+  inventory = [],
+  onUpdateInventory
 }: BrandingSettingsProps) {
   const isMasterAdmin = userRole === "Master Administrator" || userRole?.toLowerCase().includes("master");
 
   const [activeSubTab, setActiveSubTab] = useState<
-    "environment_management" | "business" | "tier_management" | "delivery_methods" | "quote_templates" | "production_materials" | "inventory" | "reminders" | "branding" | "security" | "preferences" | "expansion" | "backup" | "guide"
-  >(isMasterAdmin ? "environment_management" : "business");
+    "business" | "peak_planner" | "product_management" | "fulfillment_templates" | "client" | "tier_management" | "client_management" | "cmts" | "supplier_directory" | "contact_directory" | "delivery_methods" | "quote_templates" | "communications_library" | "production_materials" | "inventory" | "reminders" | "branding" | "security" | "preferences" | "expansion" | "backup" | "guide" | "data_management" | "remove_records"
+  >("business");
+
+  // Contact & Supplier Directory state
+  const [contactsSupplierList, setContactsSupplierList] = useState<any[]>(() => {
+    if (settings.contactSupplierDirectory && Array.isArray(settings.contactSupplierDirectory) && settings.contactSupplierDirectory.length > 0) {
+      return settings.contactSupplierDirectory;
+    }
+    const saved = localStorage.getItem("ceo_contact_supplier_directory_v1");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch (e) {}
+    }
+    return DEFAULT_CONTACT_SUPPLIER_DIRECTORY;
+  });
+
+  const handleUpdateContactSuppliers = (updated: any[]) => {
+    setContactsSupplierList(updated);
+    setLocalSettings(prev => ({ 
+      ...prev, 
+      contactSupplierDirectory: updated,
+      supplierDirectory: updated,
+      contactDirectory: updated
+    }));
+    localStorage.setItem("ceo_contact_supplier_directory_v1", JSON.stringify(updated));
+    onUpdateSettings({ 
+      ...settings, 
+      contactSupplierDirectory: updated,
+      supplierDirectory: updated,
+      contactDirectory: updated
+    });
+  };
 
   // Production materials internal subtab
   const [prodMatSubTab, setProdMatSubTab] = useState<"dtf_suppliers" | "dtf_pricing" | "paper">("dtf_suppliers");
@@ -272,6 +322,131 @@ export default function BrandingSettings({
   const [localSettings, setLocalSettings] = useState<SystemSettings>({ ...settings });
   const [saveSuccess, setSaveSuccess] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [newClassificationInput, setNewClassificationInput] = useState("");
+
+  // Fulfillment Templates state
+  const [ftTemplates, setFtTemplates] = useState<FulfillmentTemplate[]>(() => {
+    let existing: FulfillmentTemplate[] = [];
+    if (localSettings.fulfillmentTemplates && Array.isArray(localSettings.fulfillmentTemplates) && localSettings.fulfillmentTemplates.length > 0) {
+      existing = localSettings.fulfillmentTemplates;
+    } else {
+      const saved = localStorage.getItem("ceo_fulfillment_templates_v1");
+      if (saved) {
+        try { existing = JSON.parse(saved); } catch (e) {}
+      }
+    }
+    if (existing && existing.length > 0) {
+      const missingDefaults = DEFAULT_FULFILLMENT_TEMPLATES.filter(
+        def => !existing.some(p => p.productName.trim().toLowerCase() === def.productName.trim().toLowerCase())
+      );
+      if (missingDefaults.length > 0) {
+        return [...existing, ...missingDefaults];
+      }
+      return existing;
+    }
+    return DEFAULT_FULFILLMENT_TEMPLATES;
+  });
+
+  const [ftEditingId, setFtEditingId] = useState<string | null>(null);
+  const [ftProductNameInput, setFtProductNameInput] = useState("");
+  const [ftComponentsInput, setFtComponentsInput] = useState<FulfillmentTemplateItem[]>([]);
+
+  const syncFulfillmentTemplates = (updated: FulfillmentTemplate[]) => {
+    setFtTemplates(updated);
+    setLocalSettings(prev => ({ ...prev, fulfillmentTemplates: updated }));
+    localStorage.setItem("ceo_fulfillment_templates_v1", JSON.stringify(updated));
+    onUpdateSettings({ ...settings, fulfillmentTemplates: updated });
+  };
+
+  const handleFtStartNew = () => {
+    setFtEditingId("new");
+    setFtProductNameInput("");
+    setFtComponentsInput([
+      { id: `c-${Date.now()}-1`, componentName: "", quantity: 1, unitLabel: "" }
+    ]);
+  };
+
+  const handleFtStartEdit = (template: FulfillmentTemplate) => {
+    setFtEditingId(template.id);
+    setFtProductNameInput(template.productName);
+    setFtComponentsInput(template.components.map(c => ({ ...c })));
+  };
+
+  const handleFtSave = () => {
+    if (!ftProductNameInput.trim()) {
+      alert("Please enter a product name for the fulfillment template.");
+      return;
+    }
+    const cleanComponents = ftComponentsInput
+      .filter(c => c.componentName.trim() !== "")
+      .map((c, idx) => ({
+        id: c.id || `comp-${idx}-${Date.now()}`,
+        componentName: c.componentName.trim(),
+        quantity: Math.max(0.01, Number(c.quantity) || 1),
+        unitLabel: c.unitLabel?.trim() || undefined,
+        notes: c.notes?.trim() || undefined,
+
+        // Bulk rule fields
+        bulkEnabled: c?.bulkEnabled !== false,
+        bulkRuleActive: c?.bulkRuleActive !== false,
+        bulkUnitLabel: c.bulkUnitLabel?.trim() || undefined,
+        minPurchaseQty: c.minPurchaseQty ? Math.max(0, Number(c.minPurchaseQty)) : undefined,
+        bulkIncrement: c.bulkIncrement ? Math.max(0, Number(c.bulkIncrement)) : (c.bulkPurchaseMultiple ? Math.max(0, Number(c.bulkPurchaseMultiple)) : undefined),
+        bulkTierRules: Array.isArray(c.bulkTierRules) ? c.bulkTierRules.filter(t => t.minReq >= 0 && t.purchaseQty >= 0) : [],
+        bulkNotes: c.bulkNotes?.trim() || undefined,
+
+        // Legacy fields preserved
+        bulkPurchaseMultiple: c.bulkIncrement || c.bulkPurchaseMultiple,
+        bulkRuleType: c.bulkRuleType || "multiples"
+      }));
+
+    if (cleanComponents.length === 0) {
+      alert("Please add at least one valid component item to the template.");
+      return;
+    }
+
+    if (ftEditingId === "new") {
+      const newTpl: FulfillmentTemplate = {
+        id: `ft-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+        productName: ftProductNameInput.trim(),
+        enabled: true,
+        components: cleanComponents
+      };
+      syncFulfillmentTemplates([...ftTemplates, newTpl]);
+    } else if (ftEditingId) {
+      const updated = ftTemplates.map(t => {
+        if (t.id === ftEditingId) {
+          return {
+            ...t,
+            productName: ftProductNameInput.trim(),
+            components: cleanComponents
+          };
+        }
+        return t;
+      });
+      syncFulfillmentTemplates(updated);
+    }
+    setFtEditingId(null);
+  };
+
+  const handleFtDelete = (id: string) => {
+    if (confirm("Are you sure you want to delete this fulfillment template?")) {
+      syncFulfillmentTemplates(ftTemplates.filter(t => t.id !== id));
+      if (ftEditingId === id) setFtEditingId(null);
+    }
+  };
+
+  const handleFtToggle = (id: string) => {
+    const updated = ftTemplates.map(t => t.id === id ? { ...t, enabled: !t.enabled } : t);
+    syncFulfillmentTemplates(updated);
+  };
+
+  const handleFtResetDefaults = () => {
+    if (confirm("Reset fulfillment templates to default system presets?")) {
+      syncFulfillmentTemplates(DEFAULT_FULFILLMENT_TEMPLATES);
+      setFtEditingId(null);
+    }
+  };
 
   // Quote Templates Management State
   const [templateSearchQuery, setTemplateSearchQuery] = useState("");
@@ -432,7 +607,7 @@ export default function BrandingSettings({
     backupDate?: string;
     createdBy?: string;
     notes?: string;
-    itemCounts?: { clients: number; aspiringClients: number; inventory: number; users: number };
+    itemCounts?: { clients: number; aspiringClients: number; inventory: number; users: number; totalBooks?: number; operationsOrders?: number };
     rawPayload: any;
     error?: string;
   } | null>(null);
@@ -498,28 +673,28 @@ export default function BrandingSettings({
     setGuideLogs(prev => prev.filter(log => log.id !== id));
   };
 
-  // Test Environment Export Handlers (V2.1)
+  // System Database Export Handlers (V2.1)
   const handleTriggerTestEnvExcel = () => {
     try {
       const record = exportTestEnvironmentBackup("xlsx", manualBackupNotes, userFullName || "Master Administrator");
-      setBackupFileSuccess(`Test Environment Backup (.xlsx) generated successfully! File: ${record.fileName || "CEO_Lifestyle_Test_Environment_Backup_V2.1.xlsx"}`);
+      setBackupFileSuccess(`System Database Backup (.xlsx) generated successfully! File: ${record.fileName || "CEO_Lifestyle_Backup_V2.1.xlsx"}`);
       setBackupFileError("");
       setManualBackupNotes("");
       setBackupHistoryList(getBackupHistory());
     } catch (err: any) {
-      setBackupFileError(`Failed to export test environment Excel backup: ${err.message || String(err)}`);
+      setBackupFileError(`Failed to export system database Excel backup: ${err.message || String(err)}`);
     }
   };
 
   const handleTriggerTestEnvJson = () => {
     try {
       const record = exportTestEnvironmentBackup("json", manualBackupNotes, userFullName || "Master Administrator");
-      setBackupFileSuccess(`Test Environment Backup (.json) generated successfully! File: ${record.fileName || "CEO_Lifestyle_Test_Environment_Backup_V2.1.json"}`);
+      setBackupFileSuccess(`System Database Backup (.json) generated successfully! File: ${record.fileName || "CEO_Lifestyle_Backup_V2.1.json"}`);
       setBackupFileError("");
       setManualBackupNotes("");
       setBackupHistoryList(getBackupHistory());
     } catch (err: any) {
-      setBackupFileError(`Failed to export test environment JSON backup: ${err.message || String(err)}`);
+      setBackupFileError(`Failed to export system database JSON backup: ${err.message || String(err)}`);
     }
   };
 
@@ -844,20 +1019,6 @@ export default function BrandingSettings({
             System Modules
           </span>
 
-          {isMasterAdmin && (
-            <button
-              onClick={() => setActiveSubTab("environment_management")}
-              className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
-                activeSubTab === "environment_management"
-                  ? "bg-slate-900 text-amber-300 shadow-md ring-1 ring-amber-400/40"
-                  : "bg-slate-900/10 text-slate-800 hover:bg-slate-900/20"
-              }`}
-            >
-              <Database className="w-4 h-4 text-amber-500" />
-              <span>Environment Management</span>
-            </button>
-          )}
-          
           <button
             onClick={() => setActiveSubTab("business")}
             className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
@@ -871,63 +1032,65 @@ export default function BrandingSettings({
           </button>
 
           <button
-            onClick={() => setActiveSubTab("tier_management")}
+            onClick={() => setActiveSubTab("peak_planner")}
             className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
-              activeSubTab === "tier_management"
-                ? "bg-amber-600 text-white shadow-xs"
-                : "text-amber-700 hover:text-amber-900 hover:bg-amber-50/60"
+              activeSubTab === "peak_planner"
+                ? "bg-rose-600 text-white shadow-xs"
+                : "text-rose-700 hover:text-rose-900 hover:bg-rose-50/60"
             }`}
           >
-            <Crown className="w-4 h-4 text-amber-500 group-hover:text-amber-600" />
-            Client Tier Management
+            <Sparkles className="w-4 h-4 text-rose-500 group-hover:text-rose-600" />
+            <span>Peak Planner (5 Core Peaks)</span>
           </button>
 
+          {/* PRODUCT MANAGEMENT */}
           <button
-            onClick={() => setActiveSubTab("delivery_methods")}
-            className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
-              activeSubTab === "delivery_methods"
+            onClick={() => setActiveSubTab("product_management")}
+            className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+              activeSubTab === "product_management" || activeSubTab === "fulfillment_templates" || activeSubTab === "production_materials" || activeSubTab === "inventory"
                 ? "bg-indigo-600 text-white shadow-xs"
                 : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
             }`}
           >
-            <Truck className="w-4 h-4" />
-            Delivery & Collection
+            <Package className="w-4 h-4" />
+            <span>Product Management</span>
+          </button>
+
+          {/* CLIENT */}
+          <button
+            onClick={() => setActiveSubTab("client")}
+            className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+              activeSubTab === "client" || activeSubTab === "tier_management" || activeSubTab === "client_management" || activeSubTab === "cmts"
+                ? "bg-amber-600 text-white shadow-xs"
+                : "text-amber-800 hover:text-amber-950 hover:bg-amber-50/80"
+            }`}
+          >
+            <Users className="w-4 h-4 text-amber-500" />
+            <span>Client</span>
           </button>
 
           <button
-            onClick={() => setActiveSubTab("quote_templates")}
+            onClick={() => setActiveSubTab("contact_directory")}
             className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
-              activeSubTab === "quote_templates"
+              activeSubTab === "contact_directory" || activeSubTab === "supplier_directory"
+                ? "bg-indigo-600 text-white shadow-xs"
+                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+            }`}
+          >
+            <Users className="w-4 h-4 text-indigo-400" />
+            <span>Contact Directory</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab("communications_library")}
+            className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
+              activeSubTab === "communications_library" || activeSubTab === "quote_templates" || activeSubTab === "delivery_methods"
                 ? "bg-indigo-600 text-white shadow-xs"
                 : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
             }`}
           >
             <MessageSquareQuote className="w-4 h-4" />
-            Quote &amp; Message Templates
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab("production_materials")}
-            className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
-              activeSubTab === "production_materials"
-                ? "bg-indigo-600 text-white shadow-xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            Production Materials
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab("inventory")}
-            className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
-              activeSubTab === "inventory"
-                ? "bg-indigo-600 text-white shadow-xs"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            Inventory Control
+            Communications Library
           </button>
 
           <button
@@ -1006,6 +1169,20 @@ export default function BrandingSettings({
             </button>
           )}
 
+          {userRole === "Master Administrator" && (
+            <button
+              onClick={() => setActiveSubTab("data_management")}
+              className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
+                activeSubTab === "data_management" || activeSubTab === "remove_records"
+                  ? "bg-rose-600 text-white shadow-xs"
+                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+              }`}
+            >
+              <Trash2 className="w-4 h-4 text-inherit" />
+              <span>Data Management</span>
+            </button>
+          )}
+
           <button
             onClick={() => setActiveSubTab("expansion")}
             className={`w-full flex items-center gap-2.5 px-3.5 py-3 rounded-2xl text-xs font-bold transition-all ${
@@ -1022,23 +1199,69 @@ export default function BrandingSettings({
         {/* Right Column Content Areas */}
         <div className="lg:col-span-9">
 
-          {/* ENVIRONMENT MANAGEMENT */}
-          {activeSubTab === "environment_management" && (
-            <EnvironmentManagement 
-              userRole={userRole} 
-              userFullName={userFullName} 
+          {/* CLIENT SETTINGS HUB (CONTROLLED CAROUSEL NAVIGATION: TIER MANAGEMENT • CLIENT MANAGEMENT • CMTS MANAGEMENT) */}
+          {/* CLIENT SETTINGS HUB */}
+          {(activeSubTab === "client" || activeSubTab === "tier_management" || activeSubTab === "client_management" || activeSubTab === "cmts") && (
+            <ClientSettingsHub
+              clients={clients}
+              onUpdateClients={onUpdateClients}
+              onNavigateToTab={onNavigateToTab}
+              onNavigateToClient={onNavigateToClient}
+              initialIndex={
+                activeSubTab === "tier_management"
+                  ? 0
+                  : activeSubTab === "client_management"
+                  ? 1
+                  : activeSubTab === "cmts"
+                  ? 2
+                  : undefined
+              }
             />
           )}
 
-          {/* CLIENT TIER MANAGEMENT */}
-          {activeSubTab === "tier_management" && (
-            <ClientTierManagement 
-              clients={clients} 
-              onUpdateClients={onUpdateClients}
-              onNavigateToClient={onNavigateToClient}
+          {/* PRODUCT MANAGEMENT HUB */}
+          {(activeSubTab === "product_management" || activeSubTab === "fulfillment_templates" || activeSubTab === "production_materials" || activeSubTab === "inventory") && (
+            <ProductManagementHub
+              settings={localSettings}
+              onUpdateSettings={(field, value) => {
+                handleChange(field, value);
+                if (field === "fulfillmentTemplates") {
+                  setFtTemplates(value);
+                }
+              }}
+              userFullName={userFullName}
+              isMasterAdmin={isMasterAdmin}
+              initialIndex={
+                activeSubTab === "fulfillment_templates"
+                  ? 0
+                  : activeSubTab === "production_materials"
+                  ? 1
+                  : activeSubTab === "inventory"
+                  ? 2
+                  : undefined
+              }
+            />
+          )}
+
+          {/* CONTACT & SUPPLIER DIRECTORY */}
+          {(activeSubTab === "contact_directory" || activeSubTab === "supplier_directory") && (
+            <ContactSupplierDirectoryManager
+              contacts={contactsSupplierList}
+              onUpdateContacts={handleUpdateContactSuppliers}
             />
           )}
           
+          {/* PEAK PLANNER */}
+          {activeSubTab === "peak_planner" && (
+            <PeakPlannerManager 
+              settings={localSettings} 
+              onUpdateSettings={(newSet) => {
+                setLocalSettings(newSet);
+                onUpdateSettings(newSet);
+              }}
+            />
+          )}
+
           {/* 1. BUSINESS CALCULATIONS */}
           {activeSubTab === "business" && (
             <div className="bg-white border border-slate-200/60 rounded-3xl p-6 md:p-8 shadow-sm text-left space-y-6">
@@ -1133,661 +1356,606 @@ export default function BrandingSettings({
             </div>
           )}
 
-          {/* 2. DELIVERY & COLLECTION MANAGEMENT */}
-          {activeSubTab === "delivery_methods" && (
-            <div className="bg-white border border-slate-200/60 rounded-3xl p-6 md:p-8 shadow-sm text-left space-y-6">
-              <div className="pb-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-2xl text-indigo-700">
-                    <Truck className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">Delivery & Collection Management</h3>
-                    <p className="text-xs text-slate-500 font-medium">
-                      Manage centralized courier methods, pickup points, and customer quotation message templates.
-                    </p>
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const updated = (localSettings.deliveryMethods || DEFAULT_DELIVERY_METHODS);
-                      const newMethod: DeliveryMethod = {
-                        id: "del_" + Date.now(),
-                        name: "New Courier / Method",
-                        type: "delivery",
-                        defaultCost: 1200,
-                        active: true,
-                        messageTemplate: "Your order will be dispatched via local courier.\n\nTracking details will be provided upon shipment.",
-                        estimatedTime: "1-2 Days",
-                        notes: "Added method"
-                      };
-                      handleChange("deliveryMethods", [newMethod, ...updated]);
-                    }}
-                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <PlusCircle className="w-4 h-4" />
-                    Add Method
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (window.confirm("Reset all delivery methods to system default settings?")) {
-                        handleChange("deliveryMethods", DEFAULT_DELIVERY_METHODS);
-                      }
-                    }}
-                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all flex items-center gap-1 cursor-pointer"
-                  >
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Reset Defaults
-                  </button>
-                </div>
-              </div>
-
-              {/* Delivery Methods List */}
-              <div className="space-y-4">
-                {(!localSettings.deliveryMethods || localSettings.deliveryMethods.length === 0) ? (
-                  <div className="p-8 text-center bg-slate-50 border border-slate-200/60 rounded-2xl text-slate-500">
-                    No delivery methods configured. Click "Reset Defaults" or "Add Method" above.
-                  </div>
-                ) : (
-                  (localSettings.deliveryMethods || []).map((method, idx) => {
-                    const list = [...(localSettings.deliveryMethods || [])];
-                    return (
-                      <div 
-                        key={method.id} 
-                        className={`p-4 rounded-2xl border transition-all space-y-3 ${
-                          method.active 
-                            ? "bg-slate-50/70 border-slate-200/80 hover:border-slate-300" 
-                            : "bg-slate-100/50 border-slate-200 opacity-60"
-                        }`}
-                      >
-                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-200/60">
-                          <div className="flex items-center gap-3 flex-1">
-                            <input
-                              type="text"
-                              value={method.name}
-                              onChange={(e) => {
-                                list[idx] = { ...list[idx], name: e.target.value };
-                                handleChange("deliveryMethods", list);
-                              }}
-                              placeholder="Method Name (e.g. Knutsford Express)"
-                              className="font-extrabold text-xs text-slate-900 bg-white border border-slate-200/80 rounded-lg px-2.5 py-1.5 focus:border-indigo-500 focus:outline-none max-w-xs w-full"
-                            />
-                            
-                            <select
-                              value={method.type}
-                              onChange={(e) => {
-                                list[idx] = { ...list[idx], type: e.target.value as any };
-                                handleChange("deliveryMethods", list);
-                              }}
-                              className="bg-white border border-slate-200/80 text-[10px] font-bold uppercase rounded-lg px-2 py-1.5 text-slate-700"
-                            >
-                              <option value="delivery">🚚 Delivery</option>
-                              <option value="collection">🏢 Collection / Pickup</option>
-                              <option value="shipping">📦 Shipping / Courier</option>
-                            </select>
-                          </div>
-
-                          <div className="flex items-center gap-3 shrink-0">
-                            <div className="flex items-center gap-1">
-                              <span className="text-[10px] font-bold text-slate-400">Default Cost: J$</span>
-                              <input
-                                type="number"
-                                min="0"
-                                step="50"
-                                value={method.defaultCost}
-                                onChange={(e) => {
-                                  list[idx] = { ...list[idx], defaultCost: parseFloat(e.target.value) || 0 };
-                                  handleChange("deliveryMethods", list);
-                                }}
-                                className="w-24 font-mono font-bold text-xs bg-white border border-slate-200/80 rounded-lg px-2 py-1 text-slate-800"
-                              />
-                            </div>
-
-                            <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-600 cursor-pointer select-none">
-                              <input
-                                type="checkbox"
-                                checked={method.active}
-                                onChange={(e) => {
-                                  list[idx] = { ...list[idx], active: e.target.checked };
-                                  handleChange("deliveryMethods", list);
-                                }}
-                                className="rounded text-indigo-600 focus:ring-indigo-500"
-                              />
-                              Active
-                            </label>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const filtered = list.filter(item => item.id !== method.id);
-                                handleChange("deliveryMethods", filtered);
-                              }}
-                              className="text-slate-400 hover:text-red-600 transition-colors p-1"
-                              title="Delete Method"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Customer Quote Message Template */}
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 pt-1">
-                          <div className="md:col-span-8 space-y-1">
-                            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                              Automated Customer Quote Message Template
-                            </label>
-                            <textarea
-                              rows={3}
-                              value={method.messageTemplate}
-                              onChange={(e) => {
-                                list[idx] = { ...list[idx], messageTemplate: e.target.value };
-                                handleChange("deliveryMethods", list);
-                              }}
-                              placeholder="Message template appended to customer quotes..."
-                              className="w-full text-xs font-sans text-slate-800 bg-white border border-slate-200/80 rounded-xl p-2.5 focus:border-indigo-500 focus:outline-none"
-                            />
-                            <span className="text-[9px] text-slate-400 block font-medium">
-                              This exact text will be loaded automatically into book cost quotations when this method is selected.
-                            </span>
-                          </div>
-
-                          <div className="md:col-span-4 space-y-2 text-[10px]">
-                            <div>
-                              <label className="font-bold text-slate-500 uppercase tracking-wider block mb-0.5">Estimated Time</label>
-                              <input
-                                type="text"
-                                value={method.estimatedTime || ""}
-                                onChange={(e) => {
-                                  list[idx] = { ...list[idx], estimatedTime: e.target.value };
-                                  handleChange("deliveryMethods", list);
-                                }}
-                                placeholder="E.g. 24 Hours / 1-2 Days"
-                                className="w-full bg-white border border-slate-200/80 rounded-lg px-2 py-1 text-slate-800 font-medium"
-                              />
-                            </div>
-
-                            {method.type === "collection" && (
-                              <div>
-                                <label className="font-bold text-slate-500 uppercase tracking-wider block mb-0.5">Pickup Location</label>
-                                <input
-                                  type="text"
-                                  value={method.pickupLocation || ""}
-                                  onChange={(e) => {
-                                    list[idx] = { ...list[idx], pickupLocation: e.target.value };
-                                    handleChange("deliveryMethods", list);
-                                  }}
-                                  placeholder="E.g. Kingston Head Office"
-                                  className="w-full bg-white border border-slate-200/80 rounded-lg px-2 py-1 text-slate-800 font-medium"
-                                />
-                              </div>
-                            )}
-
-                            <div>
-                              <label className="font-bold text-slate-500 uppercase tracking-wider block mb-0.5">Notes / Logistics Info</label>
-                              <input
-                                type="text"
-                                value={method.notes || ""}
-                                onChange={(e) => {
-                                  list[idx] = { ...list[idx], notes: e.target.value };
-                                  handleChange("deliveryMethods", list);
-                                }}
-                                placeholder="Internal logistics notes"
-                                className="w-full bg-white border border-slate-200/80 rounded-lg px-2 py-1 text-slate-800 font-medium"
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* QUOTE & MESSAGE TEMPLATES MANAGEMENT */}
-          {activeSubTab === "quote_templates" && (
+          {/* FULFILLMENT TEMPLATES (BOM) MANAGEMENT (MOVED TO PRODUCT MANAGEMENT HUB) */}
+          {(activeSubTab as any) === "fulfillment_templates_old_deprecated" && (
             <div className="bg-white border border-slate-200/60 rounded-3xl p-6 md:p-8 shadow-sm text-left space-y-6">
               
               {/* Header */}
               <div className="pb-4 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-2.5 bg-indigo-50 border border-indigo-100 rounded-2xl text-indigo-700">
-                    <MessageSquareQuote className="w-5 h-5" />
+                  <div className="p-2.5 bg-purple-50 border border-purple-100 rounded-2xl text-purple-700">
+                    <Sliders className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-base font-bold text-slate-900">Quote &amp; Message Templates</h3>
-                    <p className="text-xs text-slate-400 font-medium">
-                      Centralized management for customer quotations, delivery notices, and automated communications.
+                    <h3 className="text-base font-bold text-slate-900">Product Fulfillment Templates (Bill of Materials)</h3>
+                    <p className="text-xs text-slate-500 font-medium mt-0.5">
+                      Define required component items per product. When an order arrives in NEW status, required items automatically expand into the live Fulfillment Center checklist.
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setShowAddTemplateModal(true)}
-                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl text-xs shadow-xs flex items-center gap-1.5 cursor-pointer transition-all"
+                    onClick={handleFtResetDefaults}
+                    className="px-3 py-2 text-xs font-bold text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-all cursor-pointer"
+                  >
+                    Reset Defaults
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleFtStartNew}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     <Plus className="w-4 h-4" />
-                    <span>New Template</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleResetAllQuoteTemplates}
-                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-2xl text-xs flex items-center gap-1.5 cursor-pointer transition-all"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-                    <span>Reset All Defaults</span>
+                    <span>Create Template</span>
                   </button>
                 </div>
               </div>
 
-              {/* Search & Category Filter Pills */}
-              <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-200/60">
-                {/* Category Pills */}
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
-                  {["All", "Customer Communication", "Sales Quotes", "Operations"].map((cat) => (
+              {/* Template Editor / Form (if editing/creating) */}
+              {ftEditingId && (
+                <div className="bg-slate-50 border-2 border-indigo-200/80 rounded-2xl p-5 md:p-6 space-y-5 animate-fade-in shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-indigo-600" />
+                      <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                        {ftEditingId === "new" ? "New Product Fulfillment Template" : "Edit Fulfillment Template"}
+                      </h4>
+                    </div>
                     <button
-                      key={cat}
                       type="button"
-                      onClick={() => setSelectedTemplateCategory(cat)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-                        selectedTemplateCategory === cat
-                          ? "bg-slate-900 text-white shadow-xs"
-                          : "bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-100"
-                      }`}
+                      onClick={() => setFtEditingId(null)}
+                      className="text-xs font-bold text-slate-400 hover:text-slate-700 cursor-pointer"
                     >
-                      {cat}
+                      Cancel
                     </button>
-                  ))}
-                </div>
+                  </div>
 
-                {/* Search Input */}
-                <div className="relative w-full md:w-64">
-                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={templateSearchQuery}
-                    onChange={(e) => setTemplateSearchQuery(e.target.value)}
-                    placeholder="Search templates or placeholders..."
-                    className="w-full bg-white border border-slate-200/80 rounded-xl pl-8 pr-3 py-1.5 text-xs font-medium text-slate-800 focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
+                  {/* Product Name Input */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-extrabold text-slate-700">
+                      Product Name <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g., Magic Heart Cube, Custom Gift Box, Custom Bouquet, T-Shirt..."
+                      value={ftProductNameInput}
+                      onChange={(e) => setFtProductNameInput(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-indigo-600 shadow-2xs"
+                    />
+                    <p className="text-[11px] text-slate-500">
+                      When an incoming order contains this product name, its fulfillment requirements will automatically populate in the Fulfillment Center.
+                    </p>
+                  </div>
 
-              {/* Templates List */}
-              <div className="space-y-6">
-                {(() => {
-                  const filtered = activeQuoteTemplates.filter((tpl) => {
-                    let matchesCategory = selectedTemplateCategory === "All";
-                    if (!matchesCategory) {
-                      if (selectedTemplateCategory === "Customer Communication") {
-                        matchesCategory = tpl.category === "Customer Communication" || tpl.category === "Customer Communications";
-                      } else if (selectedTemplateCategory === "Sales Quotes") {
-                        matchesCategory = tpl.category === "Sales Quotes" || tpl.category === "Quotations";
-                      } else if (selectedTemplateCategory === "Operations") {
-                        matchesCategory = tpl.category === "Operations" || tpl.category === "Delivery & Collection";
-                      } else {
-                        matchesCategory = tpl.category === selectedTemplateCategory;
-                      }
-                    }
-
-                    const query = templateSearchQuery.toLowerCase().trim();
-                    const matchesQuery = !query || 
-                      tpl.name.toLowerCase().includes(query) || 
-                      (tpl.description || "").toLowerCase().includes(query) || 
-                      tpl.content.toLowerCase().includes(query) ||
-                      (tpl.placeholders || []).some(p => p.toLowerCase().includes(query));
-                    return matchesCategory && matchesQuery;
-                  });
-
-                  if (filtered.length === 0) {
-                    return (
-                      <div className="text-center py-12 border-2 border-dashed border-slate-200 rounded-3xl space-y-2">
-                        <MessageSquare className="w-8 h-8 text-slate-300 mx-auto" />
-                        <p className="text-xs font-bold text-slate-600">No matching quote templates found.</p>
-                        <p className="text-[11px] text-slate-400">Try adjusting your search filter or add a new custom template.</p>
-                      </div>
-                    );
-                  }
-
-                  return filtered.map((tpl) => {
-                    const isPreviewOpen = activePreviewTemplateId === tpl.id;
-                    const renderedPreviewText = formatQuoteTemplate(tpl.content, DUMMY_PREVIEW_DATA);
-
-                    return (
-                      <div
-                        key={tpl.id}
-                        className={`border rounded-3xl p-5 md:p-6 transition-all space-y-4 ${
-                          tpl.active
-                            ? "bg-white border-slate-200 shadow-xs hover:border-slate-300"
-                            : "bg-slate-50/70 border-slate-200/60 opacity-75"
-                        }`}
-                      >
-                        {/* Card Header */}
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
-                              tpl.category === "Sales Quotes" || tpl.category === "Quotations"
-                                ? "bg-indigo-50 text-indigo-700 border border-indigo-200/60"
-                                : tpl.category === "Operations" || tpl.category === "Delivery & Collection"
-                                ? "bg-amber-50 text-amber-700 border border-amber-200/60"
-                                : "bg-emerald-50 text-emerald-700 border border-emerald-200/60"
-                            }`}>
-                              {tpl.category}
-                            </span>
-
-                            {tpl.toolKey && (
-                              <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold">
-                                Tool: {tpl.toolKey.toUpperCase()}
-                              </span>
-                            )}
-
-                            {tpl.isDefault && (
-                              <span className="px-2 py-0.5 rounded-md bg-blue-50 text-blue-600 text-[10px] font-bold border border-blue-200/50">
-                                System Default
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex items-center gap-3">
-                            <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-700">
-                              <input
-                                type="checkbox"
-                                checked={tpl.active}
-                                onChange={(e) => handleUpdateQuoteTemplate(tpl.id, { active: e.target.checked })}
-                                className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
-                              />
-                              <span>{tpl.active ? "Active" : "Disabled"}</span>
-                            </label>
-
-                            <div className="h-4 w-px bg-slate-200" />
-
-                            <button
-                              type="button"
-                              onClick={() => handleDuplicateQuoteTemplate(tpl)}
-                              title="Duplicate template"
-                              className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all cursor-pointer"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-
-                            {tpl.isDefault ? (
-                              <button
-                                type="button"
-                                onClick={() => handleRestoreTemplateDefault(tpl.id)}
-                                title="Restore system default wording"
-                                className="p-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all cursor-pointer flex items-center gap-1 text-[11px] font-bold"
-                              >
-                                <RotateCcw className="w-3.5 h-3.5" />
-                                <span className="hidden sm:inline">Restore Default</span>
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteQuoteTemplate(tpl.id)}
-                                title="Delete template"
-                                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Editable Name & Description */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="md:col-span-2 space-y-1">
-                            <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Template Name</label>
-                            <input
-                              type="text"
-                              value={tpl.name}
-                              onChange={(e) => handleUpdateQuoteTemplate(tpl.id, { name: e.target.value })}
-                              className="w-full bg-slate-50/80 border border-slate-200/80 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none"
-                            />
-                          </div>
-
-                          <div className="space-y-1">
-                            <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Associated Tool / Key</label>
-                            <select
-                              value={tpl.toolKey || "general"}
-                              onChange={(e) => handleUpdateQuoteTemplate(tpl.id, { toolKey: e.target.value as any })}
-                              className="w-full bg-slate-50/80 border border-slate-200/80 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none"
-                            >
-                              <option value="apparel">T-Shirt Studio</option>
-                              <option value="book">Book Cost Calculator</option>
-                              <option value="dtf">DTF Printing</option>
-                              <option value="production_layout">Production Layout</option>
-                              <option value="location">Location Logistics</option>
-                              <option value="general">General / Communications</option>
-                            </select>
-                          </div>
-
-                          <div className="md:col-span-3 space-y-1">
-                            <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Description / Application Note</label>
-                            <input
-                              type="text"
-                              value={tpl.description || ""}
-                              onChange={(e) => handleUpdateQuoteTemplate(tpl.id, { description: e.target.value })}
-                              placeholder="Brief description of where this message is used..."
-                              className="w-full bg-slate-50/80 border border-slate-200/80 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-600 focus:bg-white focus:border-indigo-500 focus:outline-none"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Dynamic Placeholders Toolbar */}
-                        <div className="space-y-1.5 pt-1">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider flex items-center gap-1">
-                              <Tag className="w-3 h-3 text-indigo-500" /> Dynamic Placeholders (Click tag to append to template)
-                            </span>
-                          </div>
-
-                          <div className="flex flex-wrap gap-1.5 bg-slate-50 p-2.5 rounded-2xl border border-slate-200/60">
-                            {[
-                              "{CustomerResponse}", "{CustomerName}", "{QuoteDate}", "{GarmentType}", "{GarmentItems}", "{BookTitle}", 
-                              "{BooksList}", "{BooksSubtotal}", "{TargetDestination}", "{Quantity}", "{UnitPrice}", "{Subtotal}", "{DiscountPercent}", "{DiscountAmount}", 
-                              "{GrandTotal}", "{DeliveryMethod}", "{DeliveryCharge}", "{DeliveryMessage}", 
-                              "{PickupLocation}", "{DepositAmount}", "{OrderNumber}", "{DueDate}", "{ProductionStatus}", "{BusinessName}"
-                            ].map((ph) => (
-                              <button
-                                key={ph}
-                                type="button"
-                                onClick={() => {
-                                  const newContent = tpl.content + " " + ph;
-                                  handleUpdateQuoteTemplate(tpl.id, { content: newContent });
-                                }}
-                                className="px-2 py-1 rounded-lg bg-white border border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/50 text-[11px] font-mono font-bold text-indigo-700 transition-all cursor-pointer shadow-2xs"
-                              >
-                                {ph}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Main Template Content Textarea */}
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] font-extrabold uppercase text-slate-400 tracking-wider">Template Wording / Structure</label>
-                          <textarea
-                            rows={8}
-                            value={tpl.content}
-                            onChange={(e) => handleUpdateQuoteTemplate(tpl.id, { content: e.target.value })}
-                            className="w-full bg-slate-900 text-slate-100 font-mono text-xs rounded-2xl p-4 border border-slate-800 focus:border-indigo-500 focus:outline-none leading-relaxed shadow-inner"
-                          />
-                        </div>
-
-                        {/* Live Preview Toggle & Panel */}
-                        <div className="pt-2">
-                          <div className="flex items-center justify-between">
-                            <button
-                              type="button"
-                              onClick={() => setActivePreviewTemplateId(isPreviewOpen ? null : tpl.id)}
-                              className="flex items-center gap-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer transition-all"
-                            >
-                              <Eye className="w-4 h-4" />
-                              <span>{isPreviewOpen ? "Hide Live Preview" : "View Live Customer Preview"}</span>
-                            </button>
-
-                            {isPreviewOpen && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  navigator.clipboard.writeText(renderedPreviewText);
-                                  setCopiedPreviewId(tpl.id);
-                                  setTimeout(() => setCopiedPreviewId(null), 2000);
-                                }}
-                                className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all"
-                              >
-                                {copiedPreviewId === tpl.id ? (
-                                  <>
-                                    <Check className="w-3.5 h-3.5 text-emerald-600" />
-                                    <span className="text-emerald-700">Copied!</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Copy className="w-3.5 h-3.5 text-slate-500" />
-                                    <span>Copy Sample Text</span>
-                                  </>
-                                )}
-                              </button>
-                            )}
-                          </div>
-
-                          {isPreviewOpen && (
-                            <div className="mt-3 bg-slate-50 border border-slate-200/80 rounded-2xl p-4 text-xs font-sans text-slate-800 space-y-2 animate-fade-in shadow-xs">
-                              <div className="flex items-center gap-2 border-b border-slate-200/60 pb-2 text-[10px] font-extrabold uppercase text-slate-400">
-                                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                                <span>Live Rendered Customer View (Simulated Sample Data)</span>
-                              </div>
-                              <pre className="whitespace-pre-wrap font-sans text-xs text-slate-800 leading-relaxed bg-white p-3.5 rounded-xl border border-slate-200/60 font-medium">
-                                {renderedPreviewText}
-                              </pre>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
-
-              {/* New Template Creation Modal */}
-              {showAddTemplateModal && createPortal(
-                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-                  <div className="bg-white rounded-3xl p-6 md:p-8 max-w-xl w-full space-y-5 shadow-2xl border border-slate-200 text-left relative my-auto animate-fade-in">
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                      <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
-                        <Plus className="w-5 h-5 text-indigo-600" /> Create Custom Message Template
-                      </h3>
+                  {/* Component Requirements List */}
+                  <div className="space-y-3 pt-2 border-t border-slate-200">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-extrabold text-slate-800 uppercase tracking-wider">
+                        Required Fulfillment Items (Per 1 Product Unit)
+                      </label>
                       <button
                         type="button"
-                        onClick={() => setShowAddTemplateModal(false)}
-                        className="text-slate-400 hover:text-slate-600 font-bold text-base cursor-pointer"
+                        onClick={() => setFtComponentsInput(prev => [
+                          ...prev,
+                          { id: `c-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`, componentName: "", quantity: 1, unitLabel: "" }
+                        ])}
+                        className="px-3 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 rounded-xl transition-all cursor-pointer flex items-center gap-1"
                       >
-                        ✕
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Item (+)</span>
                       </button>
                     </div>
 
-                    <form onSubmit={handleCreateNewQuoteTemplate} className="space-y-4">
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-extrabold uppercase text-slate-500">Template Title</label>
-                        <input
-                          type="text"
-                          required
-                          value={newTplName}
-                          onChange={(e) => setNewTplName(e.target.value)}
-                          placeholder="E.g. Express Production Follow-Up Quote"
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none"
-                        />
-                      </div>
+                    <div className="space-y-3">
+                      {ftComponentsInput.map((comp, idx) => (
+                        <div key={comp.id || idx} className="bg-white p-3 border border-slate-200/90 rounded-2xl shadow-2xs space-y-2.5">
+                          {/* Top Row: Requirement Qty, Unit, Name, Remove */}
+                          <div className="flex items-center gap-2">
+                            <div className="w-24 shrink-0 space-y-0.5">
+                              <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest block">Req Qty</span>
+                              <input
+                                type="number"
+                                step="any"
+                                min="0.01"
+                                value={comp.quantity}
+                                onChange={(e) => {
+                                  const val = Math.max(0.01, parseFloat(e.target.value) || 0.01);
+                                  setFtComponentsInput(prev => prev.map((c, i) => i === idx ? { ...c, quantity: val } : c));
+                                }}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900 text-center focus:bg-white focus:border-indigo-600"
+                              />
+                            </div>
+                            <div className="w-24 shrink-0 space-y-0.5">
+                              <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest block">Unit (Opt)</span>
+                              <input
+                                type="text"
+                                placeholder="e.g. yard, pc"
+                                value={comp.unitLabel || ""}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setFtComponentsInput(prev => prev.map((c, i) => i === idx ? { ...c, unitLabel: val } : c));
+                                }}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-medium text-slate-800 focus:bg-white focus:border-indigo-600"
+                              />
+                            </div>
+                            <div className="flex-1 min-w-0 space-y-0.5">
+                              <span className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest block">Fulfillment Item Name</span>
+                              <input
+                                type="text"
+                                placeholder="e.g. Cellophane, Tissue Paper, Chocolates, Ribbon..."
+                                value={comp.componentName}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setFtComponentsInput(prev => prev.map((c, i) => i === idx ? { ...c, componentName: val } : c));
+                                }}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:bg-white focus:border-indigo-600"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setFtComponentsInput(prev => prev.filter((_, i) => i !== idx))}
+                              className="p-2 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors shrink-0 cursor-pointer mt-4"
+                              title="Remove item"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
 
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-extrabold uppercase text-slate-500">Category</label>
-                          <select
-                            value={newTplCategory}
-                            onChange={(e) => setNewTplCategory(e.target.value as any)}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none"
-                          >
-                            <option value="Quotations">Quotations</option>
-                            <option value="Delivery & Collection">Delivery & Collection</option>
-                            <option value="Customer Communications">Customer Communications</option>
-                          </select>
+                          {/* Comprehensive Bulk Purchasing Rule Editor */}
+                          <div className="bg-purple-50/50 p-3 rounded-xl border border-purple-200/80 space-y-3 text-left">
+                            <div className="flex items-center justify-between gap-2 flex-wrap pb-2 border-b border-purple-100">
+                              <span className="text-xs font-black text-purple-900 uppercase tracking-wider flex items-center gap-1.5">
+                                <Sparkles className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                                Bulk Order / Purchasing Rule Settings
+                              </span>
+                              
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setFtComponentsInput(prev => prev.map((c, i) => i === idx ? {
+                                      ...c,
+                                      bulkEnabled: c?.bulkEnabled === false ? true : false,
+                                      bulkRuleActive: c?.bulkEnabled === false ? true : false
+                                    } : c));
+                                  }}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold border transition-all cursor-pointer flex items-center gap-1 ${
+                                    comp?.bulkEnabled !== false
+                                      ? "bg-purple-600 text-white border-purple-700 shadow-2xs"
+                                      : "bg-slate-200 text-slate-600 border-slate-300 hover:bg-slate-300"
+                                  }`}
+                                >
+                                  {comp?.bulkEnabled !== false ? "✓ Bulk Rule Active" : "✕ Disabled (Exact Qty)"}
+                                </button>
+                              </div>
+                            </div>
+
+                            {comp?.bulkEnabled !== false ? (
+                              <div className="space-y-3">
+                                {/* Rule Basic Configuration */}
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                  <div className="space-y-0.5">
+                                    <span className="text-[9px] font-extrabold text-slate-500 uppercase block">Purchase Unit Label</span>
+                                    <input
+                                      type="text"
+                                      placeholder="e.g. yards, packs of 10, boxes"
+                                      value={comp.bulkUnitLabel || ""}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setFtComponentsInput(prev => prev.map((c, i) => i === idx ? { ...c, bulkUnitLabel: val } : c));
+                                      }}
+                                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:border-purple-600"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-0.5">
+                                    <span className="text-[9px] font-extrabold text-slate-500 uppercase block">Bulk Multiple / Increment</span>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      placeholder="e.g. 3, 5, 10, 24"
+                                      value={comp.bulkIncrement || comp.bulkPurchaseMultiple || ""}
+                                      onChange={(e) => {
+                                        const val = e.target.value ? parseFloat(e.target.value) : undefined;
+                                        setFtComponentsInput(prev => prev.map((c, i) => i === idx ? { ...c, bulkIncrement: val, bulkPurchaseMultiple: val } : c));
+                                      }}
+                                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:border-purple-600"
+                                    />
+                                  </div>
+
+                                  <div className="space-y-0.5">
+                                    <span className="text-[9px] font-extrabold text-slate-500 uppercase block">Min Purchase Qty</span>
+                                    <input
+                                      type="number"
+                                      step="any"
+                                      placeholder="e.g. 3"
+                                      value={comp.minPurchaseQty || ""}
+                                      onChange={(e) => {
+                                        const val = e.target.value ? parseFloat(e.target.value) : undefined;
+                                        setFtComponentsInput(prev => prev.map((c, i) => i === idx ? { ...c, minPurchaseQty: val } : c));
+                                      }}
+                                      className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:border-purple-600"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Custom Quantity Rules (Range Tiers) Manager */}
+                                <div className="bg-white p-2.5 rounded-xl border border-purple-200 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[10px] font-extrabold text-slate-700 uppercase tracking-wider block">
+                                      Custom Quantity Ranges / Tier Rules
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const tiers = comp.bulkTierRules || [];
+                                        const lastMax = tiers.length > 0 ? tiers[tiers.length - 1].maxReq : 0;
+                                        const newTier = {
+                                          id: `tier-${Date.now()}-${Math.random().toString(36).substring(2, 5)}`,
+                                          minReq: lastMax ? parseFloat((lastMax + 0.1).toFixed(1)) : 1,
+                                          maxReq: lastMax ? parseFloat((lastMax + 3).toFixed(1)) : 3,
+                                          purchaseQty: lastMax ? lastMax + 3 : 3
+                                        };
+                                        setFtComponentsInput(prev => prev.map((c, i) => i === idx ? { ...c, bulkTierRules: [...tiers, newTier] } : c));
+                                      }}
+                                      className="text-[9px] font-extrabold px-2 py-0.5 rounded-md bg-purple-100 text-purple-800 hover:bg-purple-200 border border-purple-200 transition-all cursor-pointer flex items-center gap-1"
+                                    >
+                                      + Add Range Tier Rule
+                                    </button>
+                                  </div>
+
+                                  {comp.bulkTierRules && comp.bulkTierRules.length > 0 ? (
+                                    <div className="space-y-1.5 pt-1">
+                                      <div className="grid grid-cols-12 gap-1 text-[9px] font-extrabold text-slate-400 uppercase px-1">
+                                        <div className="col-span-4">Min Req Qty</div>
+                                        <div className="col-span-4">Max Req Qty (0=∞)</div>
+                                        <div className="col-span-3">Purchase Qty</div>
+                                        <div className="col-span-1 text-center">Del</div>
+                                      </div>
+                                      {comp.bulkTierRules.map((tier, tIdx) => (
+                                        <div key={tier.id || tIdx} className="grid grid-cols-12 gap-1 items-center bg-slate-50 p-1 rounded-lg border border-slate-200">
+                                          <div className="col-span-4">
+                                            <input
+                                              type="number"
+                                              step="any"
+                                              value={tier.minReq}
+                                              onChange={(e) => {
+                                                const val = parseFloat(e.target.value) || 0;
+                                                setFtComponentsInput(prev => prev.map((c, i) => i === idx ? {
+                                                  ...c,
+                                                  bulkTierRules: (c.bulkTierRules || []).map((t, ti) => ti === tIdx ? { ...t, minReq: val } : t)
+                                                } : c));
+                                              }}
+                                              className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs font-bold text-slate-900 text-center"
+                                            />
+                                          </div>
+                                          <div className="col-span-4">
+                                            <input
+                                              type="number"
+                                              step="any"
+                                              placeholder="∞"
+                                              value={tier.maxReq || ""}
+                                              onChange={(e) => {
+                                                const val = e.target.value ? parseFloat(e.target.value) : 0;
+                                                setFtComponentsInput(prev => prev.map((c, i) => i === idx ? {
+                                                  ...c,
+                                                  bulkTierRules: (c.bulkTierRules || []).map((t, ti) => ti === tIdx ? { ...t, maxReq: val } : t)
+                                                } : c));
+                                              }}
+                                              className="w-full bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs font-bold text-slate-900 text-center"
+                                            />
+                                          </div>
+                                          <div className="col-span-3">
+                                            <input
+                                              type="number"
+                                              step="any"
+                                              value={tier.purchaseQty}
+                                              onChange={(e) => {
+                                                const val = parseFloat(e.target.value) || 0;
+                                                setFtComponentsInput(prev => prev.map((c, i) => i === idx ? {
+                                                  ...c,
+                                                  bulkTierRules: (c.bulkTierRules || []).map((t, ti) => ti === tIdx ? { ...t, purchaseQty: val } : t)
+                                                } : c));
+                                              }}
+                                              className="w-full bg-white border border-purple-300 rounded px-1.5 py-0.5 text-xs font-extrabold text-purple-900 text-center bg-purple-50/50"
+                                            />
+                                          </div>
+                                          <div className="col-span-1 text-center">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setFtComponentsInput(prev => prev.map((c, i) => i === idx ? {
+                                                  ...c,
+                                                  bulkTierRules: (c.bulkTierRules || []).filter((_, ti) => ti !== tIdx)
+                                                } : c));
+                                              }}
+                                              className="p-1 text-slate-400 hover:text-rose-600 rounded transition-colors cursor-pointer"
+                                              title="Delete Tier Rule"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5 mx-auto" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-[10px] text-slate-400 italic">No custom range tiers configured yet. Using bulk increment / multiple logic.</p>
+                                  )}
+                                </div>
+
+                                {/* Rule Notes */}
+                                <div className="space-y-0.5">
+                                  <span className="text-[9px] font-extrabold text-slate-500 uppercase block">Purchasing Notes / Description</span>
+                                  <input
+                                    type="text"
+                                    placeholder="e.g. 1–2 baskets ➔ 3 yards, 3–4 baskets ➔ 6 yards, 5–6 baskets ➔ 9 yards"
+                                    value={comp.bulkNotes || ""}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setFtComponentsInput(prev => prev.map((c, i) => i === idx ? { ...c, bulkNotes: val } : c));
+                                    }}
+                                    className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-medium text-slate-800 focus:border-purple-600"
+                                  />
+                                </div>
+
+                                {/* Quick Presets */}
+                                <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                                  <span className="text-[9px] font-bold text-slate-400 block w-full sm:w-auto">Quick Rule Presets:</span>
+                                  {[
+                                    {
+                                      label: "Cellophane Tier Rules (1-2 req ➔ 3 yd, 3-4 req ➔ 6 yd, 5-6 req ➔ 9 yd)",
+                                      action: () => ({
+                                        bulkEnabled: true,
+                                        bulkRuleActive: true,
+                                        bulkUnitLabel: "yards",
+                                        bulkIncrement: 3,
+                                        minPurchaseQty: 3,
+                                        bulkTierRules: [
+                                          { id: "t1", minReq: 1, maxReq: 3, purchaseQty: 3 },
+                                          { id: "t2", minReq: 3.1, maxReq: 6, purchaseQty: 6 },
+                                          { id: "t3", minReq: 6.1, maxReq: 9, purchaseQty: 9 }
+                                        ],
+                                        bulkNotes: "Cellophane Tiers: 1–3 yds ➔ 3 yds | 3.1–6 yds ➔ 6 yds | 6.1–9 yds ➔ 9 yds"
+                                      })
+                                    },
+                                    {
+                                      label: "Tissue Paper (Packs of 10)",
+                                      action: () => ({
+                                        bulkEnabled: true,
+                                        bulkRuleActive: true,
+                                        bulkIncrement: 10,
+                                        bulkUnitLabel: "packs of 10",
+                                        bulkNotes: "Purchase in packs of 10"
+                                      })
+                                    },
+                                    {
+                                      label: "Chocolates (Boxes of 24)",
+                                      action: () => ({
+                                        bulkEnabled: true,
+                                        bulkRuleActive: true,
+                                        bulkIncrement: 24,
+                                        bulkUnitLabel: "boxes of 24",
+                                        bulkNotes: "Purchase in boxes of 24"
+                                      })
+                                    },
+                                    {
+                                      label: "Ribbon (Rolls of 5 yd)",
+                                      action: () => ({
+                                        bulkEnabled: true,
+                                        bulkRuleActive: true,
+                                        bulkIncrement: 5,
+                                        bulkUnitLabel: "rolls of 5 yd",
+                                        bulkNotes: "Purchase in rolls of 5 yards"
+                                      })
+                                    }
+                                  ].map((preset, pIdx) => (
+                                    <button
+                                      key={pIdx}
+                                      type="button"
+                                      onClick={() => {
+                                        const patch = preset.action();
+                                        setFtComponentsInput(prev => prev.map((c, i) => i === idx ? { ...c, ...patch } : c));
+                                      }}
+                                      className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-white hover:bg-purple-100 text-purple-900 border border-purple-200 transition-all cursor-pointer"
+                                    >
+                                      + {preset.label}
+                                    </button>
+                                  ))}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setFtComponentsInput(prev => prev.map((c, i) => i === idx ? {
+                                        ...c,
+                                        bulkEnabled: false,
+                                        bulkRuleActive: false,
+                                        bulkIncrement: undefined,
+                                        bulkPurchaseMultiple: undefined,
+                                        minPurchaseQty: undefined,
+                                        bulkTierRules: [],
+                                        bulkNotes: undefined
+                                      } : c));
+                                    }}
+                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-all cursor-pointer"
+                                  >
+                                    Clear & Disable Rule
+                                  </button>
+                                </div>
+
+                                {/* Simulation preview */}
+                                {(() => {
+                                  const baseQty = Number(comp.quantity) || 1;
+                                  const sim1 = calculateBulkPurchaseQty(baseQty, comp);
+                                  const sim3 = calculateBulkPurchaseQty(baseQty * 3, comp);
+                                  const sim5 = calculateBulkPurchaseQty(baseQty * 5, comp);
+                                  return (
+                                    <div className="text-[10px] text-purple-950 bg-white border border-purple-200 p-2 rounded-lg space-y-1">
+                                      <span className="font-extrabold uppercase tracking-wider block text-[9px] text-purple-700">
+                                        ⚡ Live Rule Simulation Preview:
+                                      </span>
+                                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 font-bold">
+                                        <div className="bg-purple-50 p-1 rounded">1 unit ({baseQty} {comp.unitLabel || 'req'}): <span className="text-purple-700 font-black">{sim1.purchaseQty} {comp.bulkUnitLabel || comp.unitLabel || 'units'}</span></div>
+                                        <div className="bg-purple-50 p-1 rounded">3 units ({baseQty * 3} {comp.unitLabel || 'req'}): <span className="text-purple-700 font-black">{sim3.purchaseQty} {comp.bulkUnitLabel || comp.unitLabel || 'units'}</span></div>
+                                        <div className="bg-purple-50 p-1 rounded">5 units ({baseQty * 5} {comp.unitLabel || 'req'}): <span className="text-purple-700 font-black">{sim5.purchaseQty} {comp.bulkUnitLabel || comp.unitLabel || 'units'}</span></div>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-slate-500 font-medium italic">
+                                Bulk Purchasing is disabled for this item. The Fulfillment Center will use exact required quantities without any rounding or bulk tier logic.
+                              </p>
+                            )}
+                          </div>
                         </div>
-
-                        <div className="space-y-1">
-                          <label className="text-[10px] font-extrabold uppercase text-slate-500">Tool Key</label>
-                          <select
-                            value={newTplToolKey}
-                            onChange={(e) => setNewTplToolKey(e.target.value as any)}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none"
-                          >
-                            <option value="apparel">T-Shirt Studio</option>
-                            <option value="book">Book Cost Calculator</option>
-                            <option value="dtf">DTF Printing</option>
-                            <option value="production_layout">Production Layout</option>
-                            <option value="location">Location Logistics</option>
-                            <option value="general">General / Communications</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-extrabold uppercase text-slate-500">Description</label>
-                        <input
-                          type="text"
-                          value={newTplDescription}
-                          onChange={(e) => setNewTplDescription(e.target.value)}
-                          placeholder="Purpose or context of this template"
-                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:bg-white focus:border-indigo-500 focus:outline-none"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[10px] font-extrabold uppercase text-slate-500">Template Text Content (Use {"{Placeholders}"})</label>
-                        <textarea
-                          rows={6}
-                          required
-                          value={newTplContent}
-                          onChange={(e) => setNewTplContent(e.target.value)}
-                          placeholder={"Dear {CustomerName},\n\nThank you for choosing {BusinessName}. Your quote for {GarmentType} is JMD {GrandTotal}.\n\nWarm regards,\n{BusinessName}"}
-                          className="w-full bg-slate-900 text-slate-100 font-mono text-xs rounded-2xl p-3 border border-slate-800 focus:border-indigo-500 focus:outline-none leading-relaxed"
-                        />
-                      </div>
-
-                      <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
-                        <button
-                          type="button"
-                          onClick={() => setShowAddTemplateModal(false)}
-                          className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-
-                        <button
-                          type="submit"
-                          className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs shadow-md cursor-pointer"
-                        >
-                          Create Template
-                        </button>
-                      </div>
-                    </form>
+                      ))}
+                    </div>
                   </div>
-                </div>,
-                document.body
+
+                  {/* Actions */}
+                  <div className="flex justify-end gap-2 pt-3 border-t border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => setFtEditingId(null)}
+                      className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 rounded-xl cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleFtSave}
+                      className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>Save Template</span>
+                    </button>
+                  </div>
+                </div>
               )}
+
+              {/* Template List */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                    Configured Templates ({ftTemplates.length})
+                  </h4>
+                </div>
+
+                {ftTemplates.length === 0 ? (
+                  <div className="text-center p-8 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-500 space-y-2">
+                    <p className="text-xs font-bold">No product fulfillment templates configured.</p>
+                    <button
+                      type="button"
+                      onClick={handleFtResetDefaults}
+                      className="px-3 py-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 rounded-xl hover:bg-indigo-100 cursor-pointer"
+                    >
+                      Load System Defaults
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {ftTemplates.map((t) => (
+                      <div
+                        key={t.id}
+                        className={`p-5 rounded-2xl border transition-all space-y-3 ${
+                          t.enabled
+                            ? "bg-white border-slate-200 shadow-2xs"
+                            : "bg-slate-50 border-slate-200 opacity-60"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="p-2 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-xl shrink-0">
+                              <Package className="w-4 h-4" />
+                            </span>
+                            <div className="min-w-0">
+                              <span className="text-sm font-black text-slate-900 block truncate">
+                                {t.productName}
+                              </span>
+                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border inline-block mt-0.5 ${
+                                t.enabled
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : "bg-slate-100 text-slate-500 border-slate-200"
+                              }`}>
+                                {t.enabled ? "Active Template" : "Disabled"}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleFtToggle(t.id)}
+                              className="px-2.5 py-1 text-[11px] font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                            >
+                              {t.enabled ? "Disable" : "Enable"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleFtStartEdit(t)}
+                              className="p-1.5 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                              title="Edit template"
+                            >
+                              <Sliders className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleFtDelete(t.id)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                              title="Delete template"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Items Breakdown List */}
+                        <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-150 space-y-1.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">
+                            Fulfillment Items ({t.components.length})
+                          </span>
+                          <div className="space-y-1">
+                            {t.components.map((c, idx) => (
+                              <div key={c.id || idx} className="flex items-center justify-between gap-2 text-xs font-bold text-slate-800">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
+                                  <span className="truncate">{c.componentName}</span>
+                                  {c.bulkPurchaseMultiple ? (
+                                    <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded bg-purple-50 text-purple-800 border border-purple-200/80 shrink-0">
+                                      Bulk: Multiples of {c.bulkPurchaseMultiple} {c.bulkUnitLabel || c.unitLabel || 'units'}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <span className="text-indigo-700 font-extrabold bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-md text-[11px] shrink-0">
+                                  {c.quantity}{c.unitLabel ? ` ${c.unitLabel}` : ''}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
             </div>
           )}
 
-          {/* PRODUCTION MATERIALS SETTINGS */}
-          {activeSubTab === "production_materials" && (
+          {/* COMMUNICATIONS LIBRARY (CONSOLIDATED TEMPLATES, CLIENT-FACING COPY, AND DELIVERY & COLLECTION) */}
+          {(activeSubTab === "communications_library" || activeSubTab === "quote_templates" || activeSubTab === "delivery_methods") && (
+            <CommunicationsLibrary
+              settings={localSettings}
+              onUpdateSettings={handleChange}
+              isMasterAdmin={isMasterAdmin}
+              initialCategory={activeSubTab === "delivery_methods" ? "DELIVERY" : undefined}
+            />
+          )}
+
+          {/* PRODUCTION MATERIALS SETTINGS (MOVED TO PRODUCT MANAGEMENT HUB) */}
+          {(activeSubTab as any) === "production_materials_old_deprecated" && (
             <div className="bg-white border border-slate-200/60 rounded-3xl p-6 md:p-8 shadow-sm text-left space-y-6">
               
               {/* Header & Internal Nav Tabs */}
@@ -1814,7 +1982,7 @@ export default function BrandingSettings({
                           : "text-slate-600 hover:text-slate-900"
                       }`}
                     >
-                      DTF Suppliers
+                      Sourced DTF Suppliers
                     </button>
 
                     <button
@@ -1850,9 +2018,9 @@ export default function BrandingSettings({
                   <div className="flex items-center justify-between">
                     <div>
                       <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-700">
-                        DTF Printing Suppliers ({ (localSettings.dtfSuppliers || DEFAULT_DTF_SUPPLIERS).length })
+                        Sourced DTF Suppliers ({ (localSettings.dtfSuppliers || DEFAULT_DTF_SUPPLIERS).length })
                       </h4>
-                      <p className="text-[11px] text-slate-400">Manage supplier sheet dimensions, cost per sheet, and delivery fees.</p>
+                      <p className="text-[11px] text-slate-400">Manage supplier sheet dimensions, cost per sheet, and delivery fees. System automatically calculates $/Sq Ft based on sheet area (delivery separate).</p>
                     </div>
 
                     <button
@@ -1908,10 +2076,10 @@ export default function BrandingSettings({
                             <input
                               type="number"
                               step="0.5"
-                              value={sup.sheetWidth}
+                              value={sup.sheetWidth === 0 ? "" : (sup.sheetWidth ?? "")}
                               onChange={(e) => {
                                 const list = [...(localSettings.dtfSuppliers || DEFAULT_DTF_SUPPLIERS)];
-                                list[idx] = { ...list[idx], sheetWidth: parseFloat(e.target.value) || 0 };
+                                list[idx] = { ...list[idx], sheetWidth: e.target.value === "" ? ("" as any) : (parseFloat(e.target.value) || 0) };
                                 handleChange("dtfSuppliers", list);
                               }}
                               className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-mono font-bold text-slate-800 focus:outline-hidden"
@@ -1926,10 +2094,10 @@ export default function BrandingSettings({
                             <input
                               type="number"
                               step="0.5"
-                              value={sup.sheetHeight}
+                              value={sup.sheetHeight === 0 ? "" : (sup.sheetHeight ?? "")}
                               onChange={(e) => {
                                 const list = [...(localSettings.dtfSuppliers || DEFAULT_DTF_SUPPLIERS)];
-                                list[idx] = { ...list[idx], sheetHeight: parseFloat(e.target.value) || 0 };
+                                list[idx] = { ...list[idx], sheetHeight: e.target.value === "" ? ("" as any) : (parseFloat(e.target.value) || 0) };
                                 handleChange("dtfSuppliers", list);
                               }}
                               className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-mono font-bold text-slate-800 focus:outline-hidden"
@@ -1943,10 +2111,10 @@ export default function BrandingSettings({
                             </label>
                             <input
                               type="number"
-                              value={sup.costPerSheet}
+                              value={sup.costPerSheet === 0 ? "" : (sup.costPerSheet ?? "")}
                               onChange={(e) => {
                                 const list = [...(localSettings.dtfSuppliers || DEFAULT_DTF_SUPPLIERS)];
-                                list[idx] = { ...list[idx], costPerSheet: parseFloat(e.target.value) || 0 };
+                                list[idx] = { ...list[idx], costPerSheet: e.target.value === "" ? ("" as any) : (parseFloat(e.target.value) || 0) };
                                 handleChange("dtfSuppliers", list);
                               }}
                               className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-mono font-bold text-slate-900 focus:outline-hidden"
@@ -1960,10 +2128,10 @@ export default function BrandingSettings({
                             </label>
                             <input
                               type="number"
-                              value={sup.deliveryCost}
+                              value={sup.deliveryCost === 0 ? "" : (sup.deliveryCost ?? "")}
                               onChange={(e) => {
                                 const list = [...(localSettings.dtfSuppliers || DEFAULT_DTF_SUPPLIERS)];
-                                list[idx] = { ...list[idx], deliveryCost: parseFloat(e.target.value) || 0 };
+                                list[idx] = { ...list[idx], deliveryCost: e.target.value === "" ? ("" as any) : (parseFloat(e.target.value) || 0) };
                                 handleChange("dtfSuppliers", list);
                               }}
                               className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-mono font-bold text-slate-900 focus:outline-hidden"
@@ -2002,6 +2170,24 @@ export default function BrandingSettings({
                             </button>
                           </div>
                         </div>
+
+                        {/* Computed Area and Auto $/Sq Ft (Delivery separate) */}
+                        {(() => {
+                          const width = Number(sup.sheetWidth) || 0;
+                          const height = Number(sup.sheetHeight) || 0;
+                          const cost = Number(sup.costPerSheet) || 0;
+                          const areaSqFt = (width * height) / 144;
+                          const pricePerSqFt = areaSqFt > 0 ? cost / areaSqFt : 0;
+                          return (
+                            <div className="flex flex-wrap items-center gap-3 px-3 py-1.5 bg-slate-100/90 rounded-xl text-[11px] text-slate-600 border border-slate-200/60">
+                              <span>Sheet Area: <strong className="font-mono text-slate-800">{areaSqFt > 0 ? areaSqFt.toFixed(2) : "0.00"} sq ft</strong></span>
+                              <span className="text-slate-300">•</span>
+                              <span>Auto $/Sq Ft: <strong className="font-mono text-indigo-700">${pricePerSqFt > 0 ? pricePerSqFt.toFixed(2) : "0.00"} / sq ft</strong></span>
+                              <span className="text-slate-300">•</span>
+                              <span className="text-[10px] text-slate-400 italic">Delivery fee ($ {Number(sup.deliveryCost || 0).toLocaleString()}) is kept separate</span>
+                            </div>
+                          );
+                        })()}
 
                         {/* Supplier Notes */}
                         <div className="pt-2 border-t border-slate-200/60">
@@ -2395,8 +2581,8 @@ export default function BrandingSettings({
             </div>
           )}
 
-          {/* 2. INVENTORY CONTROL */}
-          {activeSubTab === "inventory" && (
+          {/* 2. INVENTORY CONTROL (MOVED TO PRODUCT MANAGEMENT HUB) */}
+          {(activeSubTab as any) === "inventory_old_deprecated" && (
             <div className="bg-white border border-slate-200/60 rounded-3xl p-6 md:p-8 shadow-sm text-left space-y-6">
               <div className="pb-4 border-b border-slate-100 flex items-center gap-2">
                 <Layers className="w-5 h-5 text-indigo-600" />
@@ -2474,6 +2660,63 @@ export default function BrandingSettings({
                     />
                     <div className="w-9 h-5 bg-slate-200 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                   </label>
+                </div>
+              </div>
+
+              {/* Primary Book Classifications Section */}
+              <div className="pt-6 border-t border-slate-100 space-y-4">
+                <div>
+                  <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">Primary Book Classifications</h4>
+                  <p className="text-[11px] text-slate-400 font-medium mt-0.5">Manage available book classifications available across the Librarium Luxe catalog.</p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {(localSettings.bookClassifications || ["Mindset & Personal Development", "Business & Money", "Psychology & Human Behaviour", "Relationships & Romance", "Biography & Memoir"]).map((clf) => (
+                    <div key={clf} className="px-3 py-1.5 bg-slate-100 border border-slate-200/80 rounded-xl text-xs font-bold text-slate-800 flex items-center gap-2">
+                      <span>{clf}</span>
+                      <button
+                        onClick={() => {
+                          const current = localSettings.bookClassifications || ["Mindset & Personal Development", "Business & Money", "Psychology & Human Behaviour", "Relationships & Romance", "Biography & Memoir"];
+                          if (current.length <= 1) {
+                            alert("At least one classification must remain.");
+                            return;
+                          }
+                          const updated = current.filter(c => c !== clf);
+                          handleChange("bookClassifications", updated);
+                        }}
+                        className="text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
+                        title="Remove classification"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 max-w-md pt-1">
+                  <input
+                    type="text"
+                    value={newClassificationInput}
+                    onChange={(e) => setNewClassificationInput(e.target.value)}
+                    placeholder="Add custom classification (e.g., Philosophy)..."
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-hidden"
+                  />
+                  <button
+                    onClick={() => {
+                      if (!newClassificationInput.trim()) return;
+                      const current = localSettings.bookClassifications || ["Mindset & Personal Development", "Business & Money", "Psychology & Human Behaviour", "Relationships & Romance", "Biography & Memoir"];
+                      if (current.some(c => c.toLowerCase() === newClassificationInput.trim().toLowerCase())) {
+                        alert("Classification already exists.");
+                        return;
+                      }
+                      const updated = [...current, newClassificationInput.trim()];
+                      handleChange("bookClassifications", updated);
+                      setNewClassificationInput("");
+                    }}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shrink-0"
+                  >
+                    Add
+                  </button>
                 </div>
               </div>
             </div>
@@ -3154,20 +3397,43 @@ export default function BrandingSettings({
                 </div>
               )}
 
-              {/* Section 1: Export Current Test Environment */}
+              {/* Quick Navigation to Client Management & WhatsApp Reset */}
+              <div className="p-4.5 bg-linear-to-r from-amber-50/70 via-emerald-50/40 to-slate-50 border border-amber-200/80 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                    <RotateCcw className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-900">WhatsApp Check-In Reconnection Control</h4>
+                    <p className="text-[11px] text-slate-600 mt-0.5">
+                      Need to reset all client check-in statuses after changing WhatsApp or phone numbers? Access the bulk reset action under Client Management.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveSubTab("client_management")}
+                  className="self-start sm:self-auto px-3.5 py-2 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200/80 border border-amber-300 rounded-xl transition-all flex items-center gap-1.5 shrink-0"
+                >
+                  <span>Open Client Management</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Section 1: Export Current System Database */}
               <div className="bg-slate-50/80 border border-slate-200/70 rounded-2xl p-6 space-y-4 text-left">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="space-y-1">
                     <span className="text-[10px] font-extrabold uppercase text-indigo-600 tracking-wider block">Option 1</span>
-                    <h4 className="text-xs font-extrabold text-slate-900">Export Current Test Environment</h4>
+                    <h4 className="text-xs font-extrabold text-slate-900">Export Complete System Database</h4>
                   </div>
                   <span className="text-[9px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-full uppercase tracking-wider self-start sm:self-auto">
-                    Live Migration Export
+                    Full Database Export
                   </span>
                 </div>
                 
                 <p className="text-[11px] text-slate-600 font-medium leading-relaxed">
-                  Export all current test data from this development environment to migrate into the live application for full stress testing without manually recreating records.
+                  Export all operational data from the system database into a structured Excel workbook or JSON archive for auditing and disaster recovery.
                 </p>
 
                 {/* Scope breakdown list */}
@@ -3205,13 +3471,13 @@ export default function BrandingSettings({
 
                 <div className="space-y-2 pt-1">
                   <label className="text-[11px] font-bold text-slate-700 block">
-                    Export Notes / Migration Ledger Entry (Optional)
+                    Export Notes / Audit Ledger Entry (Optional)
                   </label>
                   <textarea
                     rows={2}
                     value={manualBackupNotes}
                     onChange={(e) => setManualBackupNotes(e.target.value)}
-                    placeholder="E.g., Test environment snapshot for V2.1 live deployment stress testing."
+                    placeholder="E.g., Full operational database snapshot for V2.1 system."
                     className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden focus:border-indigo-500 font-medium"
                   />
                 </div>
@@ -3222,7 +3488,7 @@ export default function BrandingSettings({
                     className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl transition-all shadow-xs text-xs cursor-pointer"
                   >
                     <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-                    Export Test Environment (.xlsx)
+                    Export System Database (.xlsx)
                   </button>
 
                   <button
@@ -3230,7 +3496,7 @@ export default function BrandingSettings({
                     className="flex items-center gap-2 px-5 py-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold rounded-xl transition-all shadow-xs text-xs cursor-pointer"
                   >
                     <Download className="w-4 h-4 text-indigo-500" />
-                    Export Test Environment (.json)
+                    Export System Database (.json)
                   </button>
                 </div>
               </div>
@@ -3262,13 +3528,13 @@ export default function BrandingSettings({
                 </div>
               </div>
 
-              {/* Section 2: Import Existing Backup / Live Migration */}
+              {/* Section 2: Import Existing Backup */}
               <div className="bg-slate-50/80 border border-slate-200/70 rounded-2xl p-6 space-y-5 text-left">
                 <div className="space-y-1">
                   <span className="text-[10px] font-extrabold uppercase text-amber-600 tracking-wider block">Option 2</span>
-                  <h4 className="text-xs font-extrabold text-slate-900">Import Existing Backup / Environment Migration</h4>
+                  <h4 className="text-xs font-extrabold text-slate-900">Import Existing Backup / Restore Database</h4>
                   <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-                    Select a previously generated <code className="font-mono text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">.xlsx</code> or <code className="font-mono text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">.json</code> test environment file to import into the application.
+                    Select a previously generated <code className="font-mono text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">.xlsx</code> or <code className="font-mono text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">.json</code> system backup file to restore into the application.
                   </p>
                 </div>
 
@@ -3285,7 +3551,7 @@ export default function BrandingSettings({
                     className="flex flex-col items-center justify-center p-6 bg-white hover:bg-slate-50 border-2 border-dashed border-slate-200 hover:border-indigo-400 rounded-2xl cursor-pointer transition-all text-center group"
                   >
                     <UploadCloud className="w-8 h-8 text-indigo-500 group-hover:scale-110 transition-transform mb-2" />
-                    <span className="text-xs font-bold text-slate-800">Click or Drag & Drop Test Data File (.xlsx or .json)</span>
+                    <span className="text-xs font-bold text-slate-800">Click or Drag & Drop Backup File (.xlsx or .json)</span>
                     <span className="text-[10px] text-slate-400 font-medium mt-0.5">Automated validation will verify structure and data integrity before restoration.</span>
                   </label>
                 </div>
@@ -3302,7 +3568,7 @@ export default function BrandingSettings({
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-[10px] font-mono font-extrabold text-indigo-900 bg-indigo-100 px-2 py-0.5 rounded-md">
-                          ID: {(validationReport as any).backupId || "TEST-EXP-V2.1"}
+                          ID: {(validationReport as any).backupId || "EXP-V2.1"}
                         </span>
                         <span className="text-[10px] font-mono font-extrabold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md">
                           Version {validationReport.version || "2.1.0"}
@@ -3335,6 +3601,12 @@ export default function BrandingSettings({
                         <span className="text-[9px] font-bold uppercase text-slate-400 block">User Accounts</span>
                         <span className="font-extrabold text-slate-800">{validationReport.itemCounts?.users || 0} users</span>
                       </div>
+                      {validationReport.itemCounts?.operationsOrders !== undefined && (
+                        <div className="p-2.5 bg-white border border-amber-100 rounded-xl">
+                          <span className="text-[9px] font-bold uppercase text-slate-400 block">Operations Orders</span>
+                          <span className="font-extrabold text-slate-800">{validationReport.itemCounts?.operationsOrders || 0} orders</span>
+                        </div>
+                      )}
                     </div>
 
                     {validationReport.notes && (
@@ -3367,13 +3639,13 @@ export default function BrandingSettings({
                           />
                           <div>
                             <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-extrabold text-slate-900">Add Test Data (Merge)</span>
+                              <span className="text-xs font-extrabold text-slate-900">Add Records (Merge)</span>
                               <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">
                                 Recommended
                               </span>
                             </div>
                             <p className="text-[10px] text-slate-500 font-medium mt-1 leading-normal">
-                              Preserves existing live data and merges incoming test environment records without creating duplicates.
+                              Preserves existing records and merges incoming dataset with duplicate protection.
                             </p>
                           </div>
                         </label>
@@ -3394,7 +3666,7 @@ export default function BrandingSettings({
                             className="mt-0.5 text-rose-600 focus:ring-rose-500"
                           />
                           <div>
-                            <span className="text-xs font-extrabold text-slate-900 block">Replace Environment</span>
+                            <span className="text-xs font-extrabold text-slate-900 block">Restore Database (Replace)</span>
                             <p className="text-[10px] text-slate-500 font-medium mt-1 leading-normal">
                               Completely replaces current application database with the imported backup payload.
                             </p>
@@ -3410,11 +3682,11 @@ export default function BrandingSettings({
                           Authorization Required:
                         </h5>
                         <p className="text-xs text-slate-700 font-bold">
-                          You are about to import test environment data.
+                          You are about to restore system database data.
                         </p>
                         <p className="text-xs text-slate-600">
-                          Import Mode: <span className="font-bold text-indigo-700">{importMode === "merge" ? "Add Test Data (Merge)" : "Replace Environment"}</span>.
-                          This will {importMode === "merge" ? "add test records into with duplicate protection" : "completely replace active database in"} the current application.
+                          Import Mode: <span className="font-bold text-indigo-700">{importMode === "merge" ? "Add Records (Merge)" : "Restore Database (Replace)"}</span>.
+                          This will {importMode === "merge" ? "add records into database with duplicate protection" : "completely replace active database in"} the application.
                         </p>
                       </div>
 
@@ -3439,7 +3711,7 @@ export default function BrandingSettings({
                           }`}
                         >
                           <RefreshCw className={`w-3.5 h-3.5 ${isRestoring ? "animate-spin" : ""}`} />
-                          {isRestoring ? "Processing Import & Syncing Database..." : "Execute Migration Import"}
+                          {isRestoring ? "Processing Import & Syncing Database..." : "Execute Backup Restore"}
                         </button>
                       </div>
                     </div>
@@ -3500,9 +3772,17 @@ export default function BrandingSettings({
                       <div className="p-3 bg-white border border-emerald-100 rounded-xl">
                         <span className="text-[9px] font-bold uppercase text-slate-400 block">User Accounts</span>
                         <span className="font-extrabold text-slate-800">
-                          Processed: {importReport.usersProcessed} | Processed: <span className="text-emerald-600 font-mono">{importReport.usersAdded}</span>
+                          Processed: {importReport.usersProcessed} | Added: <span className="text-emerald-600 font-mono">{importReport.usersAdded}</span>
                         </span>
                       </div>
+                      {importReport.operationsOrdersProcessed !== undefined && (
+                        <div className="p-3 bg-white border border-emerald-100 rounded-xl">
+                          <span className="text-[9px] font-bold uppercase text-slate-400 block">Operations Orders</span>
+                          <span className="font-extrabold text-slate-800">
+                            Processed: {importReport.operationsOrdersProcessed} | Added: <span className="text-emerald-600 font-mono">{importReport.operationsOrdersAdded}</span>
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -3998,6 +4278,25 @@ export default function BrandingSettings({
               )}
 
             </div>
+          )}
+
+          {/* 9. MASTER ADMINISTRATOR: DATA MANAGEMENT → REMOVE RECORDS */}
+          {(activeSubTab === "data_management" || activeSubTab === "remove_records") && userRole === "Master Administrator" && (
+            <RemoveRecordsHub
+              clients={clients}
+              onUpdateClients={onUpdateClients}
+              aspiringClients={aspiringClients}
+              onUpdateAspiringClients={onUpdateAspiringClients}
+              inventory={inventory}
+              onUpdateInventory={onUpdateInventory}
+              settings={localSettings}
+              onUpdateSettings={(updatedSettings) => {
+                setLocalSettings(updatedSettings);
+                onUpdateSettings(updatedSettings);
+              }}
+              onNavigateToBackup={() => setActiveSubTab("backup")}
+              onNavigateToTab={onNavigateToTab}
+            />
           )}
 
           {/* Quick Info Box */}

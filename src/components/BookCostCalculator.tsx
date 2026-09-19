@@ -18,7 +18,8 @@ import {
   Plus,
   Trash2,
   Search,
-  BookOpen
+  BookOpen,
+  User
 } from "lucide-react";
 import { SystemSettings, LuxeBookInventoryItem, DeliveryMethod, SavedQuotation } from "../types";
 import { DEFAULT_DELIVERY_METHODS, DEFAULT_QUOTE_TEMPLATES, DEFAULT_TARGET_DESTINATIONS, getSystemSettings, saveSystemSettings, formatQuoteTemplate } from "../utils/settingsHelper";
@@ -44,14 +45,26 @@ interface BookCostCalculatorProps {
 }
 
 export default function BookCostCalculator({ settings, inventory }: BookCostCalculatorProps) {
-  const defaultRate = settings ? settings.exchangeRate.toString() : "160";
-  const markupPercent = settings ? settings.businessMarkupPercent : 25;
-  const roundingUnit = settings ? settings.roundingUpUnit : 100;
+  const activeSettings = settings || getSystemSettings();
+  const settingRate = typeof activeSettings.exchangeRate === "number" ? activeSettings.exchangeRate : 160;
+  const markupPercent = typeof activeSettings.businessMarkupPercent === "number" ? activeSettings.businessMarkupPercent : 25;
+  const shippingSingleBook = typeof activeSettings.shippingSingleBook === "number" ? activeSettings.shippingSingleBook : 1350;
+  const shippingMultipleBooks = typeof activeSettings.shippingMultipleBooks === "number" ? activeSettings.shippingMultipleBooks : 1000;
+  const roundingUnit = typeof activeSettings.roundingUpUnit === "number" ? activeSettings.roundingUpUnit : 100;
 
   // Active delivery methods from Centralized System Settings
-  const activeDeliveryMethods = (settings?.deliveryMethods && settings.deliveryMethods.length > 0)
-    ? settings.deliveryMethods.filter(m => m.active !== false)
+  const activeDeliveryMethods = (activeSettings.deliveryMethods && activeSettings.deliveryMethods.length > 0)
+    ? activeSettings.deliveryMethods.filter(m => m.active !== false)
     : DEFAULT_DELIVERY_METHODS.filter(m => m.active !== false);
+
+  // Currency rounding rule applier
+  const applyCurrencyRounding = (val: number, unit: number): number => {
+    if (!unit || unit <= 0) {
+      // No Rounding (Calculated Decimals)
+      return Math.round(val * 100) / 100;
+    }
+    return Math.ceil(val / unit) * unit;
+  };
 
   // Multi-book state with localStorage persistence and backward compatibility migration
   const [books, setBooks] = useState<BookItem[]>(() => {
@@ -78,12 +91,16 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
     ];
   });
 
-  const [exchangeRate, setExchangeRate] = useState(() => {
-    return localStorage.getItem("calc_exchange_rate") || defaultRate;
-  });
-
   const [discountPercent, setDiscountPercent] = useState(() => {
     return localStorage.getItem("calc_book_discount") || "0";
+  });
+
+  // Optional Order & Client Information
+  const [clientName, setClientName] = useState<string>(() => {
+    return localStorage.getItem("calc_book_client_name") || "";
+  });
+  const [orderTitle, setOrderTitle] = useState<string>(() => {
+    return localStorage.getItem("calc_book_order_title") || "";
   });
 
   const [additionalCharges, setAdditionalCharges] = useState<AdditionalCharge[]>(() => {
@@ -144,20 +161,9 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
   const selectedDeliveryMethod = activeDeliveryMethods.find(m => m.id === deliveryMethodId) || activeDeliveryMethods[0];
   const isPickup = selectedDeliveryMethod?.type === "collection";
 
-  const defaultDeliveryCost = selectedDeliveryMethod ? selectedDeliveryMethod.defaultCost.toString() : "1350";
-
-  const [shippingCost, setShippingCost] = useState(() => {
-    return localStorage.getItem("calc_shipping_cost") || defaultDeliveryCost;
-  });
-
   // Copy success and saved quote notification states
   const [copied, setCopied] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
-
-  // Overridden shipping state flag
-  const [isOverride, setIsOverride] = useState(() => {
-    return localStorage.getItem("calc_shipping_override") === "true";
-  });
 
   // Click outside listener for auto-suggest dropdowns
   useEffect(() => {
@@ -171,6 +177,27 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
   }, []);
 
   // Multi-Book CRUD Actions
+  useEffect(() => {
+    localStorage.setItem("calc_book_client_name", clientName);
+    localStorage.setItem("calc_active_client_name", clientName);
+  }, [clientName]);
+
+  useEffect(() => {
+    localStorage.setItem("calc_book_order_title", orderTitle);
+  }, [orderTitle]);
+
+  useEffect(() => {
+    localStorage.setItem("calc_book_delivery_method_id", deliveryMethodId);
+    if (selectedDeliveryMethod?.name) {
+      localStorage.setItem("calc_active_delivery_method", selectedDeliveryMethod.name);
+    }
+  }, [deliveryMethodId, selectedDeliveryMethod?.name]);
+
+  useEffect(() => {
+    localStorage.setItem("calc_book_target_destination", targetDestination);
+    localStorage.setItem("calc_active_location", targetDestination);
+  }, [targetDestination]);
+
   const handleAddBook = () => {
     const newBook: BookItem = {
       id: "book_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
@@ -201,13 +228,12 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
   };
 
   const handleSelectInventoryBook = (bookIdInList: string, invItem: LuxeBookInventoryItem) => {
-    const currentRate = parseFloat(exchangeRate) || 160;
     const markupDivisor = 1 + (markupPercent / 100);
     
     // Estimate cost USD based on selling price if available
     let estUSD = "10.00";
     if (invItem.sellingPrice && invItem.sellingPrice > 0) {
-      const calculatedUSD = (invItem.sellingPrice / markupDivisor) / currentRate;
+      const calculatedUSD = (invItem.sellingPrice / markupDivisor) / settingRate;
       estUSD = calculatedUSD > 0 ? calculatedUSD.toFixed(2) : "10.00";
     }
 
@@ -242,80 +268,56 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
     }));
   };
 
-  // Sync shipping cost when delivery method changes
+  // Calculate total book count across all rows
+  const totalBooksCount = books.reduce((sum, b) => sum + Math.max(1, parseInt(b.quantity, 10) || 1), 0);
+
+  // Business Calculation Rule:
+  // Directly consumed from Business Calculation Settings
+  // Single Book (quantity = 1): shippingSingleBook (default J$1,350)
+  // Multiple Books (quantity >= 2): shippingMultipleBooks (default J$1,000) per book
+  const autoShippingPerBook = isPickup ? 0 : (totalBooksCount === 1 ? shippingSingleBook : shippingMultipleBooks);
+  const effectiveTotalShipping = isPickup ? 0 : (totalBooksCount * autoShippingPerBook);
+  const effectiveShippingPerBook = isPickup ? 0 : (totalBooksCount > 0 ? (effectiveTotalShipping / totalBooksCount) : 0);
+
   const handleDeliveryMethodChange = (newMethodId: string) => {
     setDeliveryMethodId(newMethodId);
-    const method = activeDeliveryMethods.find(m => m.id === newMethodId);
-    if (method) {
-      if (method.type === "collection") {
-        setShippingCost("0");
-      } else {
-        setShippingCost(method.defaultCost.toString());
-      }
-      setIsOverride(false);
-    }
   };
-
-  // Sync state with settings if settings props update
-  useEffect(() => {
-    if (settings) {
-      const storedRate = localStorage.getItem("calc_exchange_rate");
-      if (!storedRate) {
-        setExchangeRate(settings.exchangeRate.toString());
-      }
-    }
-  }, [settings]);
 
   // Persist state in localStorage
   useEffect(() => {
     localStorage.setItem("calc_books_list", JSON.stringify(books));
-    localStorage.setItem("calc_exchange_rate", exchangeRate);
-    localStorage.setItem("calc_shipping_cost", shippingCost);
     localStorage.setItem("calc_book_delivery_method_id", deliveryMethodId);
     localStorage.setItem("calc_book_target_destination", targetDestination);
-    localStorage.setItem("calc_shipping_override", String(isOverride));
     localStorage.setItem("calc_book_discount", discountPercent);
     localStorage.setItem("calc_book_additional_charges", JSON.stringify(additionalCharges));
-  }, [books, exchangeRate, shippingCost, deliveryMethodId, targetDestination, isOverride, discountPercent, additionalCharges]);
-
-  // Handle manual shipping change
-  const handleShippingChange = (val: string) => {
-    setShippingCost(val);
-    const expectedCost = selectedDeliveryMethod ? selectedDeliveryMethod.defaultCost : 1350;
-    if (parseFloat(val) !== expectedCost) {
-      setIsOverride(true);
-    } else {
-      setIsOverride(false);
-    }
-  };
+    localStorage.setItem("calc_book_client_name", clientName);
+    localStorage.setItem("calc_book_order_title", orderTitle);
+  }, [books, deliveryMethodId, targetDestination, discountPercent, additionalCharges, clientName, orderTitle]);
 
   // Reset calculator to baseline defaults
   const handleReset = () => {
-    const rate = settings ? settings.exchangeRate.toString() : "160";
     setBooks([
       {
         id: "book_1",
         title: "The 48 Laws of Power",
-        costUSD: "11.09",
+        costUSD: "10.00",
         quantity: "1"
       }
     ]);
-    setExchangeRate(rate);
     const defaultMethod = activeDeliveryMethods[0] || DEFAULT_DELIVERY_METHODS[0];
     setDeliveryMethodId(defaultMethod.id);
-    setShippingCost(defaultMethod.type === "collection" ? "0" : defaultMethod.defaultCost.toString());
     setDiscountPercent("0");
     setAdditionalCharges([]);
     setTargetDestination("Montego Bay");
-    setIsOverride(false);
+    setClientName("");
+    setOrderTitle("");
     setCopied(false);
     setSavedSuccess(false);
     setActiveSearchBookId(null);
   };
 
   // Numeric calculations
-  const parsedRate = parseFloat(exchangeRate) || 0;
-  const parsedShipping = isPickup ? 0 : (parseFloat(shippingCost) || 0);
+  const parsedRate = settingRate;
   const parsedDiscount = Math.min(100, Math.max(0, parseFloat(discountPercent) || 0));
 
   const totalAdditionalCharges = additionalCharges.reduce((sum, item) => {
@@ -323,31 +325,51 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
     return sum + amt;
   }, 0);
 
-  // Per-book calculations breakdown
+  // Per-book calculations breakdown using Business Calculation Rules:
+  // Step 1: Book Cost in JMD = Book Cost in USD * Exchange Rate
+  // Step 2: Landed Cost = Book Cost in JMD + Shipping (Single book: J$1,350; Multi-book: J$1,000/book)
+  // Step 3: Selling Price = Landed Cost * (1 + Markup %)
+  // Step 4: Apply Configured Currency Rounding Rule
   const booksCalculatedList = books.map(b => {
     const costUSD = parseFloat(b.costUSD) || 0;
     const qty = Math.max(1, parseInt(b.quantity, 10) || 1);
-    const totalCostJMD = costUSD * qty * parsedRate;
-    const rawSellingPrice = totalCostJMD * (1 + (markupPercent / 100));
-    const bookSubtotalJMD = roundingUnit > 0 ? Math.ceil(rawSellingPrice / roundingUnit) * roundingUnit : Math.ceil(rawSellingPrice);
-    const unitPriceJMD = qty > 0 ? Math.round(bookSubtotalJMD / qty) : 0;
+    
+    // Step 1: Book Cost in JMD
+    const unitCostJMD = costUSD * parsedRate;
+    const totalCostJMD = unitCostJMD * qty;
+
+    // Step 2: Landed Cost (includes shipping per book)
+    const unitLandedCost = unitCostJMD + effectiveShippingPerBook;
+    const totalLandedCost = unitLandedCost * qty;
+
+    // Step 3: Business Markup
+    const rawUnitPriceBeforeRounding = unitLandedCost * (1 + (markupPercent / 100));
+    const rawLineSellingPrice = rawUnitPriceBeforeRounding * qty;
+
+    // Step 4: Apply Configured Currency Rounding Rule
+    const bookSubtotalJMD = applyCurrencyRounding(rawLineSellingPrice, roundingUnit);
+    const unitPriceJMD = qty > 0 ? applyCurrencyRounding(rawUnitPriceBeforeRounding, roundingUnit) : bookSubtotalJMD;
 
     return {
       ...b,
-      parsedCostUSD: costUSD,
       parsedQty: qty,
+      parsedCostUSD: costUSD,
+      unitCostJMD,
       totalCostJMD,
-      bookSubtotalJMD,
-      unitPriceJMD
+      unitLandedCost,
+      totalLandedCost,
+      unitPriceJMD,
+      bookSubtotalJMD
     };
   });
 
   // Aggregate totals
+  const totalBooksCostJMD = booksCalculatedList.reduce((sum, b) => sum + b.totalCostJMD, 0);
+  const totalBooksLandedCost = booksCalculatedList.reduce((sum, b) => sum + b.totalLandedCost, 0);
   const totalBooksSellingSubtotal = booksCalculatedList.reduce((sum, b) => sum + b.bookSubtotalJMD, 0);
-  const totalBooksCount = booksCalculatedList.reduce((sum, b) => sum + b.parsedQty, 0);
 
   // Total quotation before discount
-  const subtotalBeforeDiscount = totalBooksSellingSubtotal + parsedShipping + totalAdditionalCharges;
+  const subtotalBeforeDiscount = totalBooksSellingSubtotal + totalAdditionalCharges;
   const discountAmount = subtotalBeforeDiscount * (parsedDiscount / 100);
   const finalSellingPrice = Math.max(0, subtotalBeforeDiscount - discountAmount);
 
@@ -402,10 +424,6 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
       }
     });
 
-    if (!isPickup && parsedShipping > 0) {
-      addChargeLines.push(`• Delivery Fee (${methodName}) — ${formatJMDVal(parsedShipping)}`);
-    }
-
     const addChargesStr = addChargeLines.join("\n");
     const hasDiscount = parsedDiscount > 0 && discountAmount > 0;
 
@@ -418,6 +436,10 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
     if (bookTemplate) {
       return formatQuoteTemplate(bookTemplate.content, {
         CustomerResponse: customerResponseStr,
+        CustomerName: clientName.trim(),
+        ClientName: clientName.trim(),
+        OrderTitle: orderTitle.trim(),
+        Personalization: orderTitle.trim(),
         BookTitle: primaryBookName,
         BooksList: booksFormattedString,
         Quantity: totalBooksCount,
@@ -425,21 +447,33 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
         UnitPrice: validBooksList.length === 1 ? formatJMDVal(validBooksList[0].unitPriceJMD) : "",
         BooksSubtotal: formatJMDVal(totalBooksSellingSubtotal),
         AdditionalCharges: addChargesStr,
+        Location: targetDestination,
         Destination: targetDestination,
         TargetDestination: targetDestination,
         DeliveryMethod: methodName,
-        DeliveryCharge: parsedShipping > 0 ? formatJMDVal(parsedShipping) : "",
+        DeliveryCharge: isPickup ? "Collection" : "Included",
         DeliveryMessage: deliveryMsg,
         Subtotal: formatJMDVal(subtotalBeforeDiscount),
         DiscountPercent: hasDiscount ? parsedDiscount : 0,
         DiscountAmount: hasDiscount ? formatJMDVal(discountAmount) : "",
         GrandTotal: formatJMDVal(finalSellingPrice),
-        BusinessName: settings?.companyName || "CEO Lifestyle"
+        BusinessName: activeSettings?.companyName || "CEO Lifestyle"
       });
     }
 
     const sections: string[] = [];
-    sections.push("Thank you so much for providing those details.\n\nHere is your personalized quotation based on your request.");
+    const greeting = clientName.trim()
+      ? `Hi ${clientName.trim()},\n\nThank you so much for providing those details.\n\nHere is your personalized quotation based on your request:`
+      : "Thank you so much for providing those details.\n\nHere is your personalized quotation based on your request:";
+    sections.push(greeting);
+
+    if (clientName.trim()) {
+      sections.push(`Client: ${clientName.trim()}`);
+    }
+
+    if (orderTitle.trim()) {
+      sections.push(`Order / Job Reference: ${orderTitle.trim()}`);
+    }
 
     sections.push(`Books Selected\n${booksFormattedString}`);
 
@@ -450,7 +484,7 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
     sections.push(`Subtotal\n${formatJMDVal(totalBooksSellingSubtotal)}`);
 
     if (!isPickup) {
-      sections.push(`Delivery\n${methodName}${parsedShipping > 0 ? ` (${formatJMDVal(parsedShipping)})` : ""}`);
+      sections.push(`Delivery\n${methodName}${targetDestination ? ` (${targetDestination})` : ""}`);
     } else {
       sections.push(`Collection\n${methodName}`);
     }
@@ -491,23 +525,28 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
       subtotalJMD: b.bookSubtotalJMD
     }));
 
-    if (!isPickup && parsedShipping > 0) {
-      itemDetails.push({
-        name: `Delivery: ${selectedDeliveryMethod?.name || 'Shipping'}`,
-        quantity: 1,
-        unitPriceJMD: parsedShipping,
-        subtotalJMD: parsedShipping
+    if (totalAdditionalCharges > 0) {
+      additionalCharges.forEach(ch => {
+        const amt = parseFloat(ch.amount) || 0;
+        if (amt > 0) {
+          itemDetails.push({
+            name: ch.name || "Additional Charge",
+            quantity: 1,
+            unitPriceJMD: amt,
+            subtotalJMD: amt
+          });
+        }
       });
     }
 
     const newQuote: SavedQuotation = normalizeQuotation({
       id: "quote_" + Date.now(),
       quoteNumber: `BK-QT-${Math.floor(1000 + Math.random() * 9000)}`,
-      clientName: "Bespoke Book Order",
+      clientName: clientName.trim() || "Bespoke Book Order",
       toolType: "book",
       title: titleSummary,
       date: new Date().toISOString().split("T")[0],
-      totalCost: subtotalBeforeDiscount * 0.65,
+      totalCost: totalBooksLandedCost,
       quotedPrice: finalSellingPrice,
       details: `${titleSummary} via ${selectedDeliveryMethod?.name || 'Delivery'}. Discount: ${parsedDiscount}%. Total: $${finalSellingPrice.toLocaleString()} JMD.`,
       summaryText: titleSummary,
@@ -550,25 +589,37 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
         </button>
       </div>
 
-      {/* Global Setting: Compact Exchange Rate Display */}
-      <div className="bg-slate-50/80 border border-slate-200/60 rounded-xl px-3 py-2 flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-[10px] font-extrabold text-slate-700 uppercase tracking-wider">
-          <DollarSign className="w-3.5 h-3.5 text-amber-600" />
-          <span>Exchange Rate</span>
+      {/* Order & Client Information — Optional */}
+      <div className="bg-slate-50/70 border border-slate-200/60 rounded-2xl p-4 space-y-3">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+          <User className="w-3.5 h-3.5 text-indigo-600" />
+          <span>Order &amp; Client Information <span className="text-[10px] font-normal text-slate-400">— Optional</span></span>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-bold text-slate-600">1 USD =</span>
-          <div className="relative w-24">
-            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">J$</span>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 block">
+              Client / Customer Name
+            </label>
             <input
-              type="number"
-              step="1"
-              min="1"
-              value={exchangeRate}
-              onChange={(e) => setExchangeRate(e.target.value)}
-              placeholder="160"
-              className="w-full bg-white border border-slate-200/80 rounded-lg pl-6 pr-2 py-1 text-xs font-mono font-bold text-slate-900 focus:border-indigo-500 focus:outline-none transition-all text-right shadow-2xs"
+              type="text"
+              value={clientName}
+              onChange={(e) => setClientName(e.target.value)}
+              placeholder="e.g. John Smith"
+              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-hidden focus:border-indigo-500 transition-all"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 block">
+              Order / Job Reference
+            </label>
+            <input
+              type="text"
+              value={orderTitle}
+              onChange={(e) => setOrderTitle(e.target.value)}
+              placeholder="e.g. Leadership Library Order"
+              className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-hidden focus:border-indigo-500 transition-all"
             />
           </div>
         </div>
@@ -719,11 +770,30 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
                   </div>
                 </div>
 
-                {bookItem.parsedQty > 1 && (
-                  <div className="text-[9px] font-bold text-slate-400 text-right font-mono pr-1">
-                    {formatJMD(bookItem.unitPriceJMD)} per book
+                <div className="flex items-center justify-between pt-1 px-0.5 border-t border-slate-200/40 text-xs">
+                  <span className="text-slate-500 text-[11px] font-medium">
+                    Final Cost: <strong className="font-mono font-bold text-slate-800">{formatJMD(bookItem.totalLandedCost)}</strong>
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 text-[11px] font-medium">
+                      Customer Price:
+                    </span>
+                    {bookItem.parsedQty > 1 ? (
+                      <div className="flex items-center gap-1.5 font-mono">
+                        <span className="text-[11px] text-slate-400 font-bold">
+                          {formatJMD(bookItem.unitPriceJMD)} ea
+                        </span>
+                        <span className="text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded-lg">
+                          {formatJMD(bookItem.bookSubtotalJMD)}
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-xs font-bold font-mono text-rose-700 bg-rose-50 border border-rose-200/60 px-2 py-0.5 rounded-lg">
+                        {formatJMD(bookItem.unitPriceJMD)}
+                      </span>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             );
           })}
@@ -731,7 +801,7 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
       </div>
 
       {/* DELIVERY & DISCOUNT OPTIONS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-slate-100">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
         {/* Delivery Method */}
         <div className="space-y-1.5">
           <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
@@ -786,38 +856,6 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
           </div>
         </div>
 
-        {/* Shipping / Delivery Fee (JMD) */}
-        <div className="space-y-1.5">
-          <div className="flex justify-between items-center">
-            <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-700 block">
-              Delivery Charge (JMD)
-            </label>
-            {isOverride && (
-              <span className="text-[8px] font-black uppercase bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded border border-amber-200 tracking-wider">
-                Modified
-              </span>
-            )}
-          </div>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-              J$
-            </span>
-            <input
-              type="number"
-              step="10"
-              min="0"
-              value={shippingCost}
-              onChange={(e) => handleShippingChange(e.target.value)}
-              placeholder="1350"
-              className={`w-full border rounded-xl pl-8 pr-3 py-2 text-xs font-mono font-bold transition-all focus:bg-white focus:border-indigo-600 focus:outline-none shadow-2xs ${
-                isOverride 
-                  ? "bg-amber-50/50 border-amber-300 text-amber-900" 
-                  : "bg-slate-50 border-slate-200 text-slate-900"
-              }`}
-            />
-          </div>
-        </div>
-
         {/* Discount (%) */}
         <div className="space-y-1.5">
           <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-700 block">
@@ -841,7 +879,7 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
         </div>
 
         {/* Additional Charges / Custom Fees Section */}
-        <div className="space-y-2 col-span-1 sm:col-span-2 pt-2 border-t border-slate-100">
+        <div className="space-y-2 col-span-1 sm:col-span-3 pt-2 border-t border-slate-100">
           <div className="flex justify-between items-center">
             <label className="text-[9px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1">
               Additional Charges / Custom Fees
@@ -905,12 +943,12 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
 
         <div className="space-y-1.5 text-xs">
           <div className="flex justify-between text-slate-600">
-            <span>Books Subtotal ({totalBooksCount} {totalBooksCount === 1 ? "book" : "books"}):</span>
-            <span className="font-mono font-semibold">{formatJMD(totalBooksSellingSubtotal)}</span>
+            <span>Final Cost:</span>
+            <span className="font-mono font-semibold text-slate-700">{formatJMD(totalBooksLandedCost)}</span>
           </div>
-          <div className="flex justify-between text-slate-600">
-            <span>{selectedDeliveryMethod ? selectedDeliveryMethod.name : "Delivery Fee"}:</span>
-            <span className="font-mono font-semibold">{formatJMD(parsedShipping)}</span>
+          <div className="flex justify-between text-slate-900 font-bold">
+            <span>Customer Price ({totalBooksCount} {totalBooksCount === 1 ? "book" : "books"}):</span>
+            <span className="font-mono text-slate-900">{formatJMD(totalBooksSellingSubtotal)}</span>
           </div>
           {totalAdditionalCharges > 0 && (
             <div className="flex justify-between text-slate-600">
@@ -918,12 +956,6 @@ export default function BookCostCalculator({ settings, inventory }: BookCostCalc
               <span className="font-mono font-semibold">{formatJMD(totalAdditionalCharges)}</span>
             </div>
           )}
-          <div className="flex justify-between text-slate-600 pb-1.5 border-b border-dashed border-slate-200">
-            <span>Markup Factor:</span>
-            <span className="font-bold text-emerald-600 flex items-center gap-0.5">
-              <TrendingUp className="w-3 h-3" /> {markupPercent}% ({(1 + (markupPercent / 100)).toFixed(2)}x)
-            </span>
-          </div>
           
           {parsedDiscount > 0 && (
             <>

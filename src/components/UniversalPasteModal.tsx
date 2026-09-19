@@ -16,6 +16,7 @@ import {
 import { 
   parseSpreadsheetClipboardText, 
   processPastedDomainRows, 
+  parseUniversalPasteText,
   ParsedPasteResult 
 } from "../utils/universalPasteUtils";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
@@ -67,8 +68,7 @@ export default function UniversalPasteModal({
       setParsedResult(null);
       return;
     }
-    const { rawRows } = parseSpreadsheetClipboardText(pastedText);
-    const result = processPastedDomainRows(templateType, rawRows);
+    const result = parseUniversalPasteText(templateType, pastedText);
     setParsedResult(result);
     if (result.totalRows > 0) {
       setActiveTab("preview");
@@ -210,7 +210,11 @@ export default function UniversalPasteModal({
                 <textarea
                   value={pastedText}
                   onChange={(e) => setPastedText(e.target.value)}
-                  placeholder={`Click here and press Ctrl+V (⌘+V on Mac) to paste spreadsheet data...\n\nExample:\nCL ID\tClient Full Name\tPhone Number\tCity\nCL001\tSamantha Wright\t+1 (876) 555-0192\tKingston`}
+                  placeholder={
+                    templateType === "operations"
+                      ? `Click here and paste (Ctrl+V / ⌘+V) WhatsApp order updates or spreadsheet rows...\n\nExample Order Update:\n*CEO LIFESTYLE OPERATIONS ORDER UPDATE*\nOrder Number: #000429\nClient: christina stewart (Silver Tier)\nPhone: 8769092265\nProducts: 1x the richest man in babylon, 1x psycology of money\nStatus: Ready for Delivery\nDue Date: 2026-08-15\nDelivery Method: Knutsford Express (New Kingston)\nNotes: None`
+                      : `Click here and press Ctrl+V (⌘+V on Mac) to paste spreadsheet data...\n\nExample:\nCL ID\tClient Full Name\tPhone Number\tCity\nCL001\tSamantha Wright\t+1 (876) 555-0192\tKingston`
+                  }
                   rows={8}
                   className="w-full p-4 bg-slate-50 border border-slate-300 focus:border-slate-900 focus:bg-white focus:outline-none rounded-2xl text-xs font-mono text-slate-800 placeholder-slate-400 shadow-inner resize-y transition-all"
                 />

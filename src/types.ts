@@ -1,7 +1,41 @@
 export type ClientTier = "Silver" | "Gold" | "Platinum" | "Founders Family" | "Delinquent" | "Problematic";
+export type ClientHome = "CEO Lifestyle" | "Librarium Luxe" | "CEO Lifestyle | Librarium Luxe";
 export type BusinessRelationship = "CEO Lifestyle" | "Librarium Luxe" | "CEO Lifestyle + Librarium Luxe";
 export type ProfileTheme = "CEO Blue" | "Librarium Crimson" | "Dual Burgundy Blend";
 export type ManagementClassification = "Standard" | "VIP Priority" | "Problematic" | "Delinquent";
+
+export type PromiseStatus = "Open" | "Fulfilled" | "Cancelled" | "Completed";
+export type CommitmentStatus = PromiseStatus;
+
+export interface ClientPromise {
+  id: string;
+  promise: string;
+  commitment?: string;
+  dueDate?: string;
+  status: PromiseStatus;
+  notes?: string;
+  createdDate?: string;
+  fulfilledDate?: string;
+  completedDate?: string;
+}
+
+export type ClientCommitment = ClientPromise;
+
+export type PrimaryBookClassification = 
+  | "Mindset & Personal Development"
+  | "Business & Money"
+  | "Psychology & Human Behaviour"
+  | "Relationships & Romance"
+  | "Biography & Memoir"
+  | string;
+
+export const DEFAULT_BOOK_CLASSIFICATIONS: string[] = [
+  "Mindset & Personal Development",
+  "Business & Money",
+  "Psychology & Human Behaviour",
+  "Relationships & Romance",
+  "Biography & Memoir"
+];
 
 export interface ClassificationHistoryRecord {
   id: string;
@@ -18,15 +52,21 @@ export type YesNo = "Yes" | "No";
 export type CommunicationStatus = "Active" | "Not Active" | "Unknown";
 
 export type ProductionStatus = 
+  | "New"
+  | "Confirmed"
+  | "In Progress"
+  | "Ready"
+  | "Out for Delivery"
+  | "Ready for Collection"
+  | "Completed"
+  | "Cancelled"
   | "Awaiting Deposit"
   | "Awaiting Artwork"
   | "Ready for Production"
   | "In Production"
   | "Quality Check"
   | "Ready for Pickup"
-  | "Ready for Delivery"
-  | "Completed"
-  | "Cancelled";
+  | "Ready for Delivery";
 
 export type OperationsDeliveryMethod = 
   | "Store Pickup"
@@ -37,18 +77,191 @@ export type OperationsDeliveryMethod =
 
 export type OrderPriority = "Low" | "Normal" | "High" | "Urgent";
 
+export type InventoryUsagePriority = "NORMAL" | "USE FIRST" | "CLEARANCE" | "RESERVED";
+
+export type ContactType = 
+  | "Supplier"
+  | "General Contact"
+  | "Business Contact"
+  | "Service Provider"
+  | "Partner / Vendor"
+  | "Other Important Contact";
+
+export type ContactPrimaryClassification = "Suppliers & Vendors" | "Operational & Business Contacts";
+
+export interface ContactPhoneContact {
+  id: string;
+  location: string;
+  phoneNumber: string;
+  contactPerson?: string;
+  notes?: string;
+}
+
+export interface SupplierPhoneContact {
+  id: string;
+  location: string;
+  phoneNumber: string;
+  contactPerson?: string;
+  notes?: string;
+}
+
+export interface SupplierDaySchedule {
+  isOpen: boolean;
+  openTime?: string;
+  closeTime?: string;
+}
+
+export interface SupplierOperatingHours {
+  monday?: SupplierDaySchedule;
+  tuesday?: SupplierDaySchedule;
+  wednesday?: SupplierDaySchedule;
+  thursday?: SupplierDaySchedule;
+  friday?: SupplierDaySchedule;
+  saturday?: SupplierDaySchedule;
+  sunday?: SupplierDaySchedule;
+}
+
+export interface ContactSupplierRecord {
+  id: string;
+  fullName: string;
+  organization?: string;
+  company?: string;
+  rolePosition?: string;
+  contactType: ContactType;
+  primaryClassification?: ContactPrimaryClassification;
+  roles: string[];
+  phone: string;
+  whatsapp?: string;
+  email?: string;
+  location?: string;
+  address?: string;
+  servicesProvided?: string;
+  relationshipDetails?: string;
+  notes?: string;
+  keyNotes?: string;
+  preferredContactMethod?: "Phone" | "WhatsApp" | "Email" | "In-Person";
+  status: "Active" | "Inactive";
+  phoneContacts?: ContactPhoneContact[];
+  dateAdded?: string;
+  lastUpdated?: string;
+
+  // Supplier Specific Information
+  isSupplier?: boolean;
+  supplies?: string[];
+  productsServicesSupplied?: string;
+  pricingNotes?: string;
+  paymentTerms?: string;
+  leadTime?: string;
+  reliability?: "High" | "Medium" | "Low" | "Unrated";
+  lastOrder?: string;
+  supplierNotes?: string;
+  operatingHours?: SupplierOperatingHours;
+
+  // Compatibility aliases for legacy fields
+  supplierName?: string;
+  contactPerson?: string;
+  phoneNumber?: string;
+  whatsappNumber?: string;
+}
+
+export type ContactRecord = ContactSupplierRecord;
+export type SupplierRecord = ContactSupplierRecord;
+
+export interface BulkQuantityTier {
+  id: string;
+  minReq: number;
+  maxReq: number;
+  purchaseQty: number;
+}
+
+export interface RegularInventoryItem {
+  id: string;
+  productName: string;
+  category: string;
+  sku?: string;
+  quantity: number;
+  unitLabel: string;
+  lowStockThreshold?: number;
+  sellingPrice?: number;
+  unitCost?: number;
+  location?: string;
+  notes?: string;
+  dateAdded?: string;
+  lastUpdated?: string;
+  usagePriority?: InventoryUsagePriority;
+}
+
+export interface FulfillmentInventoryItem {
+  id: string;
+  itemName: string;
+  availableQty: number;
+  unitLabel?: string;
+  category?: string;
+  notes?: string;
+  lastUpdated?: string;
+  usagePriority?: InventoryUsagePriority;
+  
+  // Bulk purchasing rules attached directly to material
+  bulkEnabled?: boolean;
+  bulkUnitLabel?: string;
+  minPurchaseQty?: number;
+  bulkIncrement?: number;
+  bulkTierRules?: BulkQuantityTier[];
+  bulkNotes?: string;
+  bulkRuleActive?: boolean;
+}
+
+export interface FulfillmentTemplateItem {
+  id: string;
+  componentName: string;
+  quantity: number;
+  unitLabel?: string;
+  notes?: string;
+  
+  // Advanced Bulk Purchasing Rule Configuration
+  bulkEnabled?: boolean;
+  bulkUnitLabel?: string;
+  minPurchaseQty?: number;
+  bulkIncrement?: number;
+  bulkTierRules?: BulkQuantityTier[];
+  bulkNotes?: string;
+  bulkRuleActive?: boolean;
+
+  // Legacy fallback fields for backward compatibility
+  bulkPurchaseMultiple?: number;
+  bulkRuleType?: "multiples" | "exact";
+}
+
+export interface FulfillmentTemplate {
+  id: string;
+  productName: string;
+  enabled: boolean;
+  components: FulfillmentTemplateItem[];
+  createdDate?: string;
+  updatedDate?: string;
+}
+
 export interface OperationsOrderItem {
   id: string;
   productName: string;
   quantity: number;
   unitPrice?: number;
   details?: string;
+  notes?: string;
+  size?: string;
+  colour?: string;
+  color?: string;
+  substituteColour?: string;
+  substituteColor?: string;
+  customization?: string;
+  itemDescription?: string;
 }
 
 export interface ChecklistItem {
   id: string;
   label: string;
   completed: boolean;
+  required?: boolean;
   customText?: string;
 }
 
@@ -61,9 +274,26 @@ export interface ProductionChecklistTemplate {
   isDefault?: boolean;
 }
 
+export interface OrderFulfillmentSnapshotItem {
+  id: string;
+  componentName: string;
+  quantity: number;
+  unitLabel?: string;
+  notes?: string;
+  bulkEnabled?: boolean;
+  bulkUnitLabel?: string;
+  minPurchaseQty?: number;
+  bulkIncrement?: number;
+  bulkTierRules?: BulkQuantityTier[];
+  bulkNotes?: string;
+  bulkRuleActive?: boolean;
+  templateProductName?: string;
+}
+
 export interface OperationsOrder {
   id: string;
   orderNumber: string;
+  company?: "CEO Lifestyle" | "Librarium Luxe";
   clientId: string;
   clientName: string;
   clientTier?: ClientTier;
@@ -79,12 +309,20 @@ export interface OperationsOrder {
   internalNotes?: string;
   priority: OrderPriority;
   depositPaid?: boolean;
+  depositAmount?: number;
   totalAmount?: number;
   createdDate?: string;
+  dateOrderCreated?: string;
   updatedDate?: string;
   checklist?: ChecklistItem[];
   checklistTemplateName?: string;
   clientHome?: "CEO Lifestyle" | "Librarium Luxe" | string;
+  adventist?: YesNo;
+  expressOrder?: YesNo;
+  expressNote?: string;
+  fulfillmentSnapshot?: OrderFulfillmentSnapshotItem[];
+  invoiceLogged?: boolean;
+  invoiceLoggedDate?: string;
 }
 
 export interface ClientTierRecord {
@@ -175,17 +413,46 @@ export interface LifestyleInterests {
 
 export interface TimelineEvent {
   id: string;
-  type: "Conversation" | "Order" | "Gift" | "Follow-up" | "Note";
+  type: 
+    | "Conversation" 
+    | "WhatsApp"
+    | "Phone Call"
+    | "Customer Response"
+    | "In-Person"
+    | "Email"
+    | "Order Placement"
+    | "Order Created"
+    | "Order Status Changed"
+    | "Order Completed"
+    | "Order Cancelled"
+    | "Order" 
+    | "Gift" 
+    | "Follow-up" 
+    | "Note"
+    | "Milestone"
+    | "Tier Changed"
+    | "Client Info Updated"
+    | string;
   date: string;
   content: string;
   amount?: number; // optionally associated with Order or Gift
+  method?: string; // e.g. "WhatsApp", "Phone Call", "In-Person", "System Auto"
+  orderId?: string;
+  orderNumber?: string;
 }
+
+export type OpportunityStatus = "Open" | "Follow Up Required" | "Resolved" | "Converted" | "Closed" | "Missed" | "Missed Opportunity";
 
 export interface FollowUpReminder {
   id: string;
   date: string;
   task: string;
   completed: boolean;
+  completedAt?: string;
+  followUpCount?: number; // 0, 1, 2, 3 attempts
+  followUpHistory?: FollowUpRecord[];
+  opportunityStatus?: OpportunityStatus;
+  nextActionDate?: string;
   milestone?: {
     clientName: string;
     personName: string;
@@ -193,6 +460,8 @@ export interface FollowUpReminder {
     eventType: string;
     eventDate: string;
     recommendedActionDate: string;
+    triggerType?: "advance_opportunity" | "actual_day";
+    occurrenceYear?: number;
   };
 }
 
@@ -271,10 +540,15 @@ export interface Client {
   manualTierReason?: string;
   strategicAssociations?: string[];
   calculatedTier?: ClientTier;
-  clientHome?: "CEO Lifestyle" | "Librarium Luxe" | "CEO Lifestyle | Librarium Luxe" | string;
+  clientHome?: ClientHome | string;
+  googleReview?: YesNo;
+  adventist?: YesNo;
   favouriteAuthors?: string[];
   remembrances?: PersonalRemembrance[];
   apparelInfo?: ApparelInformation;
+  promises?: ClientPromise[];
+  commitments?: ClientPromise[];
+  checkedIn?: boolean;
 }
 
 export interface InventorySalesMovement {
@@ -288,6 +562,7 @@ export interface LuxeBookInventoryItem {
   id: string;
   title: string;
   category: string;
+  primaryClassification?: PrimaryBookClassification;
   quantity: number;
   dateAdded: string; // e.g. "2026-05-15"
   salesHistory: InventorySalesMovement[];
@@ -299,8 +574,11 @@ export interface LuxeBookInventoryItem {
   sellingPrice?: number;
 }
 
+export type AuthoritativeBookRank = "Top Seller" | "Medium Seller" | "Slow Mover" | "Never Sell" | "Unknown";
+export type LegacyBookRank = "Best Seller" | "High Performer" | "Standard" | "Slow Moving" | "New Release";
+export type BookRank = AuthoritativeBookRank | LegacyBookRank;
+
 export type BookRankingStatus = "Never Sell" | "Dead Stock" | "Evaluate" | "Freeze" | "Stacked" | "Healthy" | "Test Again" | "Restock" | "Urgent Restock";
-export type BookRank = "Top Seller" | "Best Seller" | "High Performer" | "Standard" | "Slow Moving" | "New Release";
 
 export enum UserRole {
   MASTER_ADMINISTRATOR = "Master Administrator",
@@ -442,16 +720,63 @@ export interface DeliveryMethod {
   trackingSupported?: boolean;
 }
 
+export const OS_LOCATIONS = [
+  "Operations Dashboard",
+  "Client Directory",
+  "Client Profile",
+  "Delivery & Collection",
+  "Production",
+  "Quote Calculator",
+  "T-Shirt Studio",
+  "Librarium Luxe Operations",
+  "General / All"
+] as const;
+
+export type OSLocation = typeof OS_LOCATIONS[number] | string;
+
 export interface SystemQuoteTemplate {
   id: string;
   name: string;
-  category: "Customer Communication" | "Sales Quotes" | "Operations" | "Quotations" | "Delivery & Collection" | string;
+  category: "ORDER DETAILS" | "CLIENT" | "SALES" | "ORDERS" | "PAYMENTS" | "EVENTS" | "PRODUCTION" | "LIBRARIUM LUXE" | "DOCUMENTS" | "GENERAL" | "Customer Communication" | "Sales Quotes" | "Operations" | "Quotations" | "Delivery & Collection" | string;
   toolKey?: "apparel" | "book" | "dtf" | "production_layout" | "location" | "general" | string;
+  company?: "CEO Lifestyle" | "Librarium Luxe" | "Both" | "All" | string;
+  businessHome?: "All" | "CEO Lifestyle" | "Librarium Luxe" | string;
+  location?: OSLocation;
+  documentType?: "message" | "quote" | "invoice" | "receipt" | "bill" | "statement" | "document" | "notice" | "order_details" | string;
   content: string;
   description?: string;
   placeholders?: string[];
   active: boolean;
   isDefault?: boolean;
+}
+
+export interface PeakProductMixItem {
+  id: string;
+  templateId?: string;
+  productName: string;
+  quantity: number; // Active planning target
+  historicalEventSales?: Record<number, number>; // Historical actual sales for this event, e.g. { 2023: 32, 2024: 41, 2025: 38, 2026: 47 }
+  yearPlans?: Record<number, number>; // Manual plan targets per planning year, e.g. { 2027: 50, 2028: 60 }
+  yearActuals?: Record<number, number>; // Actual sales per year, e.g. { 2027: 58 }
+}
+
+export interface PeakPlannerRecord {
+  id: string;
+  name: string;
+  emoji?: string;
+  peakDate: string; // e.g. "2026-02-14" or start date
+  peakEndDate?: string; // e.g. "2026-02-14" or end date
+  prepStartDate: string; // e.g. "2026-01-15"
+  planningYear?: number; // Active planning year, e.g. 2027
+  expectedOrders: number; // e.g. 50
+  historicalEventOrders?: Record<number, number>; // Historical order counts e.g. { 2024: 40, 2025: 55, 2026: 50 }
+  orderYearPlans?: Record<number, number>; // Manual plan order counts per planning year e.g. { 2027: 60, 2028: 70 }
+  expectedProductMix: PeakProductMixItem[];
+  notes?: string;
+  active: boolean;
+  isDefaultPreset?: boolean;
+  createdDate?: string;
+  updatedDate?: string;
 }
 
 export interface SystemSettings {
@@ -493,7 +818,15 @@ export interface SystemSettings {
   deliveryMethods?: DeliveryMethod[];
   quoteTemplates?: SystemQuoteTemplate[];
   checklistTemplates?: ProductionChecklistTemplate[];
+  fulfillmentTemplates?: FulfillmentTemplate[];
+  fulfillmentInventory?: FulfillmentInventoryItem[];
+  regularInventory?: RegularInventoryItem[];
+  peakPlannerRecords?: PeakPlannerRecord[];
   targetDestinations?: string[];
+  bookClassifications?: string[];
+  supplierDirectory?: SupplierRecord[];
+  contactDirectory?: ContactRecord[];
+  contactSupplierDirectory?: ContactSupplierRecord[];
 }
 
 export interface FollowUpRecord {
@@ -523,12 +856,13 @@ export interface BackupRecord {
     aspiringClients?: number;
     inventory?: number;
     users?: number;
+    operationsOrders?: number;
   };
 }
 
 export interface SavedQuotation {
   id: string;
-  toolType: "layout" | "apparel" | "book" | "location" | "dtf";
+  toolType: "layout" | "circular_layout" | "apparel" | "book" | "location" | "dtf" | "inhouse_dtf";
   clientName: string;
   title?: string;
   date?: string;
@@ -587,7 +921,20 @@ export interface AspiringClient {
   followUpHistory?: FollowUpRecord[];
   archiveReason?: "Not Interested" | "No Response" | "Converted to Client" | "Keep Active" | "Other" | string;
   archivedDate?: string;
-  clientHome?: "CEO Lifestyle" | "Librarium Luxe" | "CEO Lifestyle | Librarium Luxe" | string;
+  clientHome?: "CEO Lifestyle" | "Librarium Luxe" | string;
+  adventist?: YesNo;
   favouriteAuthors?: string[];
+  priority?: "Normal" | "High" | "Urgent";
+}
+
+export interface ExecutiveChecklistItem {
+  id: string;
+  task: string;
+  dueDate?: string; // YYYY-MM-DD
+  priority?: "High" | "Normal";
+  notes?: string;
+  completed: boolean;
+  createdAt: string;
+  completedAt?: string;
 }
 

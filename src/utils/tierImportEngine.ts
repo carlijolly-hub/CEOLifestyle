@@ -4,7 +4,8 @@ import {
   BusinessRelationship, 
   ProfileTheme, 
   ManagementClassification, 
-  ClientTierRecord 
+  ClientTierRecord,
+  ClientHome
 } from "../types";
 
 export interface ParsedTierRow {
@@ -370,6 +371,7 @@ export function executeTierImport(
         const updatedClient: Client = {
           ...existing,
           tier: row.finalTier,
+          clientHome: (row.businessRelationship === "CEO Lifestyle + Librarium Luxe" ? "CEO Lifestyle | Librarium Luxe" : row.businessRelationship) as ClientHome,
           businessRelationship: row.businessRelationship,
           homeBrand: row.homeBrand,
           profileTheme: row.profileTheme,
@@ -413,6 +415,7 @@ export function executeTierImport(
         firstName,
         lastName,
         tier: row.finalTier,
+        clientHome: (row.businessRelationship === "CEO Lifestyle + Librarium Luxe" ? "CEO Lifestyle | Librarium Luxe" : row.businessRelationship) as ClientHome,
         homeBrand: row.homeBrand,
         businessRelationship: row.businessRelationship,
         profileTheme: row.profileTheme,

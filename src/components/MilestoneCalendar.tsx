@@ -1,9 +1,11 @@
 import React, { useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useBodyScrollLock } from "../hooks/useBodyScrollLock";
-import { Client, ImportantDate, FollowUpReminder, BusinessEvent, AspiringClient } from "../types";
+import { Client, ImportantDate, FollowUpReminder, BusinessEvent, AspiringClient, PeakPlannerRecord } from "../types";
 import { INITIAL_BUSINESS_EVENTS } from "../data/mockData";
 import { getRelationshipEventTitle, getClientMilestones, parseDateString } from "../utils/dateHelpers";
+import { getClientHome } from "../utils/clientTierUtils";
+import { getSystemSettings, DEFAULT_PEAK_PLANNER_RECORDS, calculatePeakProjectedRequirements } from "../utils/settingsHelper";
 import SystemReferenceClock from "./SystemReferenceClock";
 import { 
   ChevronLeft, 
@@ -25,7 +27,8 @@ import {
   X,
   Plus,
   AlertCircle,
-  Clipboard
+  Clipboard,
+  Package
 } from "lucide-react";
 import UniversalPasteModal from "./UniversalPasteModal";
 
@@ -52,6 +55,18 @@ export const getFormattedEventLabel = (text?: string): string => {
 };
 
 export default function MilestoneCalendar({ clients, aspiringClients, onSelectClient, onOpenTask }: MilestoneCalendarProps) {
+  // Load System Settings and Peak Planner Records
+  const systemSettings = useMemo(() => getSystemSettings(), []);
+  const activePeaks = useMemo(() => {
+    const list = systemSettings.peakPlannerRecords && systemSettings.peakPlannerRecords.length > 0
+      ? systemSettings.peakPlannerRecords
+      : DEFAULT_PEAK_PLANNER_RECORDS;
+    return list.filter(p => p.active !== false);
+  }, [systemSettings]);
+
+  // Selected Peak Modal state
+  const [selectedPeakRecord, setSelectedPeakRecord] = useState<PeakPlannerRecord | null>(null);
+
   // Navigation State
   const [currentYear, setCurrentYear] = useState(SYSTEM_REFERENCE_YEAR);
   const [currentMonth, setCurrentMonth] = useState(SYSTEM_REFERENCE_MONTH); // July (0-indexed)
@@ -116,9 +131,22 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
     setEventChecklist(prev => prev.filter((_, i) => i !== idx));
   };
 
+  const todayIso = useMemo(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }, []);
+
   const handleCreateEvent = (e: React.FormEvent) => {
     e.preventDefault();
     if (!eventTitle.trim() || !eventDate) return;
+
+    if (eventDate < todayIso) {
+      alert("Expired Date Protected: Cannot set a past or expired date for a new milestone. Please choose today or a future date.");
+      return;
+    }
 
     const checklistObj = eventChecklist.map((task, i) => ({
       id: `chk-new-${Date.now()}-${i}`,
@@ -185,9 +213,9 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
   const [editValidationError, setEditValidationError] = useState("");
 
   const checkEditPermission = (): boolean => {
-    const role = localStorage.getItem("ceo_user_role") || "Master Administrator";
-    if (role === "Read-Only User") {
-      alert("Permission Restricted: Read-Only users cannot edit business events. Please contact a Master Administrator.");
+    const role = (localStorage.getItem("ceo_user_role") || "").trim();
+    if (!role || role === "Read-Only User") {
+      alert("Permission Restricted: You do not have permission to edit business events. Please contact a Master Administrator.");
       return false;
     }
     return true;
@@ -335,7 +363,7 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
   };
 
   // Filters
-  const [brandFilter, setBrandFilter] = useState<"all" | "CEO Printing Services" | "Librarium Luxe">("all");
+  const [brandFilter, setBrandFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<"all" | BusinessEvent["type"]>("all");
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -414,7 +442,8 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
             firstName: asp.name.split(" ")[0],
             lastName: asp.name.split(" ").slice(1).join(" ") || "Prospect",
             tier: "Silver",
-            homeBrand: "CEO Printing Services",
+            homeBrand: asp.clientHome === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle",
+            clientHome: asp.clientHome || "CEO Lifestyle",
           } as any,
           type: "reminder",
           businessType: "General Business Day",
@@ -461,6 +490,51 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
     }).filter(e => e.parsedMonth !== -1);
   }, [businessEvents, clients]);
 
+  // Parse peak planner events
+  const parsedPeakEvents = useMemo(() => {
+    const list: any[] = [];
+    activePeaks.forEach(peak => {
+      // 1. Peak Date Event
+      const peakParsed = parseDateString(peak.peakDate);
+      if (peakParsed) {
+        list.push({
+          id: `peak-date-${peak.id}`,
+          client: { id: "peak-entity", firstName: peak.emoji || "🎁", lastName: peak.name, homeBrand: "CEO Lifestyle" } as any,
+          type: "business" as const,
+          businessType: "Core Business Peak",
+          label: `${peak.emoji || '🎁'} ${peak.name} (PEAK DATE)`,
+          dateStr: peak.peakDate,
+          parsedMonth: peakParsed.month,
+          parsedDay: peakParsed.day,
+          parsedYear: peakParsed.year,
+          isVip: true,
+          peakRecord: peak,
+          description: `Expected Orders: ${peak.expectedOrders}. Click to view projected fulfillment requirements (BOM).`
+        });
+      }
+
+      // 2. Prep Start Date Event
+      const prepParsed = parseDateString(peak.prepStartDate);
+      if (prepParsed) {
+        list.push({
+          id: `peak-prep-${peak.id}`,
+          client: { id: "peak-entity", firstName: peak.emoji || "🎁", lastName: peak.name, homeBrand: "CEO Lifestyle" } as any,
+          type: "business" as const,
+          businessType: "General Business Day",
+          label: `${peak.emoji || '🎁'} ${peak.name} Prep Starts`,
+          dateStr: peak.prepStartDate,
+          parsedMonth: prepParsed.month,
+          parsedDay: prepParsed.day,
+          parsedYear: prepParsed.year,
+          isVip: false,
+          peakRecord: peak,
+          description: `Preparation starts today for ${peak.name}. Peak date is ${peak.peakDate}.`
+        });
+      }
+    });
+    return list;
+  }, [activePeaks]);
+
   // Filter events based on criteria and toggles
   const filteredEvents = useMemo(() => {
     // Combine lists based on displayToggle
@@ -484,27 +558,28 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
       preparationChecklist?: any[];
       historicalNotes?: any[];
       assignedUser?: string;
+      peakRecord?: PeakPlannerRecord;
     }> = [];
 
     if (displayToggle === "both" || displayToggle === "client_only") {
       list = [...list, ...allEvents];
     }
     if (displayToggle === "both" || displayToggle === "business_only") {
-      list = [...list, ...parsedBusinessEvents];
+      list = [...list, ...parsedBusinessEvents, ...parsedPeakEvents];
     }
 
     return list.filter(ev => {
       // Brand filter (only apply to non-business events or business events matching the relevant brands)
       if (brandFilter !== "all") {
-        const itemBrand = ev.client && ev.client.id !== "business-entity" ? ev.client.homeBrand : null;
-        if (itemBrand) {
-          if (itemBrand !== "CEO Lifestyle" && itemBrand !== brandFilter) {
+        const ch = ev.client && ev.client.id !== "business-entity" ? getClientHome(ev.client) : null;
+        if (ch) {
+          if (ch !== brandFilter) {
             return false;
           }
         } else {
           // If it's a pure business event without a client, check businessType
           if (brandFilter === "Librarium Luxe" && ev.businessType !== "Librarium Luxe Day") return false;
-          if (brandFilter === "CEO Printing Services" && ev.businessType !== "CEO Day") return false;
+          if (brandFilter === "CEO Lifestyle" && ev.businessType !== "CEO Day") return false;
         }
       }
 
@@ -647,17 +722,18 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
 
         {/* Brand filter */}
         <div className="space-y-1">
-          <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Home Brand</label>
+          <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Client Home</label>
           <div className="relative">
             <Filter className="absolute left-3 top-2.5 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
             <select
               value={brandFilter}
-              onChange={(e) => setBrandFilter(e.target.value as any)}
+              onChange={(e) => setBrandFilter(e.target.value)}
               className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl py-2 pl-9 pr-3 text-xs font-bold focus:outline-none cursor-pointer appearance-none"
             >
-              <option value="all">All Brands</option>
-              <option value="CEO Printing Services">CEO Printing Services Only</option>
-              <option value="Librarium Luxe">Librarium Luxe Only</option>
+              <option value="all">All Client Homes</option>
+              <option value="CEO Lifestyle">CEO Lifestyle</option>
+              <option value="Librarium Luxe">Librarium Luxe</option>
+              <option value="CEO Lifestyle | Librarium Luxe">CEO Lifestyle | Librarium Luxe</option>
             </select>
           </div>
         </div>
@@ -701,6 +777,56 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
           >
             Clear Filters
           </button>
+        </div>
+      </div>
+
+      {/* Core Seasonal Business Peaks Banner Widget */}
+      <div className="bg-white/90 backdrop-blur-md border border-slate-200/80 rounded-3xl p-5 shadow-xs space-y-3 text-left animate-fade-in">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-3">
+          <div>
+            <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-rose-500" />
+              Core Business Peaks (Planner Presets)
+            </h3>
+            <p className="text-[11px] text-slate-500 font-medium">
+              Seasonal demand projections & preparation start dates. Click any peak to inspect projected component requirements (BOM).
+            </p>
+          </div>
+          <span className="text-[10px] font-extrabold text-rose-700 bg-rose-50 border border-rose-200 px-3 py-1 rounded-full">
+            {activePeaks.length} Peaks Defined
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5">
+          {activePeaks.map(peak => (
+            <div
+              key={peak.id}
+              onClick={() => setSelectedPeakRecord(peak)}
+              className="p-3 bg-slate-50 hover:bg-slate-100/80 border border-slate-200/80 rounded-2xl transition-all cursor-pointer space-y-1.5 group shadow-2xs hover:shadow-xs"
+            >
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-base">{peak.emoji || "🎁"}</span>
+                <span className="text-[9px] font-black px-1.5 py-0.5 bg-rose-100 text-rose-800 rounded-md">
+                  {peak.expectedOrders} Orders
+                </span>
+              </div>
+              <div>
+                <h4 className="font-extrabold text-xs text-slate-900 group-hover:text-rose-600 truncate">
+                  {peak.name}
+                </h4>
+                <p className="text-[10px] text-slate-500 font-medium truncate mt-0.5">
+                  Peak: <strong>{peak.peakDate}</strong>
+                </p>
+                <p className="text-[9px] text-slate-400 font-medium truncate">
+                  Prep: <strong>{peak.prepStartDate}</strong>
+                </p>
+              </div>
+              <div className="pt-1.5 border-t border-slate-200/60 text-[9px] font-bold text-rose-600 flex items-center justify-between">
+                <span>View BOM</span>
+                <ChevronRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -916,8 +1042,9 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
             ) : (
               <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1">
                 {activeDayEvents.map(ev => {
-                  const isCeo = ev.client.homeBrand === "CEO Printing Services" || ev.client.homeBrand === "CEO Lifestyle";
-                  const isLuxe = ev.client.homeBrand === "Librarium Luxe" || ev.client.homeBrand === "CEO Lifestyle";
+                  const ch = getClientHome(ev.client);
+                  const isCeo = ch === "CEO Lifestyle" || ch === "CEO Lifestyle | Librarium Luxe";
+                  const isLuxe = ch === "Librarium Luxe" || ch === "CEO Lifestyle | Librarium Luxe";
                   
                   // Detail card branding color scheme based on 6 unified categories
                   let themeCardClass = "bg-slate-50 border-slate-200/60";
@@ -1296,6 +1423,7 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
                     <input
                       type="date"
                       required
+                      min={todayIso}
                       value={eventDate}
                       onChange={(e) => setEventDate(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 focus:border-slate-850 rounded-xl px-3 py-1.5 focus:outline-none transition-colors text-xs font-semibold"
@@ -1712,6 +1840,137 @@ export default function MilestoneCalendar({ clients, aspiringClients, onSelectCl
         onConfirmImport={(pastedEvents) => handleConfirmPasteMilestones(pastedEvents)}
       />
 
+      {/* Selected Peak Detail Modal */}
+      {selectedPeakRecord && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 animate-fade-in text-left">
+          <div className="bg-white rounded-3xl border border-slate-200 max-w-2xl w-full p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
+            
+            <div className="flex justify-between items-start border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl p-2 bg-slate-50 rounded-2xl border border-slate-200">
+                  {selectedPeakRecord.emoji || "🎁"}
+                </span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-extrabold text-slate-900">{selectedPeakRecord.name}</h3>
+                    {selectedPeakRecord.isDefaultPreset && (
+                      <span className="text-[9px] font-extrabold px-2 py-0.5 bg-rose-100 text-rose-800 rounded-md">
+                        Core Business Preset
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Preparation Starts: <strong>{selectedPeakRecord.prepStartDate}</strong> • Peak Date: <strong>{selectedPeakRecord.peakDate}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedPeakRecord(null)}
+                className="p-1.5 hover:bg-slate-100 rounded-xl transition-all text-slate-500 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Non-Interference Separation Notice */}
+            <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-start gap-2.5 text-xs text-amber-900 font-medium">
+              <Sparkles className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <strong>Planning Projection Notice:</strong> Expected peak orders are projections only. They do <strong>NOT</strong> create live orders, enter the Fulfillment Center, change physical inventory, or affect sales totals.
+              </div>
+            </div>
+
+            {/* Expected Orders & Mix Overview */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200">
+                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Expected Peak Orders</span>
+                <p className="text-2xl font-black text-slate-900 mt-0.5">{selectedPeakRecord.expectedOrders} Orders</p>
+              </div>
+              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200">
+                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Expected Product Mix</span>
+                <p className="text-2xl font-black text-indigo-900 mt-0.5">{(selectedPeakRecord.expectedProductMix || []).reduce((acc, i) => acc + i.quantity, 0)} Units</p>
+              </div>
+            </div>
+
+            {/* Notes if available */}
+            {selectedPeakRecord.notes && (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700 italic">
+                <strong>Notes:</strong> {selectedPeakRecord.notes}
+              </div>
+            )}
+
+            {/* Product Mix List */}
+            <div className="space-y-2">
+              <h4 className="font-extrabold text-xs text-slate-900 uppercase tracking-wider">Expected Product Mix Breakdown</h4>
+              <div className="bg-slate-50 rounded-2xl border border-slate-200 p-3 space-y-1.5">
+                {(selectedPeakRecord.expectedProductMix || []).map(mix => (
+                  <div key={mix.id} className="flex justify-between items-center text-xs">
+                    <span className="font-extrabold text-slate-800">{mix.productName}</span>
+                    <span className="font-black text-slate-900">{mix.quantity} units</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Projected BOM Requirements */}
+            <div className="space-y-2">
+              <h4 className="font-extrabold text-xs text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                <Package className="w-4 h-4 text-emerald-600" />
+                Projected Fulfillment Requirements (BOM Summary)
+              </h4>
+              
+              {(() => {
+                const reqs = calculatePeakProjectedRequirements(selectedPeakRecord, systemSettings.fulfillmentTemplates || []);
+                if (reqs.length === 0) return <p className="text-xs text-slate-400 italic">No component templates match this product mix.</p>;
+
+                return (
+                  <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden text-xs shadow-2xs">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                          <th className="p-2.5">Component</th>
+                          <th className="p-2.5 text-center">Required Qty</th>
+                          <th className="p-2.5 text-center">Projected Purchase</th>
+                          <th className="p-2.5">Bulk Purchasing Rule</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {reqs.map((r, i) => (
+                          <tr key={i} className="hover:bg-slate-50/60">
+                            <td className="p-2.5 font-extrabold text-slate-800">{r.componentName}</td>
+                            <td className="p-2.5 text-center font-bold text-slate-700">{r.totalRequiredQty} {r.unitLabel}</td>
+                            <td className="p-2.5 text-center font-black text-emerald-700 bg-emerald-50/50">{r.purchaseQty} {r.bulkUnitLabel || r.unitLabel}</td>
+                            <td className="p-2.5 text-[10px] text-purple-900 font-bold">
+                              {r.hasRule ? (
+                                <span className="px-2 py-0.5 bg-purple-100 rounded-md inline-block">
+                                  {r.ruleDescription}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 italic">Exact Requirement</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setSelectedPeakRecord(null)}
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-xs transition-all cursor-pointer shadow-xs"
+              >
+                Close Window
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -1744,6 +2003,7 @@ export function SmallCalendarWidget({ clients, aspiringClients, onSelectClient, 
       clientName: string;
       isVip: boolean;
       homeBrand: string;
+      clientHome?: string;
       label: string;
       type: "birthday" | "anniversary" | "reminder";
       month: number;
@@ -1798,7 +2058,8 @@ export function SmallCalendarWidget({ clients, aspiringClients, onSelectClient, 
           clientId: `aspiring-${asp.id}`,
           clientName: `${asp.name} (Prospect)`,
           isVip: false,
-          homeBrand: "CEO Printing Services",
+          homeBrand: asp.clientHome === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle",
+          clientHome: asp.clientHome || "CEO Lifestyle",
           label: `Follow up with ${asp.name} regarding ${asp.serviceInterestedIn}`,
           type: "reminder",
           month: parsed.month,

@@ -45,6 +45,7 @@ export function customerToFlatRow(customer: Client) {
     "Gender": customer.gender || "",
     "Occupation": customer.occupation || "",
     "Drive (Yes/No)": customer.drive || "",
+    "WhatsApp Checked In": customer.checkedIn ? "Yes" : "No",
     "Phone Number": customer.contact?.phoneNumber || "",
     "Communication Status": customer.communicationStatus || "Unknown",
     "Email Address": customer.contact?.email || "",
@@ -201,7 +202,7 @@ export function flatRowToCustomer(row: any): Client {
   else if (mgmtRaw === "Delinquent" || finalTier === "Delinquent") managementClassification = "Delinquent";
   else if (mgmtRaw === "VIP Priority" || finalTier === "Founders Family" || finalTier === "Platinum") managementClassification = "VIP Priority";
 
-  return {
+  const customer: Client = {
     id: cid,
     deactivated: isDeactivatedVal,
     firstName,
@@ -228,15 +229,61 @@ export function flatRowToCustomer(row: any): Client {
       deliveryAddress: row["Delivery Address"] ? String(row["Delivery Address"]).trim() : "",
       deliveryCountry: row["Delivery Country"] ? String(row["Delivery Country"]).trim() : "Jamaica"
     },
-    profile: {
-      motherName: row["Mother Name"] ? String(row["Mother Name"]).trim() : "",
-      fatherName: row["Father Name"] ? String(row["Father Name"]).trim() : "",
-      wifeName: row["Wife Name"] ? String(row["Wife Name"]).trim() : "",
-      husbandName: row["Husband Name"] ? String(row["Husband Name"]).trim() : "",
-      children: parseChildren(row["Children Names & Birthdays"]),
-      pets: row["Pets"] ? String(row["Pets"]).trim() : "None",
-      personalNotes: row["Personal Notes"] ? String(row["Personal Notes"]).trim() : ""
-    },
+    profile: (() => {
+      const p: any = {
+        motherName: row["Mother Name"] ? String(row["Mother Name"]).trim() : "",
+        fatherName: row["Father Name"] ? String(row["Father Name"]).trim() : "",
+        wifeName: row["Wife Name"] ? String(row["Wife Name"]).trim() : "",
+        husbandName: row["Husband Name"] ? String(row["Husband Name"]).trim() : "",
+        children: parseChildren(row["Children Names & Birthdays"] || row["Children"] || row["children"]),
+        pets: row["Pets"] ? String(row["Pets"]).trim() : "None",
+        personalNotes: row["Personal Notes"] ? String(row["Personal Notes"]).trim() : ""
+      };
+
+      const motherBday = row["Mother Birthday"] || row["Mother's Birthday"] || row["motherBirthday"];
+      if (motherBday) p.motherBirthday = String(motherBday).trim();
+
+      const fatherBday = row["Father Birthday"] || row["Father's Birthday"] || row["fatherBirthday"];
+      if (fatherBday) p.fatherBirthday = String(fatherBday).trim();
+
+      const spouseBday = row["Spouse Birthday"] || row["spouseBirthday"] || row["Wife Birthday"] || row["Husband Birthday"];
+      if (spouseBday) {
+        const cleanSpouse = String(spouseBday).trim();
+        p.spouseBirthday = cleanSpouse;
+        p.wifeBirthday = cleanSpouse;
+        p.husbandBirthday = cleanSpouse;
+      }
+
+      const privNotes = row["Private Notes"] || row["privateNotes"];
+      if (privNotes) {
+        p.privateNotes = String(privNotes).trim();
+        if (!p.personalNotes) p.personalNotes = String(privNotes).trim();
+      }
+
+      const childBdays = row["Children Birthdays"] || row["childrenBirthdays"];
+      if (childBdays) p.childrenBirthdays = childBdays;
+
+      if (row["Mother Deceased"] !== undefined || row["motherDeceased"] !== undefined) {
+        p.motherDeceased = row["Mother Deceased"] === true || row["Mother Deceased"] === "Yes" || row["motherDeceased"] === true;
+      }
+      if (row["Father Deceased"] !== undefined || row["fatherDeceased"] !== undefined) {
+        p.fatherDeceased = row["Father Deceased"] === true || row["Father Deceased"] === "Yes" || row["fatherDeceased"] === true;
+      }
+      if (row["Wife Deceased"] !== undefined || row["wifeDeceased"] !== undefined) {
+        p.wifeDeceased = row["Wife Deceased"] === true || row["Wife Deceased"] === "Yes" || row["wifeDeceased"] === true;
+      }
+      if (row["Husband Deceased"] !== undefined || row["husbandDeceased"] !== undefined) {
+        p.husbandDeceased = row["Husband Deceased"] === true || row["Husband Deceased"] === "Yes" || row["husbandDeceased"] === true;
+      }
+      if (row["Deceased Status"] || row["deceasedStatus"]) {
+        p.deceasedStatus = row["Deceased Status"] || row["deceasedStatus"];
+      }
+
+      if (row.profile && typeof row.profile === "object") {
+        Object.assign(p, row.profile);
+      }
+      return p;
+    })(),
     importantDates,
     history: {
       firstOrderDate: row["First Order Date"] ? String(row["First Order Date"]).trim() : "",
@@ -272,21 +319,30 @@ export function flatRowToCustomer(row: any): Client {
     reminders: [],
     preferredCommunication: (row["Preferred Communication Method"] || "Email") as any,
     lastContactedDate: row["Last Contacted Date"] ? String(row["Last Contacted Date"]).trim() : "",
+    checkedIn: row["WhatsApp Checked In"] === "Yes" || row["WhatsApp Checked In"] === true || row["checkedIn"] === true || row["checkedIn"] === "Yes",
     communicationStatus: (row["Communication Status"] === "Active" || row["Communication Status"] === "Not Active" || row["Communication Status"] === "Unknown") ? row["Communication Status"] : "Unknown"
   };
+
+  if (row.commitments) (customer as any).commitments = row.commitments;
+  if (row.promises) (customer as any).promises = row.promises;
+  if (row["Tags"] || row["tags"]) (customer as any).tags = parseList(row["Tags"] || row["tags"]);
+  if (row.tags && Array.isArray(row.tags)) (customer as any).tags = row.tags;
+  if (row["Custom Fields"] || row["customFields"]) (customer as any).customFields = row["Custom Fields"] || row["customFields"];
+  if (row.customFields) (customer as any).customFields = row.customFields;
+
+  (customer as any)._rawRow = row;
+
+  return customer;
 }
 
-// Download Excel File helper with Environment Export Protection
+// Download Excel File helper
 export function downloadExcel(sheets: { name: string; data: any[] }[], filename: string, createdBy: string = "Master Administrator") {
-  const env = getCurrentEnvironment();
-  const prefix = env === "LIVE" ? "" : "STRESS_MODE_";
-
   let baseName = filename;
   if (baseName.startsWith("LIVE_MODE_")) baseName = baseName.replace("LIVE_MODE_", "");
   if (baseName.startsWith("STRESS_MODE_")) baseName = baseName.replace("STRESS_MODE_", "");
 
   const cleanName = baseName.endsWith(".xlsx") ? baseName.slice(0, -5) : baseName;
-  const finalFilename = `${prefix}${cleanName}.xlsx`;
+  const finalFilename = `${cleanName}.xlsx`;
 
   const wb = XLSX.utils.book_new();
   sheets.forEach(sheet => {
@@ -300,7 +356,7 @@ export function downloadExcel(sheets: { name: string; data: any[] }[], filename:
     const dateFormatted = now.toLocaleDateString("en-GB"); // 24/07/2026
     const timeFormatted = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }); // 01:40 PM
     const sysRefData = [
-      { "Field": "Environment", "Value": env === "LIVE" ? "LIVE MODE" : "STRESS TEST MODE" },
+      { "Field": "Application", "Value": "CEO Lifestyle Management" },
       { "Field": "Export Date", "Value": dateFormatted },
       { "Field": "Export Time", "Value": timeFormatted },
       { "Field": "Application Version", "Value": "V2.1" },
@@ -566,8 +622,8 @@ export function downloadUploadTemplate() {
       "Required": "No"
     },
     {
-      "Field Name": "Home Brand",
-      "Allowed Values": "CEO Printing Services, Librarium Luxe, CEO Lifestyle",
+      "Field Name": "Client Home",
+      "Allowed Values": "CEO Lifestyle, Librarium Luxe, CEO Lifestyle | Librarium Luxe",
       "Required": "No"
     },
     {

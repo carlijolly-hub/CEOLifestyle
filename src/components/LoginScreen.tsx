@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Lock, User, Key, Eye, EyeOff, Sparkles, ArrowRight, ShieldAlert } from "lucide-react";
+import { INITIAL_USERS } from "../data/mockData";
 
 interface LoginScreenProps {
   onLoginSuccess: () => void;
@@ -62,6 +63,9 @@ export default function LoginScreen({ onLoginSuccess, backgroundUrl }: LoginScre
         } catch (e) {
           console.error("Failed to parse application users:", e);
         }
+      }
+      if (!Array.isArray(appUsers) || appUsers.length === 0) {
+        appUsers = INITIAL_USERS;
       }
 
       const matchingUser = appUsers.find(

@@ -18,7 +18,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Corporate Marketing VP",
     drive: "Yes",
     tier: "Platinum",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     communicationStatus: "Active",
     contact: {
       phoneNumber: "+1 (876) 555-0101",
@@ -72,6 +72,11 @@ export const INITIAL_CLIENTS: Client[] = [
     ],
     preferredCommunication: "WhatsApp",
     lastContactedDate: "2026-08-01",
+    clientHome: "CEO Lifestyle | Librarium Luxe",
+    promises: [
+      { id: "com-001", promise: "Promised to send autumn catalogue", dueDate: "2026-08-15", status: "Open", notes: "Send physical print copy + PDF link" },
+      { id: "com-002", promise: "Promised a 10% discount on next corporate polo reorder", status: "Open", notes: "Applies to orders over 50 units" }
+    ],
     remembrances: [
       { id: "rem_ceo1_1", relationship: "Mother", status: "Passed Away", dateAdded: "2026-05-10", notes: "Prefers thoughtful communication around Mother's Day." }
     ],
@@ -79,7 +84,8 @@ export const INITIAL_CLIENTS: Client[] = [
       tShirtSize: "M",
       poloSize: "M",
       hoodieSize: "S"
-    }
+    },
+    checkedIn: true
   },
 
   {
@@ -90,7 +96,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Luxury Hotel & Resort Director",
     drive: "Yes",
     tier: "Platinum",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: {
       phoneNumber: "+1 (876) 555-0102",
       email: "chris@reidevents.jm",
@@ -151,7 +157,8 @@ export const INITIAL_CLIENTS: Client[] = [
       poloSize: "L",
       hoodieSize: "XL",
       jerseySize: "XL"
-    }
+    },
+    checkedIn: true
   },
 
   {
@@ -224,7 +231,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "CEO, Sterling Financial Holdings",
     drive: "Yes",
     tier: "Platinum",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: {
       phoneNumber: "+1 (876) 555-0104",
       email: "m.sterling@sterlingholdings.jm",
@@ -348,7 +355,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "CEO, Blake Energy & Tech",
     drive: "Yes",
     tier: "Platinum",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: {
       phoneNumber: "+1 (876) 555-0106",
       email: "jblake@blakeenergy.com",
@@ -409,7 +416,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Founder, Vance Media Group",
     drive: "Yes",
     tier: "Platinum",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: {
       phoneNumber: "+1 (876) 555-0107",
       email: "evance@vancemedia.jm",
@@ -470,7 +477,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Owner, Sterling Construction",
     drive: "Yes",
     tier: "Platinum",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: {
       phoneNumber: "+1 (876) 555-0108",
       email: "rsterling@sterlingconst.jm",
@@ -653,7 +660,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Creative Director, Island Chic",
     drive: "Yes",
     tier: "Platinum",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: {
       phoneNumber: "+1 (876) 555-0111",
       email: "simone@islandchic.jm",
@@ -714,7 +721,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "General Manager, Island Logistics",
     drive: "Yes",
     tier: "Platinum",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: {
       phoneNumber: "+1 (876) 555-0112",
       email: "dlewis@islandlogistics.jm",
@@ -836,7 +843,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Chairman, Sterling Real Estate",
     drive: "Yes",
     tier: "Platinum",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: {
       phoneNumber: "+1 (876) 555-0114",
       email: "charles@sterlingrealty.jm",
@@ -961,7 +968,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Managing Director, Williams Construction",
     drive: "Yes",
     tier: "Gold",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: { phoneNumber: "+1 (876) 555-0116", email: "daniel.w@williamsconst.jm", city: "Kingston", parish: "St. Andrew", country: "Jamaica", deliveryAddress: "14 Industrial Terrace", deliveryCountry: "Jamaica" },
     profile: { motherName: "Mary Williams", fatherName: "Paul Williams", wifeName: "Amanda Williams", husbandName: "N/A", children: [{ name: "Joshua Williams", birthday: "August 8" }], pets: "Buster", personalNotes: "Active Gold client ordering site safety gear and custom polo shirts." },
     importantDates: [{ label: "Birthday", date: "August 4" }, { label: "Amanda's Birthday", date: "August 10" }, { label: "Joshua's Birthday", date: "August 8" }],
@@ -1001,7 +1008,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Operations Manager, Carib Freight",
     drive: "Yes",
     tier: "Gold",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: { phoneNumber: "+1 (876) 555-0118", email: "mbrown@caribfreight.jm", city: "Kingston", parish: "St. Andrew", country: "Jamaica", deliveryAddress: "12 Portway, Kingston Port", deliveryCountry: "Jamaica" },
     profile: { motherName: "Dorothy Brown", fatherName: "James Brown Sr.", wifeName: "Rebecca Brown", wifeBirthday: "August 14", husbandName: "N/A", children: [{ name: "Liam Brown", birthday: "August 3" }], pets: "Shadow", personalNotes: "Freight manager ordering shipping labels and custom uniforms." },
     importantDates: [{ label: "Birthday", date: "August 11" }, { label: "Liam's Birthday", date: "August 3" }, { label: "Rebecca's Birthday", date: "August 14" }],
@@ -1041,7 +1048,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Partner, Alexander Tech",
     drive: "Yes",
     tier: "Gold",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: { phoneNumber: "+1 (876) 555-0120", email: "dalexander@alexandertech.jm", city: "Kingston", parish: "St. Andrew", country: "Jamaica", deliveryAddress: "10 Tech Parkway, Kingston 10", deliveryCountry: "Jamaica" },
     profile: { motherName: "Helen Alexander", fatherName: "David Alexander Sr.", wifeName: "Karen Alexander", wifeBirthday: "August 12", husbandName: "N/A", children: [{ name: "Ethan Alexander", birthday: "August 5" }], pets: "Gizmo", personalNotes: "Tech startup founder ordering company hoodies, mugs, and laptop stickers." },
     importantDates: [{ label: "Birthday", date: "August 8" }, { label: "Ethan's Birthday", date: "August 5" }, { label: "Karen's Birthday", date: "August 12" }],
@@ -1081,7 +1088,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Manager, Miller Auto Parts",
     drive: "Yes",
     tier: "Gold",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: { phoneNumber: "+1 (876) 555-0122", email: "brandon@millerauto.jm", city: "Spanish Town", parish: "St. Catherine", country: "Jamaica", deliveryAddress: "40 Burke Road, Spanish Town", deliveryCountry: "Jamaica" },
     profile: { motherName: "Clara Miller", fatherName: "Brandon Miller Sr.", wifeName: "Tanya Miller", wifeBirthday: "August 9", husbandName: "N/A", children: [{ name: "Brandon Jr.", birthday: "August 14" }], pets: "Diesel", personalNotes: "Auto parts store manager ordering storefront banners and team shirts." },
     importantDates: [{ label: "Birthday", date: "August 5" }, { label: "Tanya's Birthday", date: "August 9" }, { label: "Brandon Jr.'s Birthday", date: "August 14" }],
@@ -1101,7 +1108,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Head Chef, Savor Catering",
     drive: "Yes",
     tier: "Gold",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: { phoneNumber: "+1 (876) 555-0123", email: "amanda@savorcatering.jm", city: "Kingston", parish: "St. Andrew", country: "Jamaica", deliveryAddress: "8 Barbican Road", deliveryCountry: "Jamaica" },
     profile: { motherName: "Maria Vasquez", fatherName: "Carlos Vasquez Sr.", wifeName: "N/A", husbandName: "Carlos Vasquez", husbandBirthday: "August 13", children: [{ name: "Isabella Vasquez", birthday: "August 7" }], pets: "Pepper", personalNotes: "Catering business owner ordering chef aprons, menu printing, and branded napkins." },
     importantDates: [{ label: "Birthday", date: "August 12" }, { label: "Isabella's Birthday", date: "August 7" }, { label: "Carlos's Birthday", date: "August 13" }],
@@ -1121,7 +1128,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Director, Reynolds Realty",
     drive: "Yes",
     tier: "Gold",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: { phoneNumber: "+1 (876) 555-0124", email: "ryan@reynoldsrealty.jm", city: "Montego Bay", parish: "St. James", country: "Jamaica", deliveryAddress: "15 Marine Drive, Montego Bay", deliveryCountry: "Jamaica" },
     profile: { motherName: "Sandra Reynolds", fatherName: "Paul Reynolds", wifeName: "Jessica Reynolds", wifeBirthday: "August 8", husbandName: "N/A", children: [{ name: "Lucas Reynolds", birthday: "August 12" }], pets: "Scooby", personalNotes: "Realtor ordering signboards, business cards, and client closing gift boxes." },
     importantDates: [{ label: "Birthday", date: "August 14" }, { label: "Jessica's Birthday", date: "August 8" }, { label: "Lucas's Birthday", date: "August 12" }],
@@ -1161,7 +1168,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "CEO, Phillips Logistics",
     drive: "Yes",
     tier: "Gold",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: { phoneNumber: "+1 (876) 555-0126", email: "trevor@phillipslog.jm", city: "Kingston", parish: "St. Andrew", country: "Jamaica", deliveryAddress: "3 Marcus Garvey Drive", deliveryCountry: "Jamaica" },
     profile: { motherName: "Ruth Phillips", fatherName: "Trevor Phillips Sr.", wifeName: "Karen Phillips", wifeBirthday: "August 13", husbandName: "N/A", children: [{ name: "Trevor Jr.", birthday: "August 9" }], pets: "Tyson", personalNotes: "Logistics owner ordering truck branding and staff poloshirts." },
     importantDates: [{ label: "Birthday", date: "August 11" }, { label: "Trevor Jr.'s Birthday", date: "August 9" }, { label: "Karen's Birthday", date: "August 13" }],
@@ -1181,7 +1188,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Director, Clarke Security",
     drive: "Yes",
     tier: "Gold",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: { phoneNumber: "+1 (876) 555-0127", email: "kclarke@clarkesecurity.jm", city: "Kingston", parish: "St. Andrew", country: "Jamaica", deliveryAddress: "18 Eastwood Park Road", deliveryCountry: "Jamaica" },
     profile: { motherName: "Angela Clarke", fatherName: "Samuel Clarke", wifeName: "Diana Clarke", wifeBirthday: "August 5", husbandName: "N/A", children: [{ name: "Kevin Jr.", birthday: "August 12" }], pets: "Major", personalNotes: "Security firm owner ordering high-visibility tactical vests and ID badges." },
     importantDates: [{ label: "Birthday", date: "August 9" }, { label: "Diana's Birthday", date: "August 5" }, { label: "Kevin Jr.'s Birthday", date: "August 12" }],
@@ -1201,7 +1208,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Manager, Hayes Fitness Studio",
     drive: "Yes",
     tier: "Gold",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: { phoneNumber: "+1 (876) 555-0128", email: "samantha@hayesfitness.jm", city: "Kingston", parish: "St. Andrew", country: "Jamaica", deliveryAddress: "22 Liguanea Plaza", deliveryCountry: "Jamaica" },
     profile: { motherName: "Carol Hayes", fatherName: "Robert Hayes", wifeName: "N/A", husbandName: "Patrick Hayes", husbandBirthday: "August 8", children: [{ name: "Zoe Hayes", birthday: "August 14" }], pets: "Kobe", personalNotes: "Gym owner ordering dri-fit workout apparel and shaker bottles." },
     importantDates: [{ label: "Birthday", date: "August 12" }, { label: "Patrick's Birthday", date: "August 8" }, { label: "Zoe's Birthday", date: "August 14" }],
@@ -1221,7 +1228,7 @@ export const INITIAL_CLIENTS: Client[] = [
     occupation: "Owner, Carter Automotive",
     drive: "Yes",
     tier: "Gold",
-    homeBrand: "CEO Printing Services",
+    homeBrand: "CEO Lifestyle",
     contact: { phoneNumber: "+1 (876) 555-0129", email: "jcarter@carterauto.jm", city: "Montego Bay", parish: "St. James", country: "Jamaica", deliveryAddress: "5 Alice Eldemire Drive", deliveryCountry: "Jamaica" },
     profile: { motherName: "Nancy Carter", fatherName: "James Carter Sr.", wifeName: "Lisa Carter", wifeBirthday: "August 10", husbandName: "N/A", children: [{ name: "James Jr.", birthday: "August 6" }], pets: "Buster", personalNotes: "Auto repair owner ordering mechanic overalls and storefront signs." },
     importantDates: [{ label: "Birthday", date: "August 6" }, { label: "James Jr.'s Birthday", date: "August 6" }, { label: "Lisa's Birthday", date: "August 10" }],
@@ -1274,7 +1281,7 @@ export const INITIAL_CLIENTS: Client[] = [
       occupation: "Business Professional",
       drive: "Yes" as const,
       tier: "Silver" as const,
-      homeBrand: (i % 3 === 0 ? "CEO Printing Services" : i % 3 === 1 ? "Librarium Luxe" : "CEO Lifestyle") as any,
+      homeBrand: (i % 3 === 0 ? "CEO Lifestyle" : i % 3 === 1 ? "Librarium Luxe" : "CEO Lifestyle") as any,
       contact: {
         phoneNumber: `+1 (876) 555-01${idNum}`,
         email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}@example.com`,
@@ -1773,36 +1780,45 @@ export const INITIAL_BUSINESS_EVENTS: BusinessEvent[] = [
 // ============================================================================
 export const INITIAL_INVENTORY: LuxeBookInventoryItem[] = [
   // Healthy Stock
-  { id: "LUX-101", title: "Shakespeare First Folio (Luxe Blue Leather)", category: "Fine Art", quantity: 15, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-1", clientName: "Victoria St. Claire", date: "2026-08-01", quantitySold: 2 }], rankingStatus: "Healthy", bookRank: "Best Seller", inStore: 5, office: 10, sellingPrice: 35000 },
-  { id: "LUX-102", title: "The Wealth of Nations (Signature Gold Edition)", category: "Business & Philosophy", quantity: 12, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Stacked", bookRank: "Top Seller", inStore: 4, office: 8, sellingPrice: 28000 },
-  { id: "LUX-103", title: "48 Laws of Power (Collector Hardcover)", category: "Mindset & Strategy", quantity: 20, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-2", clientName: "Daniel Williams", date: "2026-08-01", quantitySold: 2 }], rankingStatus: "Healthy", bookRank: "Top Seller", inStore: 8, office: 12, sellingPrice: 18500 },
-  { id: "LUX-104", title: "Atomic Habits (Luxe Leatherette Edition)", category: "Personal Growth", quantity: 25, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-3", clientName: "Rachel Morgan", date: "2026-08-02", quantitySold: 15 }], rankingStatus: "Healthy", bookRank: "Best Seller", inStore: 10, office: 15, sellingPrice: 16500 },
-  { id: "LUX-105", title: "The Psychology of Money (Hardcover)", category: "Finance", quantity: 18, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-4", clientName: "Nicole Wright", date: "2026-08-03", quantitySold: 5 }], rankingStatus: "Healthy", bookRank: "Top Seller", inStore: 6, office: 12, sellingPrice: 15000 },
-  { id: "LUX-106", title: "Think and Grow Rich (Embossed Gold)", category: "Finance", quantity: 14, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-5", clientName: "Dr. Sophia Roberts", date: "2026-08-01", quantitySold: 10 }], rankingStatus: "Healthy", bookRank: "Standard", inStore: 4, office: 10, sellingPrice: 14500 },
-  { id: "LUX-107", title: "The Intelligent Investor (Leather Bound)", category: "Finance", quantity: 10, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-6", clientName: "Harrison Brooks", date: "2026-08-01", quantitySold: 2 }], rankingStatus: "Healthy", bookRank: "High Performer", inStore: 3, office: 7, sellingPrice: 22000 },
-  { id: "LUX-108", title: "Deep Work (Signature White Edition)", category: "Productivity", quantity: 16, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Healthy", bookRank: "Standard", inStore: 6, office: 10, sellingPrice: 15500 },
-  { id: "LUX-109", title: "Can't Hurt Me (Special Hardcover)", category: "Mindset", quantity: 22, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Healthy", bookRank: "Best Seller", inStore: 8, office: 14, sellingPrice: 17500 },
-  { id: "LUX-110", title: "Never Split the Difference (Executive Edition)", category: "Negotiation", quantity: 15, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Healthy", bookRank: "High Performer", inStore: 5, office: 10, sellingPrice: 16800 },
+  { id: "LUX-101", title: "Shakespeare First Folio (Luxe Blue Leather)", category: "Fine Art", primaryClassification: "Biography & Memoir", quantity: 15, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-1", clientName: "Victoria St. Claire", date: "2026-08-01", quantitySold: 2 }], rankingStatus: "Healthy", bookRank: "Best Seller", inStore: 5, office: 10, sellingPrice: 35000 },
+  { id: "LUX-102", title: "The Wealth of Nations (Signature Gold Edition)", category: "Business & Philosophy", primaryClassification: "Business & Money", quantity: 12, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Stacked", bookRank: "Top Seller", inStore: 4, office: 8, sellingPrice: 28000 },
+  { id: "LUX-103", title: "48 Laws of Power (Collector Hardcover)", category: "Mindset & Strategy", primaryClassification: "Psychology & Human Behaviour", quantity: 20, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-2", clientName: "Daniel Williams", date: "2026-08-01", quantitySold: 2 }], rankingStatus: "Healthy", bookRank: "Top Seller", inStore: 8, office: 12, sellingPrice: 18500 },
+  { id: "LUX-104", title: "Atomic Habits (Luxe Leatherette Edition)", category: "Personal Growth", primaryClassification: "Mindset & Personal Development", quantity: 25, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-3", clientName: "Rachel Morgan", date: "2026-08-02", quantitySold: 15 }], rankingStatus: "Healthy", bookRank: "Best Seller", inStore: 10, office: 15, sellingPrice: 16500 },
+  { id: "LUX-105", title: "The Psychology of Money (Hardcover)", category: "Finance", primaryClassification: "Business & Money", quantity: 18, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-4", clientName: "Nicole Wright", date: "2026-08-03", quantitySold: 5 }], rankingStatus: "Healthy", bookRank: "Top Seller", inStore: 6, office: 12, sellingPrice: 15000 },
+  { id: "LUX-106", title: "Think and Grow Rich (Embossed Gold)", category: "Finance", primaryClassification: "Mindset & Personal Development", quantity: 14, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-5", clientName: "Dr. Sophia Roberts", date: "2026-08-01", quantitySold: 10 }], rankingStatus: "Healthy", bookRank: "Standard", inStore: 4, office: 10, sellingPrice: 14500 },
+  { id: "LUX-107", title: "The Intelligent Investor (Leather Bound)", category: "Finance", primaryClassification: "Business & Money", quantity: 10, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-6", clientName: "Harrison Brooks", date: "2026-08-01", quantitySold: 2 }], rankingStatus: "Healthy", bookRank: "High Performer", inStore: 3, office: 7, sellingPrice: 22000 },
+  { id: "LUX-108", title: "Deep Work (Signature White Edition)", category: "Productivity", primaryClassification: "Mindset & Personal Development", quantity: 16, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Healthy", bookRank: "Standard", inStore: 6, office: 10, sellingPrice: 15500 },
+  { id: "LUX-109", title: "Can't Hurt Me (Special Hardcover)", category: "Mindset", primaryClassification: "Biography & Memoir", quantity: 22, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Healthy", bookRank: "Best Seller", inStore: 8, office: 14, sellingPrice: 17500 },
+  { id: "LUX-110", title: "Never Split the Difference (Executive Edition)", category: "Negotiation", primaryClassification: "Psychology & Human Behaviour", quantity: 15, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Healthy", bookRank: "High Performer", inStore: 5, office: 10, sellingPrice: 16800 },
 
   // Low Stock Items (Restock)
-  { id: "LUX-111", title: "The Art of War (Gilded Edge Folio)", category: "Classics", quantity: 3, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Restock", bookRank: "Top Seller", inStore: 1, office: 2, sellingPrice: 32000 },
-  { id: "LUX-112", title: "Meditations by Marcus Aurelius (Leather)", category: "Philosophy", quantity: 2, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Restock", bookRank: "Best Seller", inStore: 1, office: 1, sellingPrice: 26000 },
-  { id: "LUX-113", title: "Principles for Dealing with the Changing World Order", category: "Finance", quantity: 3, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Restock", bookRank: "High Performer", inStore: 1, office: 2, sellingPrice: 24000 },
-  { id: "LUX-114", title: "Man's Search for Meaning (Special Edition)", category: "Psychology", quantity: 2, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Restock", bookRank: "Standard", inStore: 0, office: 2, sellingPrice: 14000 },
-  { id: "LUX-115", title: "Zero to One (Hardcover)", category: "Business", quantity: 3, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Restock", bookRank: "Standard", inStore: 1, office: 2, sellingPrice: 15000 },
+  { id: "LUX-111", title: "The Art of War (Gilded Edge Folio)", category: "Classics", primaryClassification: "Business & Money", quantity: 3, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Restock", bookRank: "Top Seller", inStore: 1, office: 2, sellingPrice: 32000 },
+  { id: "LUX-112", title: "Meditations by Marcus Aurelius (Leather)", category: "Philosophy", primaryClassification: "Mindset & Personal Development", quantity: 2, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Restock", bookRank: "Best Seller", inStore: 1, office: 1, sellingPrice: 26000 },
+  { id: "LUX-113", title: "Principles for Dealing with the Changing World Order", category: "Finance", primaryClassification: "Business & Money", quantity: 3, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Restock", bookRank: "High Performer", inStore: 1, office: 2, sellingPrice: 24000 },
+  { id: "LUX-114", title: "Man's Search for Meaning (Special Edition)", category: "Psychology", primaryClassification: "Psychology & Human Behaviour", quantity: 2, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Restock", bookRank: "Standard", inStore: 0, office: 2, sellingPrice: 14000 },
+  { id: "LUX-115", title: "Zero to One (Hardcover)", category: "Business", primaryClassification: "Business & Money", quantity: 3, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Restock", bookRank: "Standard", inStore: 1, office: 2, sellingPrice: 15000 },
+  { id: "LUX-116", title: "The Richest Man in Babylon (Collector Gold Edition)", category: "Finance & Wealth", primaryClassification: "Business & Money", quantity: 16, dateAdded: "2026-08-01", salesHistory: [{ id: "sh-7", clientName: "christina stewart", date: "2026-08-15", quantitySold: 1 }], rankingStatus: "Healthy", bookRank: "Top Seller", inStore: 6, office: 10, sellingPrice: 16000 },
 
   // Out of Stock / Urgent Restock Items
-  { id: "LUX-121", title: "Principia Mathematica (Platinum Hardcover)", category: "Science", quantity: 0, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Urgent Restock", bookRank: "Slow Moving", inStore: 0, office: 0, sellingPrice: 42000 },
-  { id: "LUX-122", title: "The Odyssey of Homer (Handcrafted Codex)", category: "Classics", quantity: 0, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Urgent Restock", bookRank: "New Release", inStore: 0, office: 0, sellingPrice: 38000 },
-  { id: "LUX-123", title: "Mastery by Robert Greene (Hardcover)", category: "Mindset", quantity: 0, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Urgent Restock", bookRank: "Best Seller", inStore: 0, office: 0, sellingPrice: 19000 },
+  { id: "LUX-121", title: "Principia Mathematica (Platinum Hardcover)", category: "Science", primaryClassification: "Mindset & Personal Development", quantity: 0, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Urgent Restock", bookRank: "Slow Moving", inStore: 0, office: 0, sellingPrice: 42000 },
+  { id: "LUX-122", title: "The Odyssey of Homer (Handcrafted Codex)", category: "Classics", primaryClassification: "Relationships & Romance", quantity: 0, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Urgent Restock", bookRank: "New Release", inStore: 0, office: 0, sellingPrice: 38000 },
+  { id: "LUX-123", title: "Mastery by Robert Greene (Hardcover)", category: "Mindset", primaryClassification: "Mindset & Personal Development", quantity: 0, dateAdded: "2026-08-01", salesHistory: [], rankingStatus: "Urgent Restock", bookRank: "Best Seller", inStore: 0, office: 0, sellingPrice: 19000 },
 
   // Additional 32 Items for 50 Total Inventory Items
   ...Array.from({ length: 32 }, (_, idx) => {
     const bookNum = 124 + idx;
+    const classifications = [
+      "Mindset & Personal Development",
+      "Business & Money",
+      "Psychology & Human Behaviour",
+      "Relationships & Romance",
+      "Biography & Memoir"
+    ];
     return {
       id: `LUX-${bookNum}`,
       title: `Librarium Collector Series Vol. ${idx + 1}`,
       category: idx % 2 === 0 ? "Classics" : "Personal Growth",
+      primaryClassification: classifications[idx % classifications.length],
       quantity: 5 + (idx % 8),
       dateAdded: "2026-08-01",
       salesHistory: [],
@@ -2075,7 +2091,7 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     quantityTotal: 5,
     orderDate: "2026-07-28",
     dueDate: "2026-08-01", // Due Today
-    productionStatus: "In Production",
+    productionStatus: "In Progress",
     deliveryMethod: "Knutsford Express",
     deliveryLocation: "Montego Bay Branch",
     assignedStaff: "Marcus Brown",
@@ -2083,6 +2099,10 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     priority: "High",
     depositPaid: true,
     totalAmount: 62500,
+    expressOrder: "Yes",
+    expressNote: "Needed before 2 PM - Urgent express dispatch",
+    invoiceLogged: true,
+    invoiceLoggedDate: "2026-07-28",
     createdDate: "2026-07-28"
   },
   {
@@ -2098,7 +2118,7 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     quantityTotal: 20,
     orderDate: "2026-07-29",
     dueDate: "2026-08-02",
-    productionStatus: "Awaiting Artwork",
+    productionStatus: "New",
     deliveryMethod: "Store Pickup",
     deliveryLocation: "Baywest Office",
     assignedStaff: "Tanya Reid",
@@ -2106,6 +2126,7 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     priority: "Normal",
     depositPaid: true,
     totalAmount: 170000,
+    invoiceLogged: false,
     createdDate: "2026-07-29"
   },
   {
@@ -2121,7 +2142,7 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     quantityTotal: 500,
     orderDate: "2026-07-25",
     dueDate: "2026-08-01", // Due Today
-    productionStatus: "Ready for Pickup",
+    productionStatus: "Ready for Collection",
     deliveryMethod: "Store Pickup",
     deliveryLocation: "Baywest Office",
     assignedStaff: "Shanice Miller",
@@ -2129,6 +2150,8 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     priority: "Urgent",
     depositPaid: true,
     totalAmount: 90000,
+    invoiceLogged: true,
+    invoiceLoggedDate: "2026-07-25",
     createdDate: "2026-07-25"
   },
   {
@@ -2144,7 +2167,7 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     quantityTotal: 50,
     orderDate: "2026-07-20",
     dueDate: "2026-07-30", // Overdue!
-    productionStatus: "In Production",
+    productionStatus: "In Progress",
     deliveryMethod: "Personal Delivery",
     deliveryLocation: "Kingston HQ Office",
     assignedStaff: "Marcus Brown",
@@ -2152,6 +2175,7 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     priority: "High",
     depositPaid: true,
     totalAmount: 160000,
+    invoiceLogged: false,
     createdDate: "2026-07-20"
   },
   {
@@ -2167,14 +2191,15 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     quantityTotal: 15,
     orderDate: "2026-07-31",
     dueDate: "2026-08-05",
-    productionStatus: "Awaiting Deposit",
+    productionStatus: "Confirmed",
     deliveryMethod: "Tara Courier",
     deliveryLocation: "Ocho Rios Branch",
     assignedStaff: "Unassigned",
-    internalNotes: "Sent proforma invoice. Production will commence immediately upon 50% deposit receipt.",
+    internalNotes: "Sent proforma invoice. Order confirmed upon 50% deposit receipt.",
     priority: "Low",
     depositPaid: false,
     totalAmount: 97500,
+    invoiceLogged: false,
     createdDate: "2026-07-31"
   },
   {
@@ -2190,7 +2215,7 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     quantityTotal: 2,
     orderDate: "2026-07-24",
     dueDate: "2026-08-03",
-    productionStatus: "Ready for Delivery",
+    productionStatus: "Out for Delivery",
     deliveryMethod: "Personal Delivery",
     deliveryLocation: "Spanish Town Estate",
     assignedStaff: "David Ellis",
@@ -2198,6 +2223,8 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     priority: "High",
     depositPaid: true,
     totalAmount: 56000,
+    invoiceLogged: true,
+    invoiceLoggedDate: "2026-07-24",
     createdDate: "2026-07-24"
   },
   {
@@ -2213,7 +2240,7 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     quantityTotal: 1,
     orderDate: "2026-07-26",
     dueDate: "2026-07-31", // Overdue!
-    productionStatus: "Quality Check",
+    productionStatus: "Ready",
     deliveryMethod: "Store Pickup",
     deliveryLocation: "Baywest Office",
     assignedStaff: "Shanice Miller",
@@ -2221,6 +2248,7 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     priority: "Normal",
     depositPaid: true,
     totalAmount: 18500,
+    invoiceLogged: false,
     createdDate: "2026-07-26"
   },
   {
@@ -2244,7 +2272,36 @@ export const INITIAL_OPERATIONS_ORDERS: OperationsOrder[] = [
     priority: "Normal",
     depositPaid: true,
     totalAmount: 45000,
+    invoiceLogged: true,
+    invoiceLoggedDate: "2026-07-15",
     createdDate: "2026-07-15"
+  },
+  {
+    id: "ORD-000431",
+    orderNumber: "#000431",
+    clientId: "CEO0009",
+    clientName: "Shaluke",
+    clientTier: "Gold",
+    clientPhone: "+1 (876) 555-0131",
+    items: [
+      { id: "i-431-1", productName: "T-Shirts", quantity: 2, unitPrice: 3500, details: "Custom printed apparel" },
+      { id: "i-431-2", productName: "T-Shirts", quantity: 2, unitPrice: 3500, details: "Custom printed apparel" }
+    ],
+    quantityTotal: 4,
+    orderDate: "2026-08-01",
+    dueDate: "2026-08-17",
+    productionStatus: "New",
+    deliveryMethod: "Store Pickup",
+    deliveryLocation: "Baywest Office",
+    assignedStaff: "Marcus Brown",
+    internalNotes: "2x T-Shirts + 2x T-Shirts. Aggregated requirement: 4x T-Shirts.",
+    priority: "Normal",
+    depositPaid: true,
+    totalAmount: 14000,
+    expressOrder: "No",
+    invoiceLogged: true,
+    invoiceLoggedDate: "2026-08-01",
+    createdDate: "2026-08-01"
   }
 ];
 

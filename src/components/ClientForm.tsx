@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Client, ClientTier, HomeBrand, Gender, YesNo, CommunicationStatus, BusinessRelationship, ProfileTheme, ManagementClassification, ClassificationHistoryRecord, PersonalRemembrance, RemembranceRelationship, AdultTShirtSize, ApparelInformation } from "../types";
+import { Client, ClientHome, ClientTier, HomeBrand, Gender, YesNo, CommunicationStatus, BusinessRelationship, ProfileTheme, ManagementClassification, ClassificationHistoryRecord, PersonalRemembrance, RemembranceRelationship, AdultTShirtSize, ApparelInformation } from "../types";
 import { X, User, MapPin, Heart, Trophy, Save, ShoppingCart, AlertCircle, ShieldAlert, Sparkles, Building2, Shirt, HeartHandshake, Plus, Trash2, Tag } from "lucide-react";
 import { parseMonthDay } from "../utils/dateHelpers";
-import { getProfileThemeForRelationship } from "../utils/clientTierUtils";
+import { getProfileThemeForRelationship, getClientHome } from "../utils/clientTierUtils";
 
 interface ClientFormProps {
   customer?: Client | null; // If provided, we are editing. Otherwise, adding.
@@ -23,6 +23,7 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
     type: "id" | "name" | "phone" | "email";
     message: string;
     clientId: string;
+    matchedClient?: Client;
   } | null>(null);
   const [bypassDuplicate, setBypassDuplicate] = useState(false);
 
@@ -34,10 +35,13 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
   const [occupation, setOccupation] = useState("");
   const [drive, setDrive] = useState<YesNo>("No");
   const [tier, setTier] = useState<ClientTier>("Silver");
+  const [clientHome, setClientHome] = useState<ClientHome>("CEO Lifestyle");
   const [homeBrand, setHomeBrand] = useState<HomeBrand>("CEO Lifestyle");
   const [businessRelationship, setBusinessRelationship] = useState<BusinessRelationship>("CEO Lifestyle");
   const [managementClassification, setManagementClassification] = useState<ManagementClassification>("Standard");
   const [profileTheme, setProfileTheme] = useState<ProfileTheme>("CEO Blue");
+  const [googleReview, setGoogleReview] = useState<YesNo>("No");
+  const [adventist, setAdventist] = useState<YesNo>("No");
 
   // Contact
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -136,6 +140,7 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
   // Communication Prefs
   const [preferredCommunication, setPreferredCommunication] = useState<Client["preferredCommunication"]>("Email");
   const [marketingPermission, setMarketingPermission] = useState<YesNo>("Yes");
+  const [checkedIn, setCheckedIn] = useState<boolean>(false);
 
   // Load fields when customer prop changes (for Editing)
   useEffect(() => {
@@ -149,10 +154,15 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
       setTier(customer.tier);
       setHomeBrand(customer.homeBrand);
       
-      const rel = customer.businessRelationship || (customer.homeBrand === "Librarium Luxe" ? "Librarium Luxe" : customer.homeBrand === "CEO Printing Services" ? "CEO Lifestyle" : "CEO Lifestyle");
+      const ch: ClientHome = getClientHome(customer);
+      setClientHome(ch);
+
+      const rel = customer.businessRelationship || (ch === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle");
       setBusinessRelationship(rel);
       setManagementClassification(customer.managementClassification || (customer.tier === "Delinquent" ? "Delinquent" : customer.tier === "Problematic" ? "Problematic" : customer.tier === "Founders Family" ? "VIP Priority" : "Standard"));
       setProfileTheme(customer.profileTheme || getProfileThemeForRelationship(rel));
+      setGoogleReview(customer.googleReview || "No");
+      setAdventist(customer.adventist || "No");
 
       setPhoneNumber(customer.contact.phoneNumber);
       setCommunicationStatus(customer.communicationStatus || "Unknown");
@@ -220,6 +230,7 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
 
       setPreferredCommunication(customer.preferredCommunication);
       setMarketingPermission(customer.marketingPermission || "Yes");
+      setCheckedIn(!!customer.checkedIn);
 
       setRemembrances(customer.remembrances || []);
       setTShirtSize(customer.apparelInfo?.tShirtSize || "");
@@ -315,6 +326,7 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
       setFavoriteColors("");
       setGiftPreferences("");
       setPreferredCommunication("Email");
+      setCheckedIn(false);
     }
   }, [customer]);
 
@@ -342,10 +354,18 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
     if (!existingCustomers || existingCustomers.length === 0) return;
     setDuplicateWarning(null);
 
+    const normalizePhone = (phoneStr: string) => {
+      const digits = phoneStr.trim().replace(/\D/g, "");
+      if (digits.length === 11 && digits.startsWith("1")) {
+        return digits.slice(1);
+      }
+      return digits;
+    };
+
     const checkId = id.trim().toLowerCase();
     const checkFirst = firstName.trim().toLowerCase();
     const checkLast = lastName.trim().toLowerCase();
-    const checkPhone = phoneNumber.trim().replace(/\D/g, "");
+    const checkPhone = normalizePhone(phoneNumber);
     const checkEmail = email.trim().toLowerCase();
 
     if (!checkFirst && !checkLast && !checkPhone && !checkEmail && !checkId) return;
@@ -357,23 +377,27 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
         setDuplicateWarning({
           type: "id",
           message: `Customer ID "${id}" is already assigned to ${c.firstName} ${c.lastName}.`,
-          clientId: c.id
+          clientId: c.id,
+          matchedClient: c
         });
         return;
       }
       if (checkFirst && checkLast && c.firstName.toLowerCase() === checkFirst && c.lastName.toLowerCase() === checkLast) {
         setDuplicateWarning({
           type: "name",
-          message: `A client named "${firstName} ${lastName}" already exists.`,
-          clientId: c.id
+          message: `A client named "${firstName} ${lastName}" already exists in the directory.`,
+          clientId: c.id,
+          matchedClient: c
         });
         return;
       }
-      if (checkPhone && c.contact.phoneNumber.replace(/\D/g, "") === checkPhone) {
+      const cPhone = normalizePhone(c.contact.phoneNumber || "");
+      if (checkPhone && cPhone && cPhone === checkPhone) {
         setDuplicateWarning({
           type: "phone",
-          message: `Phone number "${phoneNumber}" is registered to ${c.firstName} ${c.lastName}.`,
-          clientId: c.id
+          message: `Phone number "${phoneNumber}" matches registered client ${c.firstName} ${c.lastName} (${c.contact.phoneNumber}).`,
+          clientId: c.id,
+          matchedClient: c
         });
         return;
       }
@@ -381,7 +405,8 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
         setDuplicateWarning({
           type: "email",
           message: `Email "${email}" is registered to ${c.firstName} ${c.lastName}.`,
-          clientId: c.id
+          clientId: c.id,
+          matchedClient: c
         });
         return;
       }
@@ -520,15 +545,23 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
 
     const calculatedAOV = totalOrders > 0 ? Math.round(lifetimeRevenue / totalOrders) : 0;
 
+    // CRITICAL-006: Client ID is immutable after the client has been created.
+    // If editing an existing client, the original customer.id is strictly authoritative.
+    // Any attempted mutation of the client ID during edit is rejected and preserved as the original ID.
+    const authoritativeId = isEditing && customer?.id
+      ? customer.id
+      : (id.trim() || String(Math.floor(100000 + Math.random() * 900000)));
+
     const savedClient: Client = {
-      id: id || String(Math.floor(100000 + Math.random() * 900000)),
+      id: authoritativeId,
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       gender,
       occupation: occupation.trim() || "Business Owner",
       drive,
       tier,
-      homeBrand,
+      clientHome,
+      homeBrand: clientHome === "Librarium Luxe" ? "Librarium Luxe" : "CEO Lifestyle",
       contact: {
         phoneNumber: phoneNumber.trim(),
         email: email.trim(),
@@ -577,7 +610,7 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
           nationalTeam: nationalTeam.trim()
         },
         hobbies: parseList(hobbies),
-        favoriteColors: parseList(favoriteColors),
+        favoriteColors: Array.from(new Set(parseList(favoriteColors))),
         giftPreferences: parseList(giftPreferences)
       },
       favouriteAuthors: favouriteAuthors,
@@ -590,13 +623,18 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
         }
       ],
       reminders: customer?.reminders || [],
+      commitments: customer?.commitments || [],
+      ...(customer?.promises !== undefined ? { promises: customer.promises } : {}),
       preferredCommunication,
       lastContactedDate: customer?.lastContactedDate || new Date().toISOString().split("T")[0],
       marketingPermission,
+      checkedIn: !!checkedIn,
       communicationStatus: communicationStatus || "Unknown",
-      businessRelationship,
-      profileTheme: getProfileThemeForRelationship(businessRelationship),
+      businessRelationship: clientHome === "CEO Lifestyle | Librarium Luxe" ? "CEO Lifestyle + Librarium Luxe" : clientHome as any,
+      profileTheme: getProfileThemeForRelationship(clientHome === "CEO Lifestyle | Librarium Luxe" ? "CEO Lifestyle + Librarium Luxe" : clientHome as any),
       managementClassification,
+      googleReview,
+      adventist,
       healthScore: customer?.healthScore !== undefined ? customer.healthScore : 85,
       relationshipStatus: customer?.relationshipStatus || "Active",
       accountStatus: customer?.accountStatus || (customer?.deactivated ? "Inactive" : "Active"),
@@ -742,15 +780,33 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in text-xs">
               
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Client ID (CID)</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="E.g., 10001"
-                  value={id}
-                  onChange={(e) => setId(e.target.value.replace(/\D/g, ""))}
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 placeholder-slate-400 font-medium transition-colors"
-                />
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Client ID (CID)</label>
+                  {isEditing && (
+                    <span className="text-[9px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                      Immutable (Locked)
+                    </span>
+                  )}
+                </div>
+                {isEditing ? (
+                  <input
+                    type="text"
+                    disabled
+                    readOnly
+                    value={customer?.id || id}
+                    className="w-full bg-slate-100 border border-slate-200 rounded-xl p-3 text-slate-500 font-bold cursor-not-allowed select-none opacity-80"
+                    title="Client ID is immutable after creation"
+                  />
+                ) : (
+                  <input
+                    type="text"
+                    required
+                    placeholder="E.g., 10001"
+                    value={id}
+                    onChange={(e) => setId(e.target.value.replace(/\D/g, ""))}
+                    className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 placeholder-slate-400 font-medium transition-colors"
+                  />
+                )}
               </div>
 
               <div className="space-y-1.5">
@@ -772,53 +828,6 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
                   <option value="Founders Family">Founders Family (Permanent Priority)</option>
                   <option value="Delinquent">Delinquent (Permanent Account Risk)</option>
                   <option value="Problematic">Problematic (Permanent Relationship Management)</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Business Relationship Type</label>
-                <select
-                  value={businessRelationship}
-                  onChange={(e) => {
-                    const newRel = e.target.value as BusinessRelationship;
-                    setBusinessRelationship(newRel);
-                    setProfileTheme(getProfileThemeForRelationship(newRel));
-                  }}
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 font-bold transition-colors"
-                >
-                  <option value="CEO Lifestyle">CEO Lifestyle (Apparel, Gifts, Printing)</option>
-                  <option value="Librarium Luxe">Librarium Luxe (Books, Literary, Romance)</option>
-                  <option value="CEO Lifestyle + Librarium Luxe">CEO Lifestyle + Librarium Luxe (Dual Relationship)</option>
-                </select>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Profile Theme (Auto-Assigned)</label>
-                <div className={`w-full rounded-xl p-3 text-xs font-bold border flex items-center justify-between ${
-                  businessRelationship === "CEO Lifestyle"
-                    ? "bg-blue-50 border-blue-200 text-blue-900"
-                    : businessRelationship === "Librarium Luxe"
-                      ? "bg-rose-50 border-rose-200 text-rose-900"
-                      : "bg-gradient-to-r from-blue-50 via-purple-50 to-rose-50 border-purple-200 text-purple-900"
-                }`}>
-                  <span>Theme: {getProfileThemeForRelationship(businessRelationship)}</span>
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-extrabold bg-white/80 border border-current">
-                    {businessRelationship === "CEO Lifestyle" ? "🔵 Blue" : businessRelationship === "Librarium Luxe" ? "🔴 Crimson" : "🔵+Burgundy"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Management Classification</label>
-                <select
-                  value={managementClassification}
-                  onChange={(e) => setManagementClassification(e.target.value as ManagementClassification)}
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 font-bold transition-colors"
-                >
-                  <option value="Standard">Standard Account</option>
-                  <option value="VIP Priority">VIP Priority (Founders/Platinum Focus)</option>
-                  <option value="Problematic">Problematic (Service/Interaction Review Required)</option>
-                  <option value="Delinquent">Delinquent (Payment/Balance Review Required)</option>
                 </select>
               </div>
 
@@ -861,17 +870,6 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Occupation</label>
-                <input
-                  type="text"
-                  placeholder="E.g., Business Owner"
-                  value={occupation}
-                  onChange={(e) => setOccupation(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 placeholder-slate-400 font-medium transition-colors"
-                />
-              </div>
-
-              <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Drive (Yes/No)</label>
                 <select
                   value={drive}
@@ -884,16 +882,75 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Home Brand Connection</label>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Adventist ✝</label>
                 <select
-                  value={homeBrand}
-                  onChange={(e) => setHomeBrand(e.target.value as HomeBrand)}
+                  value={adventist}
+                  onChange={(e) => setAdventist(e.target.value as YesNo)}
                   className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 font-bold transition-colors"
                 >
-                  <option value="CEO Lifestyle">CEO Lifestyle (CEO Printing & Librarium)</option>
-                  <option value="CEO Printing Services">CEO Printing Services Only</option>
-                  <option value="Librarium Luxe">Librarium Luxe Only</option>
+                  <option value="No">No (Standard Schedule)</option>
+                  <option value="Yes">Yes (🔴 DO NOT MESSAGE FRIDAY 5 PM OR SATURDAY)</option>
                 </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Google Review</label>
+                <select
+                  value={googleReview}
+                  onChange={(e) => setGoogleReview(e.target.value as YesNo)}
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 font-bold transition-colors"
+                >
+                  <option value="No">No (Review Pending)</option>
+                  <option value="Yes">Yes (Google Review Provided)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5 sm:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-amber-500" />
+                  Client Home
+                </label>
+                <select
+                  value={clientHome}
+                  onChange={(e) => {
+                    const newHome = e.target.value as ClientHome;
+                    setClientHome(newHome);
+                    const rel = newHome === "CEO Lifestyle | Librarium Luxe" ? "CEO Lifestyle + Librarium Luxe" : newHome;
+                    setBusinessRelationship(rel as any);
+                    setProfileTheme(getProfileThemeForRelationship(rel as any));
+                  }}
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 font-extrabold text-xs transition-colors"
+                >
+                  <option value="CEO Lifestyle">CEO Lifestyle</option>
+                  <option value="Librarium Luxe">Librarium Luxe</option>
+                  <option value="CEO Lifestyle | Librarium Luxe">CEO Lifestyle | Librarium Luxe</option>
+                </select>
+                <p className="text-[11px] text-slate-400 italic">Select the client's primary home brand ecosystem.</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Management Classification</label>
+                <select
+                  value={managementClassification}
+                  onChange={(e) => setManagementClassification(e.target.value as ManagementClassification)}
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 font-bold transition-colors"
+                >
+                  <option value="Standard">Standard Account</option>
+                  <option value="VIP Priority">VIP Priority (Founders/Platinum Focus)</option>
+                  <option value="Problematic">Problematic (Service/Interaction Review Required)</option>
+                  <option value="Delinquent">Delinquent (Payment/Balance Review Required)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Occupation</label>
+                <input
+                  type="text"
+                  placeholder="E.g., Business Owner"
+                  value={occupation}
+                  onChange={(e) => setOccupation(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-slate-800 focus:bg-white focus:outline-none rounded-xl p-3 text-slate-800 placeholder-slate-400 font-medium transition-colors"
+                />
               </div>
             </div>
           )}
@@ -1030,6 +1087,30 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
                   <option value="Yes">Yes (Enable marketing campaigns)</option>
                   <option value="No">No (Opt-out from marketing campaign targeting)</option>
                 </select>
+              </div>
+
+              {/* WhatsApp Check-In Status Toggle */}
+              <div className="sm:col-span-2 p-3.5 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-800">WhatsApp Check-In Status</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${checkedIn ? "bg-emerald-100 text-emerald-800 border border-emerald-300" : "bg-slate-200 text-slate-600"}`}>
+                      {checkedIn ? "☑ Checked In" : "☐ Not Checked In"}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Indicates whether this client has reconnected via WhatsApp. Can also be reset in bulk via Master Admin Settings.
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={checkedIn}
+                    onChange={(e) => setCheckedIn(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
               </div>
             </div>
           )}
@@ -1709,8 +1790,8 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
                     <input
                       type="number"
                       placeholder="E.g., 8"
-                      value={totalOrders}
-                      onChange={(e) => setTotalOrders(Number(e.target.value))}
+                      value={totalOrders === 0 ? "" : (totalOrders || "")}
+                      onChange={(e) => setTotalOrders(e.target.value === "" ? 0 : Number(e.target.value))}
                       className="w-full bg-white border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-3 text-slate-800 font-semibold"
                     />
                   </div>
@@ -1720,8 +1801,8 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
                     <input
                       type="number"
                       placeholder="E.g., 385000"
-                      value={lifetimeRevenue}
-                      onChange={(e) => setLifetimeRevenue(Number(e.target.value))}
+                      value={lifetimeRevenue === 0 ? "" : (lifetimeRevenue || "")}
+                      onChange={(e) => setLifetimeRevenue(e.target.value === "" ? 0 : Number(e.target.value))}
                       className="w-full bg-white border border-slate-200 focus:border-slate-800 focus:outline-none rounded-xl p-3 text-slate-800 font-semibold"
                     />
                   </div>
@@ -1870,7 +1951,7 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Favorite Colors (Comma Separated)</label>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Favourite Colour (Comma Separated)</label>
                   <input
                     type="text"
                     placeholder="E.g., Black, Gold, White"
@@ -1982,31 +2063,61 @@ export default function ClientForm({ customer, onSave, onCancel, existingCustome
 
         {/* Validation Errors & Soft Warnings Banner */}
         {(formError || duplicateWarning) && (
-          <div className="px-6 py-4 bg-amber-50/45 border-t border-slate-200/60 text-left space-y-2 animate-fade-in">
+          <div className="px-6 py-4 bg-amber-50/70 border-t border-amber-200/80 text-left space-y-3 animate-fade-in">
             {formError && (
-              <div className="text-rose-600 text-xs font-bold flex items-center gap-2">
+              <div className="text-rose-600 text-xs font-bold flex items-center gap-2 p-2.5 bg-rose-50 border border-rose-200 rounded-xl">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
                 <span>{formError}</span>
               </div>
             )}
             {duplicateWarning && (
-              <div className="text-amber-800 text-xs font-bold flex flex-col gap-1.5">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-600" />
-                  <span><strong>⚠️ Potential Duplicate Detected:</strong> {duplicateWarning.message}</span>
+              <div className="bg-amber-100/70 border border-amber-300/80 p-4 rounded-2xl space-y-3 text-amber-950">
+                <div className="flex items-center gap-2 font-extrabold text-xs">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-700" />
+                  <span>POSSIBLE EXISTING CLIENT DETECTED: {duplicateWarning.message}</span>
                 </div>
-                {duplicateWarning.type !== "id" && (
-                  <label className="flex items-center gap-2.5 cursor-pointer pl-6 mt-0.5 select-none text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={bypassDuplicate}
-                      onChange={(e) => setBypassDuplicate(e.target.checked)}
-                      className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4"
-                    />
-                    <span className="font-semibold text-slate-700">
-                      I confirm this is a separate, unique portfolio client profile and not a duplicate
-                    </span>
-                  </label>
+
+                {/* Reference Card of Existing Record */}
+                {duplicateWarning.matchedClient && (
+                  <div className="bg-white/90 border border-amber-200 p-3 rounded-xl text-xs space-y-1 shadow-2xs">
+                    <div className="flex items-center justify-between font-bold text-slate-900">
+                      <span>{duplicateWarning.matchedClient.firstName} {duplicateWarning.matchedClient.lastName}</span>
+                      <span className="text-[10px] font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-700 font-bold">
+                        ID: {duplicateWarning.matchedClient.id}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-600 flex items-center gap-3 flex-wrap">
+                      <span>Phone: <strong>{duplicateWarning.matchedClient.contact?.phoneNumber || "N/A"}</strong></span>
+                      <span>Email: <strong>{duplicateWarning.matchedClient.contact?.email || "N/A"}</strong></span>
+                      <span>Tier: <strong>{duplicateWarning.matchedClient.tier || "Silver"}</strong></span>
+                      <span>Brand: <strong>{duplicateWarning.matchedClient.homeBrand || "CEO Lifestyle"}</strong></span>
+                    </div>
+                  </div>
+                )}
+
+                {duplicateWarning.type !== "id" ? (
+                  <div className="pt-2 border-t border-amber-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <label className="flex items-center gap-2.5 cursor-pointer select-none text-slate-800 text-xs font-bold">
+                      <input
+                        type="checkbox"
+                        checked={bypassDuplicate}
+                        onChange={(e) => setBypassDuplicate(e.target.checked)}
+                        className="rounded text-amber-600 focus:ring-amber-500 w-4 h-4"
+                      />
+                      <span>I confirm this is a separate, unique portfolio client (e.g. shared name) and not a duplicate</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={onCancel}
+                      className="text-xs font-bold text-slate-600 hover:text-slate-900 underline cursor-pointer self-start sm:self-auto"
+                    >
+                      Cancel and use existing record
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-xs font-bold text-rose-800">
+                    ❌ Customer ID is already assigned. Please use a unique Customer ID to proceed.
+                  </div>
                 )}
               </div>
             )}
